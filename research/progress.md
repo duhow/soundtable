@@ -43,6 +43,16 @@
   - Punto de partida para evolucionar hacia un grafo de módulos que mapee `rectai::ModuleKind` a nodos de procesamiento.
 - `RectaiApplication` instancia un `AudioEngine` de larga vida para que el audio se active junto con la aplicación JUCE.
 
+### Diseño de UI rítmica inicial
+- Centro de la ventana con un "pulso" visual fijo:
+  - Círculo blanco constante en el centro de la mesa.
+  - Animación de ondas concéntricas (anillos que se expanden y se desvanecen) sincronizadas con el tempo (BPM).
+  - Cada 4º pulso se dibuja más grande y grueso para marcar el primer tiempo del compás (4/4).
+- Todos los objetos/instrumentos se conectan visualmente con el centro mediante líneas:
+  - Línea continua si el objeto está activo.
+  - Línea discontinua si el objeto está en estado mute.
+- Click sobre una línea centro→objeto alterna el mute del instrumento, que a su vez controla el nivel del tono generado por `AudioEngine`.
+
 ### Limpieza de idioma y comentarios
 - Comentarios de `Scene.h` traducidos al inglés para seguir la convención del proyecto.
 - Título de la UI en `MainComponent::paint` actualizado a "RectaiTable - Example scene".

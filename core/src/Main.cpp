@@ -5,14 +5,14 @@
 
 class MainWindow : public juce::DocumentWindow {
 public:
-    explicit MainWindow(juce::String name)
+    MainWindow(juce::String name, AudioEngine& audioEngine)
         : juce::DocumentWindow(name,
                                juce::Colours::darkgrey,
                                juce::DocumentWindow::allButtons)
     {
         setUsingNativeTitleBar(true);
         setResizable(true, true);
-        setContentOwned(new MainComponent(), true);
+        setContentOwned(new MainComponent(audioEngine), true);
         centreWithSize(getWidth(), getHeight());
         setVisible(true);
     }
@@ -35,7 +35,8 @@ public:
 
     void initialise(const juce::String&) override
     {
-        mainWindow_ = std::make_unique<MainWindow>(getApplicationName());
+        mainWindow_ =
+            std::make_unique<MainWindow>(getApplicationName(), audioEngine_);
     }
 
     void shutdown() override

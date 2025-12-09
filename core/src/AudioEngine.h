@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -28,11 +30,17 @@ public:
         int numSamples,
         const juce::AudioIODeviceCallbackContext& context) override;
 
+    // Control API
+    void setFrequency(double frequency);
+    void setLevel(float level);
+
 private:
     juce::AudioDeviceManager deviceManager_;
 
     double sampleRate_{44100.0};
     double currentAngle_{0.0};
     double angleDelta_{0.0};
-    float level_{0.1F};  // Output level to avoid clipping.
+
+    std::atomic<double> targetFrequency_{440.0};
+    std::atomic<float> level_{0.1F};  // Output level to avoid clipping.
 };
