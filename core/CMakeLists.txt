@@ -8,39 +8,98 @@ endif()
 
 add_subdirectory(${JUCE_DIR} JUCE-build)
 
+# System dependencies (Linux-specific)
+if(UNIX AND NOT APPLE)
+    # JUCE module dependencies as documented in docs/Linux Dependencies.md
+    # juce_audio_devices, juce_audio_processors, juce_core, juce_graphics,
+    # juce_gui_basics, juce_gui_extra
+
+    # libcurl4-openssl-dev (juce_core / JUCE_USE_CURL)
+    find_package(CURL REQUIRED)
+
+    # Remaining libraries via pkg-config
+    find_package(PkgConfig REQUIRED)
+
+    set(RECTAI_JUCE_PKG_DEPS
+        alsa            # libasound2-dev
+        jack            # libjack-jackd2-dev
+        freetype2       # libfreetype-dev / libfreetype6-dev
+        fontconfig      # libfontconfig1-dev
+        x11             # libx11-dev
+        xcomposite      # libxcomposite-dev
+        xcursor         # libxcursor-dev
+        xext            # libxext-dev
+        xinerama        # libxinerama-dev
+        xrandr          # libxrandr-dev
+        xrender         # libxrender-dev
+    )
+
+    foreach(dep IN LISTS RECTAI_JUCE_PKG_DEPS)
+        pkg_check_modules(${dep}_PKG REQUIRED ${dep})
+    endforeach()
+
+    # WebKit2GTK for juce_gui_extra (web browser component)
+    pkg_check_modules(WEBKIT2GTK_41 QUIET webkit2gtk-4.1)
+    if(NOT WEBKIT2GTK_41_FOUND)
+        # Fallback for older distros as per JUCE docs
+        pkg_check_modules(WEBKIT2GTK_40 REQUIRED webkit2gtk-4.0)
+    endif()
+endif()
+
+# Librería de dominio (modelo de escena, módulos, etc.)
+
+file(GLOB_RECURSE RECTAI_CORE_LIB_SOURCES CONFIGURE_DEPENDS
+    src/core/*.cpp
+    src/core/*.h
+)
+
+add_library(rectai-core-lib STATIC
+    ${RECTAI_CORE_LIB_SOURCES}
+)
+
+target_include_directories(rectai-core-lib
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+if (MSVC)
+    target_compile_options(rectai-core-lib PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(rectai-core-lib PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+endif()
+
+
+# Aplicación JUCE principal
+
 set(PROJECT_NAME rectai-core)
 
 juce_add_gui_app(${PROJECT_NAME}
     COMPANY_NAME "rectai"
     PRODUCT_NAME "RectaiTable"
+    NEEDS_WEB_BROWSER TRUE
 )
 
 juce_generate_juce_header(${PROJECT_NAME})
 
-file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS
-    src/*.cpp
-    src/*.h
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        src/Main.cpp
+        src/MainComponent.cpp
+        src/MainComponent.h
 )
 
-# Buenas prácticas de compilación generales
 if (MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /W4 /permissive-)
 else()
     target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 
-# Incluir fuentes
-target_sources(${PROJECT_NAME}
-    PRIVATE
-        ${CORE_SOURCES}
-)
-
-# Dependencias de JUCE
-
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
+        rectai-core-lib
         juce::juce_gui_extra
         juce::juce_audio_utils
+    $<$<AND:$<BOOL:${CURL_FOUND}>,$<PLATFORM_ID:Linux>>:CURL::libcurl>
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags

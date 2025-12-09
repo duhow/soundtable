@@ -27,6 +27,8 @@ private:
 
 class RectaiApplication : public juce::JUCEApplication {
 public:
+    RectaiApplication() = default;
+
     const juce::String getApplicationName() override { return "RectaiTable"; }
     const juce::String getApplicationVersion() override { return "0.1.0"; }
 

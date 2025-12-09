@@ -12,6 +12,12 @@ add_executable(rectai-tracker
     src/main.cpp
 )
 
+# Place the executable in the top-level build directory so that
+# Earthfile can export it from build/rectai-tracker
+set_target_properties(rectai-tracker PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
 if (MSVC)
     target_compile_options(rectai-tracker PRIVATE /W4 /permissive-)
 else()

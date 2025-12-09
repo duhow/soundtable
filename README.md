@@ -50,6 +50,23 @@ Esto generará, entre otros:
 - `rectai-core`: aplicación principal JUCE.
 - `rectai-tracker`: servicio de tracking (CLI).
 
+## Compilación con Earthly (recomendada para builds reproducibles)
+
+Para evitar instalar todas las dependencias en tu sistema host, puedes usar **Earthly**.
+
+1. Instala Earthly siguiendo la guía oficial: https://earthly.dev/get-earthly
+
+2. Desde la raíz del proyecto, ejecuta:
+
+```bash
+earthly +build
+```
+
+Esto descargará una imagen base de Ubuntu, instalará todas las dependencias de compilación y generará los binarios:
+
+- `build/rectai-core`
+- `build/rectai-tracker`
+
 ## Compilación con Docker
 
 ```bash
