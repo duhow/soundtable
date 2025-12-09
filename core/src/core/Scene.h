@@ -7,7 +7,7 @@
 
 namespace rectai {
 
-// Representa una instancia de objeto tangible o virtual sobre la mesa.
+// Represents a tangible or virtual object instance on the table.
 class ObjectInstance {
  public:
   ObjectInstance() = default;
@@ -31,7 +31,7 @@ class ObjectInstance {
   float angle_radians_{0.0F};
 };
 
-// Tipo de módulo lógico (sintetizador, filtro, etc.).
+// Logical module type (oscillator, filter, etc.).
 enum class ModuleKind {
   kUnknown = 0,
   kOscillator,
@@ -41,13 +41,13 @@ enum class ModuleKind {
   kController,
 };
 
-// Representa un puerto de un módulo (audio o control).
+// Describes a module port (audio or control).
 struct PortDescriptor {
   std::string name;
   bool is_audio{true};
 };
 
-// Módulo lógico dentro de la escena.
+// Logical module inside the scene.
 class Module {
  public:
   Module() = default;
@@ -79,7 +79,7 @@ class Module {
   std::unordered_map<std::string, float> parameters_;
 };
 
-// Conexión dirigida entre puertos de módulos.
+// Directed connection between module ports.
 struct Connection {
   std::string from_module_id;
   std::string from_port_name;
@@ -87,7 +87,7 @@ struct Connection {
   std::string to_port_name;
 };
 
-// Escena completa: módulos, conexiones y objetos sobre la mesa.
+// Complete scene: modules, connections and objects on the table.
 class Scene {
  public:
   Scene() = default;

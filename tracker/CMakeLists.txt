@@ -10,6 +10,7 @@ find_package(OpenCV REQUIRED core imgproc videoio)
 
 add_executable(rectai-tracker
     src/main.cpp
+    src/OscSender.cpp
 )
 
 # Place the executable in the top-level build directory so that

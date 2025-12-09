@@ -86,6 +86,10 @@ target_sources(${PROJECT_NAME}
         src/Main.cpp
         src/MainComponent.cpp
         src/MainComponent.h
+        src/AudioEngine.cpp
+        src/AudioEngine.h
+        src/TrackingOscReceiver.cpp
+        src/TrackingOscReceiver.h
 )
 
 if (MSVC)
@@ -99,6 +103,7 @@ target_link_libraries(${PROJECT_NAME}
         rectai-core-lib
         juce::juce_gui_extra
         juce::juce_audio_utils
+        juce::juce_osc
     $<$<AND:$<BOOL:${CURL_FOUND}>,$<PLATFORM_ID:Linux>>:CURL::libcurl>
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags

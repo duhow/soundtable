@@ -74,6 +74,9 @@ Si haces cambios en `Scene`, `Module` o `ObjectInstance`, asegúrate de que `tes
 
 ## Expectativas para agentes de IA
 
+- Toma de base la documentación en `research/` para entender el diseño y las decisiones arquitectónicas.
+- La implementación que debes seguir, está en `research/tech_stack.md`.
+- Después de cada cambio, crea y/o actualiza el documento `research/progress.md` como referencia futura, para saber qué has implementado y cuáles son los siguientes pasos a realizar en el Roadmap definido.
 - La documentación será en español, pero el código y comentarios en inglés.
   - Si encuentras comentarios o código en español en el código, tradúcelos al inglés.
 - Antes de introducir nuevas dependencias, revisa `DEPENDENCIES.md` y la integración con CMake.
@@ -84,3 +87,4 @@ Si haces cambios en `Scene`, `Module` o `ObjectInstance`, asegúrate de que `tes
   - Actualizar ejemplos en `MainComponent.cpp` si dejan de compilar o de tener sentido.
   - Añadir/ajustar asserts en `tests/scene_tests.cpp` para reflejar el nuevo comportamiento esperado.
 - Mantén los mensajes de log del tracker en inglés y con prefijo `[rectai-tracker]` como en `tracker/src/main.cpp`.
+- Los comandos de build como `cmake` no están disponibles en el host. Si tienes que ejecutar código de build o test en local, hazlo dentro de Podman con el comando `podman run --rm -it -v $PWD:$PWD:z -w $PWD build`, o usa Earthly.

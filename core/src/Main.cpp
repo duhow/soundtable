@@ -1,5 +1,6 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include "AudioEngine.h"
 #include "MainComponent.h"
 
 class MainWindow : public juce::DocumentWindow {
@@ -44,6 +45,7 @@ public:
 
 private:
     std::unique_ptr<MainWindow> mainWindow_;
+    AudioEngine audioEngine_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RectaiApplication)
 };

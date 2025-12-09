@@ -3,8 +3,8 @@
 
 #include "core/Scene.h"
 
-// Tests muy simples del modelo Scene/Module/Connection.
-// Se ejecutan como binario normal y se integran con CTest.
+// Very small tests for the Scene/Module/Connection model.
+// They run as a normal binary and are integrated with CTest.
 
 using rectai::Connection;
 using rectai::Module;
@@ -22,32 +22,33 @@ int main()
     Module filter{"filter1", ModuleKind::kFilter};
     filter.AddInputPort("in", true);
 
-    // Se pueden anadir mdulos.
+    // Modules can be added, but duplicates should not be inserted.
     assert(scene.AddModule(osc));
-    assert(!scene.AddModule(osc));  // duplicado no debera insertarse.
+    assert(!scene.AddModule(osc));
 
     assert(scene.AddModule(filter));
 
-    // Conexin vlida entre mdulos existentes.
+    // Valid connection between existing modules.
     Connection connection{.from_module_id = "osc1",
                           .from_port_name = "out",
                           .to_module_id = "filter1",
                           .to_port_name = "in"};
     assert(scene.AddConnection(connection));
 
-    // No debera anadir una conexin duplicada.
+    // Duplicated connection should not be added.
     assert(!scene.AddConnection(connection));
 
-    // Eliminar conexin.
+    // Remove connection.
     assert(scene.RemoveConnection("osc1", "out", "filter1", "in"));
     assert(!scene.RemoveConnection("osc1", "out", "filter1", "in"));
 
-    // Gestionar objetos tangibles.
+    // Manage tangible objects.
     scene.UpsertObject(ObjectInstance(1, "osc1", 0.5F, 0.5F, 0.0F));
     assert(scene.objects().size() == 1U);
 
     scene.UpsertObject(ObjectInstance(1, "osc1", 0.7F, 0.5F, 0.0F));
-    assert(scene.objects().size() == 1U);  // upsert reemplaza.
+    // Upsert should replace the existing object instead of inserting a new one.
+    assert(scene.objects().size() == 1U);
 
     scene.RemoveObject(1);
     assert(scene.objects().empty());
