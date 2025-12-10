@@ -259,6 +259,18 @@
 ### Semántica de `Output` (master) y visualización del nodo central
 - El tangible `type="Output"` del patch Reactable se interpreta ahora explícitamente como el **master** de la escena y ya no se representa como un módulo normal en la mesa (no aparece como nodo ni en la barra de dock).
 
+### Controladores globales sin conexiones explícitas (Volume, Tempo, Tonalizer)
+- Se ha introducido en `AudioModule` el método virtual `is_global_controller()` para distinguir módulos que actúan como controladores de sesión (p.ej. `VolumeModule`, `TempoModule`, `TonalizerModule`) del resto del grafo de audio.
+- `VolumeModule`, `TempoModule` y `TonalizerModule` sobreescriben `is_global_controller()` devolviendo `true`, marcándolos como Global Controllers.
+- `Scene::AddConnection` y `AudioModule::CanConnectTo` rechazan ahora cualquier conexión (dinámica o hardlink) en la que participe un Global Controller, de forma que estos módulos nunca aparecen en `Scene::connections` ni se encadenan con otros módulos ni con `Output`.
+- En la UI (`MainComponent_Paint.cpp`), los módulos marcados como Global Controller ya no dibujan la línea radial blanca hacia el nodo central, manteniendo el rol de estos tangibles como controladores globales de sesión sin routing explícito.
+- Se han añadido tests en `tests/scene_tests.cpp` que verifican que `VolumeModule`, `TempoModule` y `TonalizerModule` no pueden crear conexiones en `Scene` ni ser destino de ellas.
+
+### Alineación de hit-test y pintado en el Dock de módulos
+- Se ha corregido la geometría del Dock en `MainComponent::mouseDown` y `MainComponent::mouseDrag` para que utilicen la misma área de contenido que el pintado en `MainComponent_Paint.cpp`, descontando explícitamente la altura del título del Dock antes de calcular alturas disponibles, offsets y centros (`cy`) de cada módulo dockeado.
+- Antes del cambio, el cálculo de `cy` para el hit-test de los módulos del Dock ignoraba la franja de título superior, lo que desplazaba hacia arriba el centro lógico de los círculos respecto a su posición real en pantalla; como consecuencia, solo era posible seleccionar/arrastrar un módulo haciendo click en la parte alta del círculo, por encima del icono.
+- Con la corrección, el círculo dibujado y el área de hit-test vuelven a coincidir en el Dock: ahora se puede clicar y arrastrar un módulo desde cualquier punto del círculo o de su icono para sacarlo hacia el área musical, manteniendo el mismo comportamiento de scroll vertical del Dock.
+
 ### Oscillator con subtipos y cambio por click derecho
 - `OscillatorModule` incorpora ahora un enum `Waveform` con cuatro subtipos alineados con la Reactable original: `sine`, `saw`, `square` y `noise`.
 - El constructor de `OscillatorModule` inicializa la forma de onda a `sine` y asigna automáticamente el `icon_id` correspondiente del atlas (`oscillator_sine`).
@@ -403,6 +415,15 @@
 - Para objetos asociados a `TempoModule`, cada variación de **5º** de rotación incrementa o decrementa el tempo en **1 BPM**, aplicando la misma convención de sentido (clockwise/counter-clockwise) que ya se utiliza para el control de frecuencia; el valor resultante se almacena en `bpm_` como `double` y se limita siempre a `[40, 400]` BPM.
 - Cada vez que se actualiza el BPM global se sincroniza también el parámetro lógico `tempo` del propio `TempoModule` vía `Scene::SetModuleParameter`, de forma que futuras serializaciones o inspecciones del modelo vean el tempo actualizado.
 - La UI de nodos (`MainComponent_Paint.cpp`) dibuja ahora un pequeño texto con el valor de BPM **entero** (sin decimales) en la esquina superior izquierda del círculo del módulo Tempo, tanto cuando está en la superficie musical como cuando aparece acoplado en la barra de dock, reflejando siempre el valor de `bpm_` que alimenta las ondas concéntricas y la fase del secuenciador.
+
+### Control de Volume global por rotación y slider
+- El `VolumeModule` se inicializa ahora explícitamente con el parámetro lógico `volume` a `0.9F`, de forma que el volumen global arranca al **90%** por defecto, alineado con el comportamiento esperado de la mesa original.
+- El slider lateral derecho asociado al módulo Volume, que en la UI se renderiza como un único control visible, deja de mapearse al parámetro genérico `gain` y pasa a leer/escribir directamente el parámetro `volume` del módulo, manteniendo el resto de parámetros de dinámica/FX (`compression_level`, `reverb_level`, `delay_fb`, etc.) fuera de esta interacción.
+- En `MainComponent::mouseDrag`, cuando el usuario arrastra el control lateral derecho de un tangible asociado a `VolumeModule`, el valor normalizado calculado se aplica únicamente a `Scene::SetModuleParameter(..., "volume", value)`, dejando el mapeo a `gain` intacto para el resto de módulos y usando aún `q` para el control derecho de los filtros.
+- `MainComponent::timerCallback` reutiliza el mapa `rotationDeltaDegrees` para aplicar también la rotación de los tangibles `Volume` al parámetro `volume`: cada vuelta completa (`±360º`) suma o resta aproximadamente `±1.0` al valor normalizado de volumen (clampado siempre a `[0.0, 1.0]`), con el mismo sentido de giro que se usa para frecuencia y tempo.
+- El valor actual de `volume` se interpreta como **volumen global de Master**: antes de mapear los generadores a voces en `AudioEngine`, `MainComponent::timerCallback` busca el primer `VolumeModule` presente en la escena, lee su parámetro `volume` (por defecto `0.9F`) y lo usa como multiplicador global sobre el nivel de cada voz (`level * globalVolume`), aplicado después de la lógica de mute por objeto/conexión y del flag `masterMuted_`.
+- Gracias a este cambio, cada módulo sigue teniendo su propio control de nivel local (`gain` en osciladores y otros módulos de audio), mientras que el módulo Volume actúa como un control maestro que escala toda la salida del sistema por encima del módulo `Output`, cumpliendo la separación "volumen por módulo" vs "volumen global de la mezcla".
+ - Se ha alineado también la detección de clicks del slider lateral derecho del módulo Volume en `MainComponent::mouseDown` para que el handle seleccionado use el mismo parámetro lógico `volume` que se pinta en la UI; antes, el hit-test seguía leyendo el parámetro genérico `gain`, lo que desplazaba la zona de click hacia el 0% aunque el círculo visible estuviera cerca del 90%.
 
 ### Filtro de audio estable con JUCE DSP
 - El motor de audio (`AudioEngine`) ha dejado de usar un biquad RBJ implementado a mano por voz y ahora emplea `juce::dsp::StateVariableTPTFilter<float>` para aplicar el filtro por voz de manera estable.

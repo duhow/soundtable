@@ -208,10 +208,6 @@ VolumeModule::VolumeModule(const std::string& id)
   set_icon_id("volume");
   enable_gain_control(true);
   set_level_mapping(0.0F, 1.0F);
-  allow_any_connection_target();
-
-  AddInputPort("in", true);
-  AddOutputPort("out", true);
 
   SetParameter("volume", 0.9F);
   SetParameter("compression_level", 0.0F);
@@ -261,6 +257,8 @@ LfoModule::LfoModule(const std::string& id)
   set_description("Low-frequency modulation source.");
   set_icon_id("lfo");
 
+  AddOutputPort("out", true);
+
   SetParameter("freq", 9.0F);
   SetParameter("mult", 0.906058F);
   SetParameter("samplehold", 1.0F);
@@ -274,6 +272,8 @@ SequencerModule::SequencerModule(const std::string& id)
   set_label("Sequencer");
   set_description("Step sequencer driving notes or triggers.");
   set_icon_id("sequencer");
+
+  AddOutputPort("out", true);
 
   SetParameter("current_track", 0.0F);
   SetParameter("autoseq_on", 0.0F);

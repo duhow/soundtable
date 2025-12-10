@@ -57,16 +57,6 @@ bool hasDebugViewFlag(int argc, char** argv)
 // the default Reactable patch (see com.reactable/Resources/default.rtp
 // and ReactableRtpLoader).
 //
-// Current mapping:
-//   56 -> Volume      (module id "1")
-//   44 -> Sequencer   (module id "5")
-//   45 -> Sequencer   (module id "6")
-//   51 -> Tempo       (module id "2")
-//   53 -> Tonalizer   (module id "0")
-//   29 -> Filter      (module id "8")
-//   30 -> Delay       (module id "10")
-//   31 -> Delay       (module id "11")
-//
 // Unknown markers fall back to the Output module ("-1") so they are
 // visible but do not control any specific instrument module.
 std::string mapLogicalId(int markerId)
@@ -83,6 +73,7 @@ std::string mapLogicalId(int markerId)
 	case 29: return "8";   // Filter
 	case 30: return "10";  // Delay A
 	case 31: return "11";  // Delay B
+	case 48: return "12";  // Modulator (Flanger)
 	case 26: return "46";  // Oscillator A
 	case 27: return "47";  // Oscillator B
 	default: return "-1";  // Output / unknown

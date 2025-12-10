@@ -19,6 +19,9 @@ using rectai::OscillatorModule;
 using rectai::ReactablePatchMetadata;
 using rectai::Scene;
 using rectai::SampleplayModule;
+using rectai::TempoModule;
+using rectai::TonalizerModule;
+using rectai::VolumeModule;
 
 int main()
 {
@@ -205,6 +208,90 @@ int main()
         // Connections derived from <hardlink> should be marked as
         // hardlinks in the Scene model.
         assert(c.is_hardlink);
+    }
+
+    // Global controller modules (Volume, Tempo, Tonalizer) must not
+    // participate in the explicit connection graph (no dynamic links
+    // or hardlinks in Scene::connections).
+    {
+        Scene s;
+
+        auto vol = std::make_unique<VolumeModule>("vol1");
+        auto tempo = std::make_unique<TempoModule>("tempo1");
+        auto tonalizer = std::make_unique<TonalizerModule>("ton1");
+        auto osc = std::make_unique<OscillatorModule>("osc1");
+
+        assert(s.AddModule(std::move(vol)));
+        assert(s.AddModule(std::move(tempo)));
+        assert(s.AddModule(std::move(tonalizer)));
+        assert(s.AddModule(std::move(osc)));
+
+        // Any connection involving a global controller should be rejected.
+        Connection c1{.from_module_id = "vol1",
+                      .from_port_name = "out",
+                      .to_module_id = "osc1",
+                      .to_port_name = "in"};
+        Connection c2{.from_module_id = "osc1",
+                      .from_port_name = "out",
+                      .to_module_id = "vol1",
+                      .to_port_name = "in"};
+        Connection c3{.from_module_id = "tempo1",
+                      .from_port_name = "out",
+                      .to_module_id = "osc1",
+                      .to_port_name = "in"};
+        Connection c4{.from_module_id = "osc1",
+                      .from_port_name = "out",
+                      .to_module_id = "ton1",
+                      .to_port_name = "in"};
+
+        assert(!s.AddConnection(c1));
+        assert(!s.AddConnection(c2));
+        assert(!s.AddConnection(c3));
+        assert(!s.AddConnection(c4));
+        assert(s.connections().empty());
+    }
+
+    // Volume module defaults: global volume starts at ~90%.
+    {
+        VolumeModule volDefault("vol_default");
+        const float volumeParam =
+            volDefault.GetParameterOrDefault("volume", 0.0F);
+        assert(volumeParam > 0.89F && volumeParam < 0.91F);
+    }
+
+    // Volume module loaded from .rtp with volume="90" debe normalizarse a 0.9.
+    {
+        const char* kRtpVolume =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
+            "<reactablepatch>\n"
+            "  <background color=\"0,0,0\" texture=\"\" alpha=\"1\" rotation=\"0\" revolution=\"0\" random=\"0\" />\n"
+            "  <tangibles>\n"
+            "    <tangible id=\"1\" type=\"Volume\" subtype=\"volume\" angle=\"0\" volume=\"90\" x=\"1.1\" y=\"0.4\" docked=\"1\" dock_pos=\"12\"/>\n"
+            "  </tangibles>\n"
+            "  <author name=\"TestAuthor\" />\n"
+            "  <patch name=\"VolumePatch\" />\n"
+            "</reactablepatch>\n";
+
+        Scene loaded_scene;
+        ReactablePatchMetadata metadata;
+        std::string error;
+        const bool ok = rectai::LoadReactablePatchFromString(
+            kRtpVolume, loaded_scene, &metadata, &error);
+        assert(ok);
+        assert(error.empty());
+
+        assert(loaded_scene.modules().size() == 1U);
+        const auto& modules = loaded_scene.modules();
+        const auto it = modules.find("1");
+        assert(it != modules.end());
+        const auto* module = it->second.get();
+        const auto* volModule =
+            dynamic_cast<const VolumeModule*>(module);
+        assert(volModule != nullptr);
+
+        const float volumeParamFromRtp =
+            volModule->GetParameterOrDefault("volume", 0.0F);
+        assert(volumeParamFromRtp > 0.89F && volumeParamFromRtp < 0.91F);
     }
 
     std::cout << "rectai-core-tests: OK" << std::endl;

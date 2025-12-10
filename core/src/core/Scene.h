@@ -109,6 +109,12 @@ class AudioModule {
   [[nodiscard]] virtual float default_parameter_value(
       const std::string& name) const;
 
+  // Global controllers are special modules (e.g. Volume, Tempo,
+  // Tonalizer) that influence session-wide state but are not part of
+  // the audio routing graph. They must not participate in
+  // Scene::connections (no dynamic links or hardlinks).
+  [[nodiscard]] virtual bool is_global_controller() const { return false; }
+
   [[nodiscard]] bool CanConnectTo(const AudioModule& other) const;
 
  protected:

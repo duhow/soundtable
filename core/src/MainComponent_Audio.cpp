@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "AudioEngine.h"
 #include "MainComponentHelpers.h"
@@ -268,6 +269,50 @@ void MainComponent::timerCallback()
     }
 
     // ------------------------------------------------------------------
+    // Rotation → global volume (master) mapping.
+    // Volume modules act as session-wide output controllers: their
+    // rotation gesture only modifies the `volume` parameter, leaving
+    // dynamics/FX parameters untouched.
+    for (const auto& [objId, obj] : objects) {
+        const auto modIt = modules.find(obj.logical_id());
+        if (modIt == modules.end() || modIt->second == nullptr) {
+            continue;
+        }
+
+        auto* module = modIt->second.get();
+        auto* volumeModule =
+            dynamic_cast<rectai::VolumeModule*>(module);
+        if (volumeModule == nullptr) {
+            continue;
+        }
+
+        const auto deltaIt = rotationDeltaDegrees.find(objId);
+        if (deltaIt == rotationDeltaDegrees.end()) {
+            continue;
+        }
+
+        const float diff = deltaIt->second;
+        if (diff == 0.0F) {
+            continue;
+        }
+
+        // Match the control sense used for frequency and tempo so
+        // clockwise/counter-clockwise behaviour remains consistent.
+        const float deltaVolume = -diff / 360.0F;  // [-0.5, 0.5]
+        if (deltaVolume == 0.0F) {
+            continue;
+        }
+
+        const float currentVolume = volumeModule->GetParameterOrDefault(
+            "volume", 0.9F);
+        const float newVolume = juce::jlimit(0.0F, 1.0F,
+                                             currentVolume + deltaVolume);
+
+        scene_.SetModuleParameter(volumeModule->id(), "volume",
+                                  newVolume);
+    }
+
+    // ------------------------------------------------------------------
     // Hardlink maintenance and collision-based toggling.
     // ------------------------------------------------------------------
     {
@@ -403,6 +448,38 @@ void MainComponent::timerCallback()
     modulesWithActiveAudio_.clear();
     moduleVoiceIndex_.clear();
 
+    // Global master volume derived from the Volume module, if present.
+    float globalVolumeParam = 1.0F;
+    for (const auto& [id, modulePtr] : modules) {
+        if (modulePtr == nullptr) {
+            continue;
+        }
+
+        const auto* volumeModule =
+            dynamic_cast<const rectai::VolumeModule*>(modulePtr.get());
+        if (volumeModule != nullptr) {
+            globalVolumeParam =
+                volumeModule->GetParameterOrDefault("volume", 0.9F);
+            break;
+        }
+    }
+
+    // Map the normalised volume control [0,1] to a perceptual
+    // gain curve in dB so that el volumen por defecto no resulte
+    // excesivo y los cambios pequeños alrededor del 90% sean más
+    // progresivos.
+    float globalVolumeGain = 1.0F;
+    if (globalVolumeParam <= 0.0F) {
+        globalVolumeGain = 0.0F;
+    } else if (globalVolumeParam >= 1.0F) {
+        globalVolumeGain = 1.0F;
+    } else {
+        const float minDb = -40.0F;
+        const float db = -40.0F * (1.0F - globalVolumeParam);
+        const float linear = std::pow(10.0F, db / 20.0F);
+        globalVolumeGain = linear;
+    }
+
     struct VoiceParams {
         double frequency{0.0};
         float level{0.0F};
@@ -523,7 +600,10 @@ void MainComponent::timerCallback()
 
         if (level > 0.0F && voiceIndex < AudioEngine::kMaxVoices) {
             voices[voiceIndex].frequency = frequency;
-            voices[voiceIndex].level = masterMuted_ ? 0.0F : level;
+            const float chainLevel = masterMuted_
+                                         ? 0.0F
+                                         : (level * globalVolumeGain);
+            voices[voiceIndex].level = chainLevel;
             voices[voiceIndex].waveform = waveformIndex;
             const int assignedVoice = voiceIndex;
             ++voiceIndex;

@@ -113,7 +113,14 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 "freq",
                 moduleForObject->default_parameter_value("freq"));
 
-            if (moduleForObject->type() == rectai::ModuleType::kFilter) {
+            if (const auto* volumeModule =
+                    dynamic_cast<const rectai::VolumeModule*>(
+                        moduleForObject)) {
+                gainValue = volumeModule->GetParameterOrDefault(
+                    "volume",
+                    volumeModule->default_parameter_value("volume"));
+            } else if (moduleForObject->type() ==
+                       rectai::ModuleType::kFilter) {
                 gainValue = moduleForObject->GetParameterOrDefault(
                     "q",
                     moduleForObject->default_parameter_value("q"));
@@ -215,6 +222,11 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
             juce::Rectangle<float> dockArea =
                 dockBounds.removeFromRight(dockWidth);
+
+            const float titleHeight = 24.0F;
+            juce::Rectangle<float> titleArea =
+                dockArea.removeFromTop(titleHeight);
+            juce::ignoreUnused(titleArea);
 
             const float availableHeight = dockArea.getHeight();
             const float nodeRadiusDock = 18.0F;
@@ -438,6 +450,11 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         juce::Rectangle<float> dockArea =
             dockBounds.removeFromRight(dockWidth);
 
+        const float titleHeight = 24.0F;
+        juce::Rectangle<float> titleArea =
+            dockArea.removeFromTop(titleHeight);
+        juce::ignoreUnused(titleArea);
+
         const auto& objects = scene_.objects();
         std::size_t dockCount = 0;
         for (const auto& [id, obj] : objects) {
@@ -516,11 +533,22 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         } else if (sideControlKind_ == SideControlKind::kGain) {
             const auto& modules = scene_.modules();
             const auto modIt = modules.find(object.logical_id());
-            if (modIt != modules.end() && modIt->second != nullptr &&
-                modIt->second->type() == rectai::ModuleType::kFilter) {
-                scene_.SetModuleParameter(object.logical_id(), "q", value);
+            if (modIt != modules.end() && modIt->second != nullptr) {
+                auto* module = modIt->second.get();
+                if (module->type() == rectai::ModuleType::kFilter) {
+                    scene_.SetModuleParameter(object.logical_id(), "q",
+                                              value);
+                } else if (dynamic_cast<rectai::VolumeModule*>(module) !=
+                           nullptr) {
+                    scene_.SetModuleParameter(object.logical_id(), "volume",
+                                              value);
+                } else {
+                    scene_.SetModuleParameter(object.logical_id(), "gain",
+                                              value);
+                }
             } else {
-                scene_.SetModuleParameter(object.logical_id(), "gain", value);
+                scene_.SetModuleParameter(object.logical_id(), "gain",
+                                          value);
             }
         }
 

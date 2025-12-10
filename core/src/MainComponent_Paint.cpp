@@ -347,13 +347,21 @@ void MainComponent::paint(juce::Graphics& g)
 
             const auto modForConnectionIt =
                 modules.find(object.logical_id());
-            const bool isGenerator =
-                modForConnectionIt != modules.end() &&
-                modForConnectionIt->second != nullptr &&
-                modForConnectionIt->second->type() ==
-                    rectai::ModuleType::kGenerator;
+            const rectai::AudioModule* moduleForConnection = nullptr;
+            if (modForConnectionIt != modules.end() &&
+                modForConnectionIt->second != nullptr) {
+                moduleForConnection = modForConnectionIt->second.get();
+            }
 
-            if (!isInsideMusicArea(object)) {
+            const bool isGenerator =
+                moduleForConnection != nullptr &&
+                moduleForConnection->type() ==
+                    rectai::ModuleType::kGenerator;
+            const bool isGlobalController =
+                moduleForConnection != nullptr &&
+                moduleForConnection->is_global_controller();
+
+            if (!isInsideMusicArea(object) || isGlobalController) {
                 continue;
             }
 
@@ -705,8 +713,13 @@ void MainComponent::paint(juce::Graphics& g)
             freqValue = moduleForObject->GetParameterOrDefault(
                 "freq",
                 moduleForObject->default_parameter_value("freq"));
-
-            if (moduleForObject->type() == rectai::ModuleType::kFilter) {
+            if (const auto* volumeModule =
+                    dynamic_cast<const rectai::VolumeModule*>(
+                        moduleForObject)) {
+                gainValue = volumeModule->GetParameterOrDefault(
+                    "volume", 0.9F);
+            } else if (moduleForObject->type() ==
+                       rectai::ModuleType::kFilter) {
                 gainValue = moduleForObject->GetParameterOrDefault(
                     "q",
                     moduleForObject->default_parameter_value("q"));

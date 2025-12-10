@@ -416,7 +416,14 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
           continue;
         }
         try {
-          volume->SetParameter(key, std::stof(value));
+          float parsed = std::stof(value);
+          // Reactable almacena el volumen del módulo Volume en
+          // porcentaje (0..100). Normalizamos a [0,1] para el
+          // modelo interno cuando detectamos valores > 1.0.
+          if (key == "volume" && parsed > 1.0F) {
+            parsed = parsed / 100.0F;
+          }
+          volume->SetParameter(key, parsed);
         } catch (...) {
           // Ignore non-float parameters.
         }

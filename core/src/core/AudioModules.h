@@ -97,6 +97,11 @@ class TonalizerModule : public AudioModule {
  public:
          explicit TonalizerModule(const std::string& id);
 
+         [[nodiscard]] bool is_global_controller() const override
+         {
+                  return true;
+         }
+
          [[nodiscard]] const std::vector<ToneDefinition>& tones() const
          {
                   return tones_;
@@ -141,12 +146,22 @@ class FilterModule : public AudioModule {
 class VolumeModule : public AudioModule {
  public:
         explicit VolumeModule(const std::string& id);
+
+        [[nodiscard]] bool is_global_controller() const override
+        {
+                return true;
+        }
 };
 
 // Tempo / global clock module.
 class TempoModule : public AudioModule {
  public:
         explicit TempoModule(const std::string& id);
+
+        [[nodiscard]] bool is_global_controller() const override
+        {
+                return true;
+        }
 };
 
 // Accelerometer-based modulation module.

@@ -81,6 +81,10 @@ void AudioModule::allow_any_connection_target()
 
 bool AudioModule::CanConnectTo(const AudioModule& other) const
 {
+  if (is_global_controller() || other.is_global_controller()) {
+    return false;
+  }
+
   if (!produces_audio_ || !other.consumes_audio_) {
     return false;
   }
@@ -131,6 +135,14 @@ bool Scene::AddConnection(const Connection& connection)
   auto* fromModule = FindModule(connection.from_module_id);
   auto* toModule = FindModule(connection.to_module_id);
   if (fromModule == nullptr || toModule == nullptr) {
+    return false;
+  }
+
+  // Global controller modules (Volume, Tempo, Tonalizer, etc.) must
+  // never participate in the explicit connection graph: they affect
+  // session-level state only.
+  if (fromModule->is_global_controller() ||
+      toModule->is_global_controller()) {
     return false;
   }
 
