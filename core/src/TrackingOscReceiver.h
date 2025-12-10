@@ -7,8 +7,10 @@
 // Simple OSC-based bridge to update the Scene from tracking messages.
 // For now this uses a very small custom protocol:
 //   - /rectai/object  (int32 trackingId, string logicalId,
-//                      float x, float y, float angleRadians)
-//       => upsert ObjectInstance in the Scene
+//                      float x, float y, float angleDegrees)
+//       => upsert ObjectInstance in the Scene. The incoming angle is
+//          expressed in degrees in the range [0, 360] and is converted
+//          internally to radians for the Scene model.
 //   - /rectai/remove  (int32 trackingId)
 //       => remove ObjectInstance from the Scene
 class TrackingOscReceiver : private juce::OSCReceiver,

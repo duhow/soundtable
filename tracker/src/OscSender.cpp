@@ -63,7 +63,7 @@ bool OscSender::sendObject(const std::int32_t trackingId,
                            const std::string& logicalId,
                            const float x,
                            const float y,
-                           const float angleRadians)
+                           const float angleDegrees)
 {
     if (!isOk()) {
         return false;
@@ -72,7 +72,7 @@ bool OscSender::sendObject(const std::int32_t trackingId,
     // Address: /rectai/object
     // Type tags: ",isfff" (int32, string, float, float, float)
     return sendMessage("/rectai/object", ",isfff", logicalId, trackingId, x,
-                       y, angleRadians);
+                       y, angleDegrees);
 }
 
 bool OscSender::sendRemove(const std::int32_t trackingId)
@@ -92,7 +92,7 @@ bool OscSender::sendMessage(const std::string& address,
                             const std::int32_t trackingId,
                             const float x,
                             const float y,
-                            const float angleRadians)
+                            const float angleDegrees)
 {
     std::string buffer;
     buffer.reserve(128);
@@ -104,7 +104,7 @@ bool OscSender::sendMessage(const std::string& address,
     appendPaddedString(logicalId, buffer);
     appendFloat32(x, buffer);
     appendFloat32(y, buffer);
-    appendFloat32(angleRadians, buffer);
+    appendFloat32(angleDegrees, buffer);
 
     const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
     return sent == static_cast<ssize_t>(buffer.size());

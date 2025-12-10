@@ -55,7 +55,7 @@ int expectedIdFromFilename(const std::string& filename)
 int main()
 {
     // Load the first image to initialise the engine dimensions
-    const std::string firstFile = "fiducial_30.png";
+    const std::string firstFile = "fiducial_30.jpg";
     const cv::Mat firstImage = loadFiducialImage(firstFile);
     assert(!firstImage.empty());
 
@@ -63,7 +63,7 @@ int main()
     TrackerEngine engine;
     assert(engine.initialise(0, firstImage.cols, firstImage.rows, error));
 
-    const std::vector<std::string> files{"fiducial_30.png", "fiducial_55.png"};
+    const std::vector<std::string> files{"fiducial_30.jpg", "fiducial_55.jpg"};
 
     for (const auto& file : files) {
         const cv::Mat img = (file == firstFile) ? firstImage : loadFiducialImage(file);

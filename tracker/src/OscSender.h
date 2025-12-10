@@ -16,11 +16,15 @@ public:
 
     [[nodiscard]] bool isOk() const { return socketFd_ >= 0; }
 
+    // Sends a /rectai/object message with the given tracking id,
+    // logical id, normalised position and angle in DEGREES
+    // (range [0, 360]). The core converts this to radians when
+    // populating ObjectInstance.
     bool sendObject(std::int32_t trackingId,
                     const std::string& logicalId,
                     float x,
                     float y,
-                    float angleRadians);
+                    float angleDegrees);
 
     bool sendRemove(std::int32_t trackingId);
 
@@ -31,7 +35,7 @@ private:
                      std::int32_t trackingId,
                      float x,
                      float y,
-                     float angleRadians);
+                     float angleDegrees);
 
     bool sendMessage(const std::string& address,
                      const std::string& typeTags,

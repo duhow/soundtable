@@ -119,6 +119,80 @@ void MainComponent::timerCallback()
     const auto& modules = scene_.modules();
 
     // ------------------------------------------------------------------
+    // Rotation → frequency mapping.
+    // For modules that expose frequency control and have a tangible
+    // object on the table, compute the per-frame rotation delta of the
+    // object and add a normalised contribution to the module's `freq`
+    // parameter. The incoming tracking angle is expressed in degrees
+    // [0, 360] (see TrackingOscReceiver) but stored internally in
+    // radians within ObjectInstance, so we convert back to degrees
+    // here for an intuitive delta in [-180, 180]. A full revolution
+    // corresponds to a Δfreq of ±1.0.
+    const float radToDeg = 180.0F / juce::MathConstants<float>::pi;
+
+    for (const auto& [objId, obj] : objects) {
+        const auto modIt = modules.find(obj.logical_id());
+        if (modIt == modules.end() || modIt->second == nullptr) {
+            continue;
+        }
+
+        auto* module = modIt->second.get();
+        if (!module->uses_frequency_control()) {
+            continue;
+        }
+
+        // Ignore docked modules (toolbar/dock area), but allow
+        // rotation-based modulation anywhere else on the table so
+        // that fiducials just outside the musical circle still
+        // influence their associated module.
+        if (obj.docked()) {
+            continue;
+        }
+
+        const float currentDeg = obj.angle_radians() * radToDeg;
+
+        const auto lastIt = lastObjectAngleDegrees_.find(objId);
+        if (lastIt != lastObjectAngleDegrees_.end()) {
+            float diff = currentDeg - lastIt->second;
+
+            // Wrap into [-180, 180] to get the shortest signed
+            // rotation delta, so crossing the 0/360 boundary yields
+            // small deltas instead of large jumps.
+            while (diff > 180.0F) {
+                diff -= 360.0F;
+            }
+            while (diff < -180.0F) {
+                diff += 360.0F;
+            }
+
+            // Invert sign so that counter-clockwise rotation reduces
+            // the frequency parameter and clockwise rotation
+            // increases it.
+            const float deltaFreq = -diff / 360.0F;  // [-0.5, 0.5]
+
+            const float currentFreq = module->GetParameterOrDefault(
+                "freq", module->default_parameter_value("freq"));
+            const float newFreq = juce::jlimit(0.0F, 1.0F,
+                                               currentFreq + deltaFreq);
+
+            scene_.SetModuleParameter(obj.logical_id(), "freq", newFreq);
+        }
+
+        lastObjectAngleDegrees_[objId] = currentDeg;
+    }
+
+    // Drop entries for objects that are no longer present in the
+    // scene to keep the tracking map bounded.
+    for (auto it = lastObjectAngleDegrees_.begin();
+         it != lastObjectAngleDegrees_.end();) {
+        if (objects.find(it->first) == objects.end()) {
+            it = lastObjectAngleDegrees_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Hardlink maintenance and collision-based toggling.
     // ------------------------------------------------------------------
     {

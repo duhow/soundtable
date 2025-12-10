@@ -153,9 +153,9 @@ int main(int argc, char** argv)
 
 				const float x = 0.5F + 0.3F * std::sin(phase);
 				const float y = 0.5F;
-				const float angle = 0.0F;
+				const float angleDegrees = 0.0F;
 
-				(void)oscSender.sendObject(1, "osc1", x, y, angle);
+				(void)oscSender.sendObject(1, "osc1", x, y, angleDegrees);
 			}
 		} else {
 			rectai::tracker::TrackedObjectList objects;
@@ -224,12 +224,15 @@ int main(int argc, char** argv)
 			if (oscSender.isOk()) {
 				for (const auto& obj : stableObjects) {
 					const std::string logicalId = mapLogicalId(obj.id);
+					const float angleDegrees = obj.angle_rad *
+						(180.0F / static_cast<float>(M_PI));
 					std::cout << "[rectai-tracker] fiducial " << obj.id
 							<< " -> logicalId=" << logicalId
 							<< " x=" << obj.x_norm
-							<< " y=" << obj.y_norm << '\n';
+							<< " y=" << obj.y_norm
+							<< " angle_deg=" << angleDegrees << '\n';
 					(void)oscSender.sendObject(obj.id, logicalId,
-									 obj.x_norm, obj.y_norm, obj.angle_rad);
+								 obj.x_norm, obj.y_norm, angleDegrees);
 				}
 
 

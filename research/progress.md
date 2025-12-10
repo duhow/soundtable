@@ -253,6 +253,25 @@
 - `MainComponent` usa ahora `loadFile` para localizar `default.rtp` antes de invocar `LoadReactablePatchFromFile`, eliminando el array local de 8 candidatos.
 - `MainComponent_Atlas` también usa `loadFile` para hallar `com.reactable/Resources/atlas_2048.png` y deriva de ahí el `atlas_2048.xml` en el mismo directorio, unificando la estrategia de búsqueda de recursos Reactable y reduciendo duplicación de código.
 
+### Giro de módulos y modulación de frecuencia por rotación
+- El protocolo OSC de tracking (`TrackingOscReceiver`) interpreta ahora el quinto argumento de `/rectai/object` como ángulo en grados dentro del rango `[0, 360]` y lo convierte internamente a radianes antes de poblar `rectai::ObjectInstance`, manteniendo la semántica del modelo (`angle_radians`) coherente con el loader `.rtp`.
+- `MainComponent` mantiene un mapa `lastObjectAngleDegrees_` indexado por `tracking_id` que almacena el último ángulo conocido (en grados) de cada `ObjectInstance` presente en la escena.
+- En `MainComponent::timerCallback`, antes de calcular la mezcla de frecuencia/nivel hacia `AudioEngine`, se recorre la lista de objetos y para cada uno que:
+  - tenga un `AudioModule` asociado,
+  - exponga control de frecuencia (`uses_frequency_control()`), y
+  - esté dentro del área musical (`isInsideMusicArea`),
+  se calcula el delta de rotación entre el ángulo actual y el previo.
+- El ángulo almacenado en la escena se convierte de radianes a grados, se obtiene la diferencia y se normaliza al rango `[-180, 180]` para tratar correctamente el cruce 0/360°; a partir de ahí se deriva una variación de frecuencia normalizada `deltaFreq = diff / 360.0f` en el rango aproximado `[-0.5, 0.5]`.
+- Esta `deltaFreq` se suma al parámetro `freq` del módulo correspondiente, usando `Scene::SetModuleParameter` y limitando siempre el resultado a `[0.0, 1.0]` mediante `juce::jlimit`, de forma que un giro completo de 360° equivale a un desplazamiento de ±1.0 en el parámetro de frecuencia.
+- Los objetos que desaparecen de la escena (se borran vía `/rectai/remove` o por otros caminos) se eliminan también del mapa `lastObjectAngleDegrees_` en cada frame, evitando fugas de memoria y dejando el tracking preparado para nuevas apariciones con un historial limpio.
+
+### Alineación del ángulo OSC entre tracker y core
+- `tracker/src/OscSender.{h,cpp}` espera ahora explícitamente el ángulo en **grados** en `sendObject` y lo empaqueta tal cual en el mensaje `/rectai/object` (tipo `float`).
+- En `tracker/src/main.cpp`, el modo live convierte `obj.angle_rad` (radianes provenientes de `TrackerEngine`) a grados con `angleDegrees = obj.angle_rad * 180.0f / M_PI` antes de enviarlo por OSC, y escribe un log detallado por fiducial con `angle_deg=...` para poder depurar visualmente la rotación.
+- El modo synthetic también usa ya una variable `angleDegrees` coherente, de modo que cualquier futura animación de giro sintético respetará la misma convención de grados/plano `[0,360]` utilizada por el core.
+- En el core, `TrackingOscReceiver` sigue recibiendo el quinto argumento como grados y lo transforma a radianes al construir `ObjectInstance`, de forma que `MainComponent` y el resto del modelo continúan trabajando internamente siempre en radianes.
+- La lógica de modulación por rotación en `MainComponent::timerCallback` se ha relajado para aplicar el delta de giro a cualquier objeto **no docked**, independientemente de que esté o no estrictamente dentro del círculo musical, evitando casos en los que la barra de `freq` no se actualizaba al girar un fiducial situado muy cerca del borde.
+
 ### Tracker basado en blobs tipo "amoeba" y eliminación de ArUco
 - `TrackerEngine` deja de depender de `cv::aruco` y ya no intenta detectar marcadores ArUco ni usar diccionarios predefinidos.
 - La ruta de detección se basaba inicialmente únicamente en segmentación de blobs: conversión a escala de grises, `GaussianBlur`, `adaptiveThreshold` y `findContours` para localizar regiones orgánicas de un tamaño mínimo configurable.

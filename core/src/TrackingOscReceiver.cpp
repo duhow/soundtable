@@ -42,7 +42,8 @@ void TrackingOscReceiver::oscMessageReceived(const juce::OSCMessage& message)
 
 void TrackingOscReceiver::handleObjectMessage(const juce::OSCMessage& message)
 {
-    // Expected: int32 trackingId, string logicalId, float x, float y, float angle.
+    // Expected: int32 trackingId, string logicalId, float x, float y,
+    // float angleDegrees.
     if (message.size() < 5) {
         juce::Logger::writeToLog(
             "[rectai-core] /rectai/object: invalid argument count");
@@ -61,9 +62,13 @@ void TrackingOscReceiver::handleObjectMessage(const juce::OSCMessage& message)
     const auto logicalId = message[1].getString().toStdString();
     const auto x = message[2].getFloat32();
     const auto y = message[3].getFloat32();
-    const auto angle = message[4].getFloat32();
+    const auto angleDegrees = message[4].getFloat32();
 
-    rectai::ObjectInstance instance(trackingId, logicalId, x, y, angle);
+    constexpr float kPi = juce::MathConstants<float>::pi;
+    const float angleRadians = angleDegrees * (kPi / 180.0F);
+
+    rectai::ObjectInstance instance(trackingId, logicalId, x, y,
+                                    angleRadians);
     scene_.UpsertObject(instance);
 }
 

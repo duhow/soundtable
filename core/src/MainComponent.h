@@ -44,6 +44,11 @@ private:
     // Simple per-object mute state (by tracking id).
     std::unordered_set<std::int64_t> mutedObjects_;
 
+    // Last known angle in degrees for each tracked object, used to
+    // compute per-frame rotation deltas that modulate module
+    // frequency parameters.
+    std::unordered_map<std::int64_t, float> lastObjectAngleDegrees_;
+
     // Per-connection mute state, keyed by a stable connection id.
     std::unordered_set<std::string> mutedConnections_;
 
