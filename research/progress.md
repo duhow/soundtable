@@ -272,6 +272,26 @@
 - En el core, `TrackingOscReceiver` sigue recibiendo el quinto argumento como grados y lo transforma a radianes al construir `ObjectInstance`, de forma que `MainComponent` y el resto del modelo continúan trabajando internamente siempre en radianes.
 - La lógica de modulación por rotación en `MainComponent::timerCallback` se ha relajado para aplicar el delta de giro a cualquier objeto **no docked**, independientemente de que esté o no estrictamente dentro del círculo musical, evitando casos en los que la barra de `freq` no se actualizaba al girar un fiducial situado muy cerca del borde.
 
+### Unicidad de objetos por `logical_id` en la Scene
+- `rectai::Scene::UpsertObject` garantiza ahora que solo exista un `ObjectInstance` por cada `logical_id` en la escena: antes de insertar/actualizar el nuevo objeto, recorre el mapa interno `objects_` y elimina cualquier entrada previa cuyo `logical_id()` coincida pero cuyo `tracking_id()` sea distinto.
+- Esto resuelve situaciones en las que un mismo módulo podía aparecer dos veces en la superficie musical (por ejemplo, una posición “manual” definida en el `.rtp` y otra proveniente de tracking OSC) manteniendo **solo** la posición más reciente, que típicamente es la enviada por el tracker.
+- Con esta política, cuando el tracker envía `/rectai/object` para un módulo que ya tenía un objeto asociado, la ubicación controlada por OSC pasa a ser la única referencia espacial para ese `logical_id`, de modo que las heurísticas de UI y audio (conexiones, área musical, barras de `freq`/`gain`) siempre operan sobre una única instancia coherente por módulo.
+
+### Mapeo de múltiples osciladores a voces independientes
+- `AudioEngine` expone ahora públicamente la constante `kMaxVoices` (actualmente 16), que define el número máximo de voces senoidales que puede mezclar en paralelo.
+- `MainComponent::timerCallback` deja de colapsar todos los generadores (`ModuleType::kGenerator`, típicamente osciladores) en una sola frecuencia/nivel global; en su lugar recorre los objetos de la `Scene` y, para cada generador activo dentro del área musical y con ruta de conexión válida, calcula una frecuencia absoluta y un nivel efectivo teniendo en cuenta:
+  - El parámetro `freq` propio del módulo.
+  - El parámetro `gain` tanto del generador como del módulo aguas abajo (por ejemplo, un filtro o volumen) siguiendo las conexiones de `Scene`.
+  - Los flags de mute por objeto (`mutedObjects_`), por conexión (`mutedConnections_`) y el estado `masterMuted_`.
+- Cada generador audible se asigna a una voz distinta de `AudioEngine` mediante `setVoice(voiceIndex, frequency, level)`, hasta un máximo de `AudioEngine::kMaxVoices`; las voces no utilizadas en ese frame se fuerzan explícitamente a `(frequency=0.0, level=0.0)` para garantizar que osciladores que desaparecen de la escena dejan de sonar inmediatamente.
+- El callback de audio en `AudioEngine` sigue mezclando todas las voces en una salida estéreo simple, pero ahora cada oscilador tangible se traduce en una contribución independiente al mix, permitiendo escuchar simultáneamente varios osciladores conectados al Master o encadenados a filtros según la topología definida en la `Scene`.
+
+### Retorno automático al dock cuando desaparece el fiducial
+- El manejador `/rectai/remove` en `TrackingOscReceiver` deja de llamar directamente a `Scene::RemoveObject` y, en su lugar, busca el `ObjectInstance` asociado al `trackingId` que llega por OSC.
+- Si existe, se crea una nueva instancia con los mismos `tracking_id`, `logical_id`, posición y ángulo, pero con el flag `docked=true`, y se reinyecta en la escena mediante `Scene::UpsertObject`.
+- Dado que `isInsideMusicArea` considera automáticamente que cualquier objeto `docked` está fuera del área musical, el módulo desaparece de la mesa central y vuelve a aparecer en la barra de dock de la UI, manteniendo intacto su módulo lógico en la escena.
+- Combinado con la unicidad por `logical_id`, esto asegura que cada módulo tiene siempre **una sola** representación espacial: mientras el fiducial está presente, la controla el tracking OSC; cuando desaparece, la representación vuelve al dock sin duplicados.
+
 ### Tracker basado en blobs tipo "amoeba" y eliminación de ArUco
 - `TrackerEngine` deja de depender de `cv::aruco` y ya no intenta detectar marcadores ArUco ni usar diccionarios predefinidos.
 - La ruta de detección se basaba inicialmente únicamente en segmentación de blobs: conversión a escala de grises, `GaussianBlur`, `adaptiveThreshold` y `findContours` para localizar regiones orgánicas de un tamaño mínimo configurable.

@@ -113,8 +113,9 @@ void MainComponent::toggleHardlinkBetweenObjects(
 void MainComponent::timerCallback()
 {
     // Map scene state to audio parameters using AudioModule metadata.
-    // Multiple generator modules can be active at once; we currently
-    // mix them into a single voice 0 for simplicity.
+    // Multiple generator modules can be active at once; we map each
+    // active generator to an independent AudioEngine voice so that
+    // multiple oscillators can sound simultaneously.
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();
 
@@ -318,16 +319,20 @@ void MainComponent::timerCallback()
         }
     }
 
-    double mixedFrequency = 0.0;
-    float mixedLevel = 0.0F;
-    bool hasAnyActive = false;
-
     // Precompute a lookup from module id to object tracking id, so we can
     // quickly test mute/position for downstream modules.
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
     for (const auto& [objId, obj] : objects) {
         moduleToObjectId.emplace(obj.logical_id(), objId);
     }
+
+    struct VoiceParams {
+        double frequency{0.0};
+        float level{0.0F};
+    };
+
+    VoiceParams voices[AudioEngine::kMaxVoices];
+    int voiceIndex = 0;
 
     for (const auto& [objId, obj] : objects) {
         const auto modIt = modules.find(obj.logical_id());
@@ -414,30 +419,23 @@ void MainComponent::timerCallback()
         const float extra = module->level_range() * gainParam;
         const float level = chainMuted ? 0.0F : (baseLevel + extra);
 
-        if (level > 0.0F) {
-            if (!hasAnyActive) {
-                mixedFrequency = frequency;
-                mixedLevel = level;
-                hasAnyActive = true;
-            } else {
-                // Simple averaging when multiple generators are active.
-                mixedFrequency = 0.5 * (mixedFrequency + frequency);
-                mixedLevel = std::min(1.0F, mixedLevel + level);
-            }
+        if (level > 0.0F && voiceIndex < AudioEngine::kMaxVoices) {
+            voices[voiceIndex].frequency = frequency;
+            voices[voiceIndex].level = masterMuted_ ? 0.0F : level;
+            ++voiceIndex;
         }
     }
 
-    if (!hasAnyActive) {
-        mixedFrequency = 0.0;
-        mixedLevel = 0.0F;
+    // Apply per-voice state to the AudioEngine. Any voices beyond the
+    // active count are explicitly silenced so that oscillators removed
+    // from the scene stop producing sound.
+    for (int v = 0; v < AudioEngine::kMaxVoices; ++v) {
+        if (v < voiceIndex) {
+            audioEngine_.setVoice(v, voices[v].frequency, voices[v].level);
+        } else {
+            audioEngine_.setVoice(v, 0.0, 0.0F);
+        }
     }
-
-    if (masterMuted_) {
-        mixedLevel = 0.0F;
-    }
-
-    audioEngine_.setFrequency(mixedFrequency);
-    audioEngine_.setLevel(mixedLevel);
 
     // Update BPM pulse animation.
     const double fps = 60.0;  // Timer frequency.

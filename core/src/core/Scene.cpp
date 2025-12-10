@@ -178,6 +178,21 @@ bool Scene::RemoveConnection(const std::string& from_module_id,
 
 void Scene::UpsertObject(const ObjectInstance& object)
 {
+  // Ensure that there is at most one ObjectInstance per logical_id in
+  // the scene. When a new object is upserted (either from a loaded
+  // patch or from live tracking via OSC), remove any existing objects
+  // that reference the same logical_id but use a different
+  // tracking_id. This guarantees that the most recent source
+  // (typically OSC) wins over any previous manual position.
+  for (auto it = objects_.begin(); it != objects_.end();) {
+    if (it->second.logical_id() == object.logical_id() &&
+        it->first != object.tracking_id()) {
+      it = objects_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
   objects_[object.tracking_id()] = object;
 }
 

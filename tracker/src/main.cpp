@@ -72,14 +72,19 @@ bool hasDebugViewFlag(int argc, char** argv)
 std::string mapLogicalId(int markerId)
 {
 	switch (markerId) {
+	case 51: return "2";   // Tempo
+	case 53: return "0";   // Tonalizer
+	case 54: return "2";   // Tempo
 	case 56: return "1";   // Volume
 	case 44: return "5";   // Sequencer A
 	case 45: return "6";   // Sequencer B
-	case 51: return "2";   // Tempo
-	case 53: return "0";   // Tonalizer
+	case 46: return "24";  // Sample A
+	case 47: return "29";  // Sample B
 	case 29: return "8";   // Filter
 	case 30: return "10";  // Delay A
 	case 31: return "11";  // Delay B
+	case 26: return "46";  // Oscillator A
+	case 27: return "47";  // Oscillator B
 	default: return "-1";  // Output / unknown
 	}
 }

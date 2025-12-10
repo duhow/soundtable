@@ -82,5 +82,19 @@ void TrackingOscReceiver::handleRemoveMessage(const juce::OSCMessage& message)
     }
 
     const auto trackingId = static_cast<std::int64_t>(message[0].getInt32());
-    scene_.RemoveObject(trackingId);
+
+    // Instead of removing the object from the scene entirely, mark
+    // its associated module as docked again so that it returns to the
+    // dock/toolbar area when the fiducial disappears from tracking.
+    const auto& objects = scene_.objects();
+    const auto it = objects.find(trackingId);
+    if (it == objects.end()) {
+        return;
+    }
+
+    const auto& obj = it->second;
+    rectai::ObjectInstance dockedInstance(
+        trackingId, obj.logical_id(), obj.x(), obj.y(),
+        obj.angle_radians(), /*docked=*/true);
+    scene_.UpsertObject(dockedInstance);
 }

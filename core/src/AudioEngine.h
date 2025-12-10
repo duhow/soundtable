@@ -19,6 +19,9 @@ public:
     AudioEngine();
     ~AudioEngine() override;
 
+    // Maximum number of independent generator voices mixed by the engine.
+    static constexpr int kMaxVoices = 16;
+
     // juce::AudioIODeviceCallback
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
@@ -41,8 +44,6 @@ private:
     juce::AudioDeviceManager deviceManager_;
 
     double sampleRate_{44100.0};
-
-    static constexpr int kMaxVoices = 16;
 
     struct Voice {
         std::atomic<double> frequency{0.0};
