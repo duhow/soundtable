@@ -258,6 +258,12 @@
 
 ### Semántica de `Output` (master) y visualización del nodo central
 - El tangible `type="Output"` del patch Reactable se interpreta ahora explícitamente como el **master** de la escena y ya no se representa como un módulo normal en la mesa (no aparece como nodo ni en la barra de dock).
+
+### Módulo de filtro con modos y resonancia
+- `FilterModule` se ha ampliado para soportar tres modos explícitos (`lowpass`, `bandpass`, `highpass`) mediante un enum interno y un helper `set_mode_from_subtype` que inicializa el modo a partir del atributo `subtype` del `.rtp` (por defecto `bandpass` cuando no se reconoce el valor).
+- La rotación física del tangible de filtro sigue mapeándose al parámetro normalizado `freq` del módulo, que en adelante se interpreta como frecuencia de corte (low/high-pass) o frecuencia central (band-pass), delegando en el futuro motor de audio la traducción a Hz según el modo.
+- La barra lateral derecha del filtro deja de controlar el volumen de la cadena y pasa a representar el parámetro de calidad/resonancia `q`; la UI utiliza ahora `q` para pintar y editar ese control, mientras que el motor de audio ignora dicho valor como ganancia global.
+- En el cálculo de nivel por voz en `MainComponent::timerCallback`, los módulos de filtro ya no modifican la ganancia efectiva de la cadena `osc → filtro → master`; el nivel se deriva del generador (u otros módulos aguas abajo como `VolumeModule`), preservando la intención de que el control del filtro afecte solo a su carácter espectral (resonancia) y no al volumen general.
 - `ReactablePatchMetadata` se amplía con `master_colour_argb` y `master_muted`, que el loader rellena leyendo los atributos `color` y `muted` del tangible `Output` (admitiendo colores en formato ARGB de 8 dígitos o RGB de 6 dígitos, asumiendo alfa opaco).
 - `MainComponent` usa `master_colour_argb` para colorear el punto central y sus ondas de pulso, en lugar de un blanco fijo, de modo que el aspecto del master respeta el patch original (`default.rtp` u otros `.rtp`).
 - El atributo `muted` del `Output` se traduce en un flag `masterMuted_` en la UI: cuando está activo, atenúa visualmente el nodo central y fuerza el nivel de mezcla global a cero en `timerCallback`, actuando como un mute maestro sobre todo el sonido generado por los módulos.
@@ -374,3 +380,9 @@
 - Para objetos asociados a `TempoModule`, cada variación de **5º** de rotación incrementa o decrementa el tempo en **1 BPM**, aplicando la misma convención de sentido (clockwise/counter-clockwise) que ya se utiliza para el control de frecuencia; el valor resultante se almacena en `bpm_` como `double` y se limita siempre a `[40, 400]` BPM.
 - Cada vez que se actualiza el BPM global se sincroniza también el parámetro lógico `tempo` del propio `TempoModule` vía `Scene::SetModuleParameter`, de forma que futuras serializaciones o inspecciones del modelo vean el tempo actualizado.
 - La UI de nodos (`MainComponent_Paint.cpp`) dibuja ahora un pequeño texto con el valor de BPM **entero** (sin decimales) en la esquina superior izquierda del círculo del módulo Tempo, tanto cuando está en la superficie musical como cuando aparece acoplado en la barra de dock, reflejando siempre el valor de `bpm_` que alimenta las ondas concéntricas y la fase del secuenciador.
+
+### Filtro de audio estable con JUCE DSP
+- El motor de audio (`AudioEngine`) ha dejado de usar un biquad RBJ implementado a mano por voz y ahora emplea `juce::dsp::StateVariableTPTFilter<float>` para aplicar el filtro por voz de manera estable.
+- En `audioDeviceAboutToStart` se inicializa un `StateVariableTPTFilter` por cada voz con un `ProcessSpec` mono (1 canal) y el tamaño máximo de bloque reportado por el dispositivo de audio; cada filtro se resetea tanto al iniciar como al detener el dispositivo.
+- El método `setVoiceFilter` configura ahora directamente el tipo (`lowpass`, `bandpass`, `highpass`) con `setType`, y ajusta frecuencia de corte y resonancia con `setCutoffFrequency` y `setResonance`, tras limitar la frecuencia al rango físico válido por debajo de Nyquist.
+- En `audioDeviceIOCallbackWithContext`, cuando una voz tiene modo de filtro distinto de cero, la muestra senoidal generada para esa voz se pasa por `filters_[v].processSample(0, raw)`, y solo entonces se acumula en la mezcla y en el buffer de forma de onda, eliminando los artefactos de “crispado” que producía la implementación biquad anterior.

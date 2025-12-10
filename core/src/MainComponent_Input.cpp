@@ -58,9 +58,16 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             freqValue = moduleForObject->GetParameterOrDefault(
                 "freq",
                 moduleForObject->default_parameter_value("freq"));
-            gainValue = moduleForObject->GetParameterOrDefault(
-                "gain",
-                moduleForObject->default_parameter_value("gain"));
+
+            if (moduleForObject->type() == rectai::ModuleType::kFilter) {
+                gainValue = moduleForObject->GetParameterOrDefault(
+                    "q",
+                    moduleForObject->default_parameter_value("q"));
+            } else {
+                gainValue = moduleForObject->GetParameterOrDefault(
+                    "gain",
+                    moduleForObject->default_parameter_value("gain"));
+            }
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
         gainValue = juce::jlimit(0.0F, 1.0F, gainValue);
@@ -453,7 +460,14 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         if (sideControlKind_ == SideControlKind::kFreq) {
             scene_.SetModuleParameter(object.logical_id(), "freq", value);
         } else if (sideControlKind_ == SideControlKind::kGain) {
-            scene_.SetModuleParameter(object.logical_id(), "gain", value);
+            const auto& modules = scene_.modules();
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt != modules.end() && modIt->second != nullptr &&
+                modIt->second->type() == rectai::ModuleType::kFilter) {
+                scene_.SetModuleParameter(object.logical_id(), "q", value);
+            } else {
+                scene_.SetModuleParameter(object.logical_id(), "gain", value);
+            }
         }
 
         repaint();

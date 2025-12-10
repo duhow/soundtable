@@ -705,9 +705,16 @@ void MainComponent::paint(juce::Graphics& g)
             freqValue = moduleForObject->GetParameterOrDefault(
                 "freq",
                 moduleForObject->default_parameter_value("freq"));
-            gainValue = moduleForObject->GetParameterOrDefault(
-                "gain",
-                moduleForObject->default_parameter_value("gain"));
+
+            if (moduleForObject->type() == rectai::ModuleType::kFilter) {
+                gainValue = moduleForObject->GetParameterOrDefault(
+                    "q",
+                    moduleForObject->default_parameter_value("q"));
+            } else {
+                gainValue = moduleForObject->GetParameterOrDefault(
+                    "gain",
+                    moduleForObject->default_parameter_value("gain"));
+            }
             showFreqControl = moduleForObject->uses_frequency_control();
             showGainControl = moduleForObject->uses_gain_control();
         }

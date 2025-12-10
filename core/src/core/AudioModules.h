@@ -72,42 +72,54 @@ class OscillatorModule : public AudioModule {
         Envelope envelope_{};
 };
 
-class FilterModule : public AudioModule {
- public:
-        explicit FilterModule(const std::string& id,
-                                                                                                float default_cutoff = 0.5F,
-                                                                                                float default_gain = 0.5F);
-
-        [[nodiscard]] float default_parameter_value(
-                        const std::string& name) const override;
-
-        [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-        Envelope& mutable_envelope() { return envelope_; }
-
- private:
-        Envelope envelope_{};
-};
-
 // Output / Master module.
 class OutputModule : public AudioModule {
  public:
-        explicit OutputModule(const std::string& id);
+         explicit OutputModule(const std::string& id);
 };
 
 // Tonalizer module (scales/keys).
 class TonalizerModule : public AudioModule {
  public:
-        explicit TonalizerModule(const std::string& id);
+         explicit TonalizerModule(const std::string& id);
 
-        [[nodiscard]] const std::vector<ToneDefinition>& tones() const
-        {
-                return tones_;
-        }
+         [[nodiscard]] const std::vector<ToneDefinition>& tones() const
+         {
+                  return tones_;
+         }
 
-        std::vector<ToneDefinition>& mutable_tones() { return tones_; }
+         std::vector<ToneDefinition>& mutable_tones() { return tones_; }
 
  private:
-        std::vector<ToneDefinition> tones_;
+         std::vector<ToneDefinition> tones_;
+};
+
+// Filter module.
+class FilterModule : public AudioModule {
+ public:
+         enum class Mode {
+                  kLowPass = 0,
+                  kBandPass,
+                  kHighPass,
+         };
+
+         explicit FilterModule(const std::string& id,
+														float default_cutoff = 0.5F,
+														float default_q = 0.5F);
+
+         [[nodiscard]] float default_parameter_value(
+						const std::string& name) const override;
+
+         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
+         Envelope& mutable_envelope() { return envelope_; }
+
+         [[nodiscard]] Mode mode() const { return mode_; }
+         void set_mode(Mode mode) { mode_ = mode; }
+         void set_mode_from_subtype(const std::string& subtype);
+
+ private:
+         Envelope envelope_{};
+         Mode mode_{Mode::kBandPass};
 };
 
 // Global volume / dynamics / FX send module.

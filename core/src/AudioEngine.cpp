@@ -32,6 +32,22 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     for (double& phase : phases_) {
         phase = 0.0;
     }
+
+    const juce::uint32 maxBlockSize =
+        (device != nullptr && device->getCurrentBufferSizeSamples() > 0)
+            ? static_cast<juce::uint32>(
+                  device->getCurrentBufferSizeSamples())
+            : 512U;
+
+    juce::dsp::ProcessSpec spec{sampleRate_, maxBlockSize, 1U};
+
+    for (int v = 0; v < kMaxVoices; ++v) {
+        filters_[v].reset();
+        filters_[v].prepare(spec);
+        voices_[v].filterMode.store(0, std::memory_order_relaxed);
+        voices_[v].filterCutoffHz.store(0.0, std::memory_order_relaxed);
+        voices_[v].filterQ.store(0.7071F, std::memory_order_relaxed);
+    }
 }
 
 void AudioEngine::audioDeviceStopped()
@@ -39,40 +55,9 @@ void AudioEngine::audioDeviceStopped()
     for (double& phase : phases_) {
         phase = 0.0;
     }
-}
 
-void AudioEngine::setFrequency(const double frequency)
-{
-    // Convenience wrapper for voice 0.
-    setVoice(0, frequency, voices_[0].level.load(std::memory_order_relaxed));
-}
-
-void AudioEngine::setLevel(const float level)
-{
-    // Convenience wrapper for voice 0.
-    setVoice(0, voices_[0].frequency.load(std::memory_order_relaxed), level);
-}
-
-void AudioEngine::setVoice(const int index, const double frequency,
-                           const float level)
-{
-    if (index < 0 || index >= kMaxVoices) {
-        return;
-    }
-
-    const auto clampedFreq = juce::jlimit(20.0, 2000.0, frequency);
-    const auto clampedLevel = juce::jlimit(0.0F, 1.0F, level);
-
-    voices_[index].frequency.store(clampedFreq, std::memory_order_relaxed);
-    voices_[index].level.store(clampedLevel, std::memory_order_relaxed);
-
-    int currentVoices = numVoices_.load(std::memory_order_relaxed);
-    const int desired = index + 1;
-    while (desired > currentVoices &&
-           !numVoices_.compare_exchange_weak(currentVoices, desired,
-                                             std::memory_order_relaxed)) {
-        // currentVoices is updated with the latest value; loop until we
-        // successfully raise it or observe a newer, larger value.
+    for (int v = 0; v < kMaxVoices; ++v) {
+        filters_[v].reset();
     }
 }
 
@@ -84,59 +69,69 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     const int numSamples,
     const juce::AudioIODeviceCallbackContext& /*context*/)
 {
-    if (numSamples <= 0 || numOutputChannels <= 0) {
+    if (sampleRate_ <= 0.0) {
+        // Clear outputs if the device is not properly started yet.
+        for (int channel = 0; channel < numOutputChannels; ++channel) {
+            if (auto* buffer = outputChannelData[channel]) {
+                std::fill(buffer, buffer + numSamples, 0.0F);
+            }
+        }
         return;
     }
 
-    // Clear all output channels first.
-    for (int channel = 0; channel < numOutputChannels; ++channel) {
-        if (auto* buffer = outputChannelData[channel]) {
-            std::fill(buffer, buffer + numSamples, 0.0F);
-        }
-    }
-
-    // Generate a simple multi-voice sine mix and write it to all outputs.
-    const int voiceCount =
-        std::clamp(numVoices_.load(std::memory_order_relaxed), 0, kMaxVoices);
+    const double twoPiOverFs =
+        juce::MathConstants<double>::twoPi / sampleRate_;
 
     const int historySize = kWaveformHistorySize;
+    const int voiceCount =
+        std::min(numVoices_.load(std::memory_order_relaxed), kMaxVoices);
+
+    // Reserve a contiguous block of indices in the circular history
+    // buffer for this callback.
     const int baseWriteIndex =
         waveformWriteIndex_.fetch_add(numSamples, std::memory_order_relaxed);
 
     for (int sample = 0; sample < numSamples; ++sample) {
         float mixed = 0.0F;
 
-        if (sampleRate_ > 0.0 && voiceCount > 0) {
-            const double twoPiOverFs =
-                juce::MathConstants<double>::twoPi / sampleRate_;
+        const int writeIndex = baseWriteIndex + sample;
+        const int bufIndex =
+            historySize > 0 ? (writeIndex % historySize) : 0;
 
-            const int writeIndex = baseWriteIndex + sample;
-            const int bufIndex = writeIndex % historySize;
-
+        if (voiceCount > 0) {
             for (int v = 0; v < voiceCount; ++v) {
-                const auto freq =
+                const double freq =
                     voices_[v].frequency.load(std::memory_order_relaxed);
-                const auto level =
+                const float level =
                     voices_[v].level.load(std::memory_order_relaxed);
 
-                float s = 0.0F;
+                float raw = 0.0F;
                 if (level > 0.0F && freq > 0.0) {
                     phases_[v] += twoPiOverFs * freq;
-                    s = static_cast<float>(std::sin(phases_[v])) *
-                        level;
-                    mixed += s;
+                    raw = static_cast<float>(std::sin(phases_[v])) *
+                          level;
                 }
 
+                // Apply optional per-voice filter via JUCE's
+                // StateVariableTPTFilter for better stability.
+                float s = raw;
+                const int mode =
+                    voices_[v].filterMode.load(std::memory_order_relaxed);
+                if (mode != 0) {
+                    s = filters_[v].processSample(0, raw);
+                }
+
+                mixed += s;
                 voiceWaveformBuffer_[v][bufIndex] = s;
             }
 
+            // Prevent hard digital clipping when summing several
+            // voices or using high-Q filter settings.
+            mixed = juce::jlimit(-0.9F, 0.9F, mixed);
             waveformBuffer_[bufIndex] = mixed;
         } else {
-            const int writeIndex = baseWriteIndex + sample;
-            const int bufIndex = writeIndex % historySize;
-
             waveformBuffer_[bufIndex] = 0.0F;
-            for (int v = 0; v < voiceCount; ++v) {
+            for (int v = 0; v < kMaxVoices; ++v) {
                 voiceWaveformBuffer_[v][bufIndex] = 0.0F;
             }
         }
@@ -146,6 +141,34 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 buffer[sample] = mixed;
             }
         }
+    }
+}
+
+void AudioEngine::setFrequency(const double frequency)
+{
+    setVoice(0, frequency,
+             voices_[0].level.load(std::memory_order_relaxed));
+}
+
+void AudioEngine::setLevel(const float level)
+{
+    setVoice(0, voices_[0].frequency.load(std::memory_order_relaxed), level);
+}
+
+void AudioEngine::setVoice(const int index,
+                           const double frequency,
+                           const float level)
+{
+    if (index < 0 || index >= kMaxVoices) {
+        return;
+    }
+
+    voices_[index].frequency.store(frequency, std::memory_order_relaxed);
+    voices_[index].level.store(level, std::memory_order_relaxed);
+
+    int current = numVoices_.load(std::memory_order_relaxed);
+    if (index + 1 > current) {
+        numVoices_.store(index + 1, std::memory_order_relaxed);
     }
 }
 
@@ -196,6 +219,65 @@ void AudioEngine::getWaveformSnapshot(float* dst, const int numPoints,
     for (int i = points; i < numPoints; ++i) {
         dst[i] = dst[points - 1];
     }
+}
+
+void AudioEngine::setVoiceFilter(const int index, const int mode,
+                                 const double cutoffHz, const float q)
+{
+    if (index < 0 || index >= kMaxVoices) {
+        return;
+    }
+
+    const int clampedMode = juce::jlimit(0, 3, mode);
+    voices_[index].filterMode.store(clampedMode, std::memory_order_relaxed);
+    voices_[index].filterCutoffHz.store(cutoffHz,
+                                        std::memory_order_relaxed);
+
+    // Resonance must be strictly > 0 for the JUCE filter; clamp
+    // gently to a musically useful range to avoid extreme peaks.
+    const float qClamped = juce::jlimit(0.1F, 8.0F, q);
+    voices_[index].filterQ.store(qClamped, std::memory_order_relaxed);
+
+    filters_[index].reset();
+
+    if (clampedMode == 0) {
+        return;
+    }
+
+    switch (clampedMode) {
+        case 1: // Low-pass
+            filters_[index].setType(
+                juce::dsp::StateVariableTPTFilterType::lowpass);
+            break;
+        case 2: // Band-pass
+            filters_[index].setType(
+                juce::dsp::StateVariableTPTFilterType::bandpass);
+            break;
+        case 3: // High-pass
+            filters_[index].setType(
+                juce::dsp::StateVariableTPTFilterType::highpass);
+            break;
+        default:
+            return;
+    }
+
+    const double sr = sampleRate_ > 0.0 ? sampleRate_ : 44100.0;
+    const double nyquist = 0.5 * sr;
+    double fc = cutoffHz;
+    if (fc <= 0.0) {
+        fc = 0.0;
+    }
+    if (fc >= nyquist) {
+        // JUCE exige cutoff < Nyquist, no <=.
+        fc = nyquist * 0.99;
+    }
+
+    if (fc <= 0.0) {
+        return;
+    }
+
+    filters_[index].setCutoffFrequency(static_cast<float>(fc));
+    filters_[index].setResonance(qClamped);
 }
 
 void AudioEngine::getVoiceWaveformSnapshot(const int voiceIndex,

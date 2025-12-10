@@ -482,8 +482,16 @@ void MainComponent::timerCallback()
                 mutedObjects_.find(downstreamObjId) !=
                 mutedObjects_.end();
             chainMuted = srcMuted || dstMuted || connectionMuted;
-            gainParam = downstreamModule->GetParameterOrDefault(
-                "gain", gainParam);
+
+            // For most audio modules, let the downstream module's gain
+            // control the chain level. Filters are treated specially:
+            // their right-hand control represents resonance (Q), not
+            // output volume, so it should not affect the overall level
+            // used here.
+            if (downstreamModule->type() != rectai::ModuleType::kFilter) {
+                gainParam = downstreamModule->GetParameterOrDefault(
+                    "gain", gainParam);
+            }
         }
 
         const float freqParam = module->GetParameterOrDefault(
@@ -501,6 +509,57 @@ void MainComponent::timerCallback()
             voices[voiceIndex].level = masterMuted_ ? 0.0F : level;
             const int assignedVoice = voiceIndex;
             ++voiceIndex;
+
+            // Configure optional per-voice filter when the generator
+            // feeds a FilterModule. The filter cutoff is controlled
+            // by the filter module's own `freq` parameter (left bar),
+            // and resonance by its `q` parameter (right bar). For
+            // now we always use the low-pass mode, but other modes
+            // are implemented in the audio engine for future use.
+            int filterMode = 0;
+            double filterCutoffHz = 0.0;
+            float filterQ = 0.7071F;
+
+            if (downstreamModule != nullptr && downstreamInside &&
+                downstreamModule->type() == rectai::ModuleType::kFilter) {
+                const auto* filterModule =
+                    dynamic_cast<const rectai::FilterModule*>(
+                        downstreamModule);
+
+                const float filterFreqParam =
+                    downstreamModule->GetParameterOrDefault(
+                        "freq", downstreamModule->default_parameter_value(
+                                    "freq"));
+                const double fb = downstreamModule->base_frequency_hz();
+                const double fr = downstreamModule->frequency_range_hz();
+                filterCutoffHz = fb + fr *
+                                        static_cast<double>(filterFreqParam);
+
+                const float qParam = downstreamModule->GetParameterOrDefault(
+                    "q", downstreamModule->default_parameter_value("q"));
+                const float minQ = 0.5F;
+                const float maxQ = 10.0F;
+                filterQ = minQ + (maxQ - minQ) * qParam;
+
+                // Map FilterModule::Mode to AudioEngine filter mode.
+                if (filterModule != nullptr) {
+                    using Mode = rectai::FilterModule::Mode;
+                    const auto mode = filterModule->mode();
+                    if (mode == Mode::kLowPass) {
+                        filterMode = 1;
+                    } else if (mode == Mode::kBandPass) {
+                        filterMode = 2;
+                    } else if (mode == Mode::kHighPass) {
+                        filterMode = 3;
+                    }
+                } else {
+                    // Default to low-pass if we do not know the mode.
+                    filterMode = 1;
+                }
+            }
+
+            audioEngine_.setVoiceFilter(assignedVoice, filterMode,
+                                        filterCutoffHz, filterQ);
 
             // Mark generator and, when present, its downstream module
             // as actively carrying audio so the visual layer can

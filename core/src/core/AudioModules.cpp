@@ -50,14 +50,14 @@ float OscillatorModule::default_parameter_value(
 
 FilterModule::FilterModule(const std::string& id,
                            const float default_cutoff,
-                           const float default_gain)
+                           const float default_q)
     : AudioModule(id, ModuleType::kFilter,
                   /*produces_audio=*/true, /*consumes_audio=*/true)
 {
   set_colour(MakeColour(0x40, 0xE0, 0xA0));
   set_label("Filter");
   set_description("Shapes incoming audio based on spatial relationships.");
-  set_icon_id("filter");
+  set_icon_id("filter_bandpass");
   enable_frequency_control(true);
   enable_gain_control(true);
   set_frequency_mapping(200.0, 800.0);
@@ -67,15 +67,29 @@ FilterModule::FilterModule(const std::string& id,
   AddInputPort("in", true);
   AddOutputPort("out", true);
   SetParameter("freq", default_cutoff);
-  SetParameter("gain", default_gain);
+  SetParameter("q", default_q);
 }
 
 float FilterModule::default_parameter_value(const std::string& name) const
 {
-  if (name == "freq" || name == "gain") {
+  if (name == "freq" || name == "q") {
     return 0.5F;
   }
   return AudioModule::default_parameter_value(name);
+}
+
+void FilterModule::set_mode_from_subtype(const std::string& subtype)
+{
+  if (subtype == "lowpass") {
+    set_mode(Mode::kLowPass);
+  } else if (subtype == "highpass") {
+    set_mode(Mode::kHighPass);
+  } else if (subtype == "bandpass") {
+    set_mode(Mode::kBandPass);
+  } else {
+    // Keep default (band-pass) for unknown subtypes.
+    set_mode(Mode::kBandPass);
+  }
 }
 
 OutputModule::OutputModule(const std::string& id)

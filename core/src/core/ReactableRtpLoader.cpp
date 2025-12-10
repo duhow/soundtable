@@ -521,6 +521,12 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
       module = std::move(seq);
     } else if (type == "Filter") {
       auto filter = std::make_unique<FilterModule>(module_id);
+
+      const auto itSubtype = attrs.find("subtype");
+      if (itSubtype != attrs.end()) {
+        filter->set_mode_from_subtype(itSubtype->second);
+      }
+
       // Copy tangible-level numeric attributes.
       for (const auto& [key, value] : attrs) {
         if (key == "type" || key == "id" || key == "x" || key == "y" ||
