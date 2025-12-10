@@ -133,4 +133,25 @@ void Scene::RemoveObject(const std::int64_t tracking_id)
   (void)objects_.erase(tracking_id);
 }
 
+void Scene::SetModuleParameter(const std::string& module_id,
+                               const std::string& name, const float value)
+{
+  const auto it = modules_.find(module_id);
+  if (it == modules_.end()) {
+    return;
+  }
+  it->second.SetParameter(name, value);
+}
+
+float Scene::GetModuleParameterOrDefault(const std::string& module_id,
+                                         const std::string& name,
+                                         const float default_value) const
+{
+  const auto it = modules_.find(module_id);
+  if (it == modules_.end()) {
+    return default_value;
+  }
+  return it->second.GetParameterOrDefault(name, default_value);
+}
+
 }  // namespace rectai

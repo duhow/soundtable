@@ -49,5 +49,17 @@ private:
 
     std::vector<Pulse> pulses_;
 
+    // Animation phases.
+    double connectionFlowPhase_{0.0};
+    double sequencerPhase_{0.0};
+    int sequencerStep_{0};
+
+    // Selection state for radial menu.
+    std::int64_t selectedObjectId_{0};
+
+    // Radial slider interaction state (index: 0=freq, 1=gain, 2=fx).
+    bool draggingRadialSlider_{false};
+    int draggingSliderIndex_{-1};
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

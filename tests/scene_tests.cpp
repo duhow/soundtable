@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "core/Scene.h"
+#include "core/SceneSerialization.h"
 
 // Very small tests for the Scene/Module/Connection model.
 // They run as a normal binary and are integrated with CTest.
@@ -52,6 +53,11 @@ int main()
 
     scene.RemoveObject(1);
     assert(scene.objects().empty());
+
+    // Basic serialization smoke test.
+    const auto serialized = SerializeScene(scene);
+    assert(!serialized.empty());
+    assert(serialized.find("rectai_scene_v1") != std::string::npos);
 
     std::cout << "rectai-core-tests: OK" << std::endl;
     return 0;

@@ -30,17 +30,28 @@ public:
         int numSamples,
         const juce::AudioIODeviceCallbackContext& context) override;
 
-    // Control API
+    // Control API (voice 0 convenience wrappers)
     void setFrequency(double frequency);
     void setLevel(float level);
+
+    // Multi-voice control: index in [0, kMaxVoices).
+    void setVoice(int index, double frequency, float level);
 
 private:
     juce::AudioDeviceManager deviceManager_;
 
     double sampleRate_{44100.0};
-    double currentAngle_{0.0};
-    double angleDelta_{0.0};
 
-    std::atomic<double> targetFrequency_{440.0};
-    std::atomic<float> level_{0.1F};  // Output level to avoid clipping.
+    static constexpr int kMaxVoices = 16;
+
+    struct Voice {
+        std::atomic<double> frequency{0.0};
+        std::atomic<float> level{0.0F};
+    };
+
+    Voice voices_[kMaxVoices];
+    std::atomic<int> numVoices_{0};
+
+    // Phase per voice, only touched on the audio thread.
+    double phases_[kMaxVoices]{};
 };

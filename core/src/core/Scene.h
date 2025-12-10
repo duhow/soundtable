@@ -111,6 +111,13 @@ class Scene {
     return modules_;
   }
 
+  void SetModuleParameter(const std::string& module_id,
+                          const std::string& name, float value);
+
+  [[nodiscard]] float GetModuleParameterOrDefault(
+      const std::string& module_id, const std::string& name,
+      float default_value) const;
+
   [[nodiscard]] const std::vector<Connection>& connections() const {
     return connections_;
   }

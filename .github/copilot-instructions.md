@@ -76,7 +76,8 @@ Si haces cambios en `Scene`, `Module` o `ObjectInstance`, asegúrate de que `tes
 
 - Toma de base la documentación en `research/` para entender el diseño y las decisiones arquitectónicas.
 - La implementación que debes seguir, está en `research/tech_stack.md`.
-- Después de cada cambio, crea y/o actualiza el documento `research/progress.md` como referencia futura, para saber qué has implementado y cuáles son los siguientes pasos a realizar en el Roadmap definido.
+- Después de cada cambio, actualiza el documento `research/progress.md` como referencia futura, para saber qué has implementado y cuáles son los siguientes pasos a realizar en el Roadmap definido.
+- Los detalles relevantes tienen que estar escritos en el archivo de progreso, no devolverlos en el chat.
 - La documentación será en español, pero el código y comentarios en inglés.
   - Si encuentras comentarios o código en español en el código, tradúcelos al inglés.
 - Antes de introducir nuevas dependencias, revisa `DEPENDENCIES.md` y la integración con CMake.
