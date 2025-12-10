@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -28,6 +29,8 @@ public:
 private:
     [[nodiscard]] bool isInsideMusicArea(
         const rectai::ObjectInstance& obj) const;
+
+    bool loadAtlasResources();
 
     AudioEngine& audioEngine_;
     rectai::Scene scene_;
@@ -60,6 +63,10 @@ private:
     double beatPhase_{0.0};
     int beatIndex_{0};
 
+    // Master output (type=Output in .rtp) presentation state.
+    juce::Colour masterColour_{juce::Colours::white};
+    bool masterMuted_{false};
+
     struct Pulse {
         float age{0.0F};
         bool strong{false};
@@ -76,6 +83,19 @@ private:
     std::int64_t sideControlObjectId_{0};
     enum class SideControlKind { kNone = 0, kFreq = 1, kGain = 2 };
     SideControlKind sideControlKind_{SideControlKind::kNone};
+
+    struct AtlasSprite {
+        juce::Rectangle<int> bounds;
+    };
+
+    juce::Image atlasImage_;
+    std::unordered_map<std::string, AtlasSprite> atlasSprites_;
+    bool atlasLoaded_{false};
+
+    // Dock (right-hand strip) scroll state.
+    float dockScrollOffset_{0.0F};
+    bool isDraggingDockScroll_{false};
+    float dockLastDragY_{0.0F};
 
     void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
                                       std::int64_t objectIdB);

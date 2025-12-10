@@ -98,6 +98,89 @@ bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
 
 }  // namespace
 
+bool MainComponent::loadAtlasResources()
+{
+    juce::File candidates[8];
+    int candidateCount = 0;
+
+    const juce::File cwd = juce::File::getCurrentWorkingDirectory();
+    candidates[candidateCount++] =
+        cwd.getChildFile("com.reactable/Resources");
+    candidates[candidateCount++] =
+        cwd.getChildFile("../com.reactable/Resources");
+    candidates[candidateCount++] =
+        cwd.getChildFile("../../com.reactable/Resources");
+
+    const juce::File exeDir = juce::File::getSpecialLocation(
+                                      juce::File::currentExecutableFile)
+                                      .getParentDirectory();
+    candidates[candidateCount++] =
+        exeDir.getChildFile("com.reactable/Resources");
+    candidates[candidateCount++] =
+        exeDir.getChildFile("../com.reactable/Resources");
+    candidates[candidateCount++] =
+        exeDir.getChildFile("../../com.reactable/Resources");
+    candidates[candidateCount++] = exeDir.getParentDirectory().getChildFile(
+        "com.reactable/Resources");
+    candidates[candidateCount++] =
+        exeDir.getParentDirectory().getChildFile("../com.reactable/Resources");
+
+    for (int i = 0; i < candidateCount; ++i) {
+        const juce::File& baseDir = candidates[i];
+        const juce::File pngFile = baseDir.getChildFile("atlas_2048.png");
+        const juce::File xmlFile = baseDir.getChildFile("atlas_2048.xml");
+
+        if (!pngFile.existsAsFile() || !xmlFile.existsAsFile()) {
+            continue;
+        }
+
+        juce::Image image = juce::ImageFileFormat::loadFrom(pngFile);
+        if (!image.isValid()) {
+            continue;
+        }
+
+        juce::XmlDocument doc(xmlFile);
+        std::unique_ptr<juce::XmlElement> root(doc.getDocumentElement());
+        if (root == nullptr || !root->hasTagName("atlas")) {
+            continue;
+        }
+
+        std::unordered_map<std::string, AtlasSprite> sprites;
+        forEachXmlChildElementWithTagName(*root, sprite, "sprite")
+        {
+            const auto fullName = sprite->getStringAttribute("name");
+            const int x = sprite->getIntAttribute("x");
+            const int y = sprite->getIntAttribute("y");
+            const int w = sprite->getIntAttribute("width");
+            const int h = sprite->getIntAttribute("height");
+
+            if (w <= 0 || h <= 0) {
+                continue;
+            }
+
+            std::string key = fullName.toStdString();
+            const auto slashPos = key.find_last_of('/');
+            if (slashPos != std::string::npos && slashPos + 1U < key.size()) {
+                key = key.substr(slashPos + 1U);
+            }
+
+            sprites[key] = AtlasSprite{juce::Rectangle<int>(x, y, w, h)};
+        }
+
+        if (!sprites.empty()) {
+            atlasImage_ = std::move(image);
+            atlasSprites_ = std::move(sprites);
+            atlasLoaded_ = true;
+            return true;
+        }
+    }
+
+    atlasLoaded_ = false;
+    atlasImage_ = juce::Image();
+    atlasSprites_.clear();
+    return false;
+}
+
 bool MainComponent::isInsideMusicArea(const rectai::ObjectInstance& obj) const
 {
     if (obj.docked()) {
@@ -171,6 +254,8 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
             const bool ok = LoadReactablePatchFromFile(
                 f.getFullPathName().toStdString(), scene_, &metadata, &error);
             if (ok) {
+                masterColour_ = colourFromArgb(metadata.master_colour_argb);
+                masterMuted_ = metadata.master_muted;
                 return true;
             }
         }
@@ -201,6 +286,12 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
         scene_.UpsertObject(rectai::ObjectInstance(
             2, "filter1", 0.7F, 0.5F, 0.0F));
     }
+
+    // Load Reactable icon atlas (atlas_2048.png + atlas_2048.xml) so that
+    // modules can be rendered with their original icons instead of only
+    // text labels or procedural shapes. If loading fails, the UI will
+    // gracefully fall back to the existing vector-based icons and labels.
+    (void)loadAtlasResources();
 
     // Periodically map scene state to audio parameters.
     startTimerHz(60);
@@ -287,9 +378,12 @@ void MainComponent::paint(juce::Graphics& g)
 
         // -----------------------------------------------------------------
         // Central node: fixed dot + ripples (already BPM-synchronised).
+        // Colour and mute state are driven by the Reactable Output
+        // tangible (type=Output) when available.
         // -----------------------------------------------------------------
         const float baseRadius = 6.0F;
-        g.setColour(juce::Colours::white);
+        const float masterAlpha = masterMuted_ ? 0.4F : 1.0F;
+        g.setColour(masterColour_.withAlpha(masterAlpha));
         g.fillEllipse(centre.x - baseRadius, centre.y - baseRadius,
                       baseRadius * 2.0F, baseRadius * 2.0F);
 
@@ -297,10 +391,10 @@ void MainComponent::paint(juce::Graphics& g)
             const float t = juce::jlimit(0.0F, 1.0F, pulse.age);
             const float maxRadius = pulse.strong ? 90.0F : 50.0F;
             const float radius = baseRadius + t * maxRadius;
-            const float alpha = 1.0F - t;
+            const float alpha = (1.0F - t) * (masterMuted_ ? 0.4F : 1.0F);
             const float thickness = pulse.strong ? 5.0F : 2.0F;
 
-            g.setColour(juce::Colours::white.withAlpha(alpha));
+            g.setColour(masterColour_.withAlpha(alpha));
             g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2.0F,
                           radius * 2.0F, thickness);
         }
@@ -314,6 +408,9 @@ void MainComponent::paint(juce::Graphics& g)
         // active path to the master bus.
         // -----------------------------------------------------------------
         for (const auto& [id, object] : objects) {
+            if (object.logical_id() == "-1") {
+                continue;  // Output (master) is not drawn as a module.
+            }
             const bool isMuted =
                 mutedObjects_.find(id) != mutedObjects_.end();
 
@@ -365,7 +462,9 @@ void MainComponent::paint(juce::Graphics& g)
 
             // Flow pulse travelling from node to centre to sugerir dirección.
             const float t = static_cast<float>(std::fmod(
-                connectionFlowPhase_ + 0.25 * (id % 4), 1.0));
+                connectionFlowPhase_ +
+                    0.25 * static_cast<double>(id % 4),
+                1.0));
             const float px = juce::jmap(t, 0.0F, 1.0F, cx, centre.x);
             const float py = juce::jmap(t, 0.0F, 1.0F, cy, centre.y);
 
@@ -504,6 +603,9 @@ void MainComponent::paint(juce::Graphics& g)
 
     for (const auto& entry : objects) {
         const auto& object = entry.second;
+        if (object.docked() || object.logical_id() == "-1") {
+            continue;
+        }
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
@@ -637,86 +739,120 @@ void MainComponent::paint(juce::Graphics& g)
             }
         }
 
-        // Waveform / icon inside the node body depending on metadata.
+        // Icon inside the node body depending on metadata. Prefer the
+        // original Reactable sprite atlas when available; fall back to
+        // the existing procedural icons otherwise. When a sprite exists,
+        // we no longer draw the textual label inside the node, so the
+        // icon becomes the primary visual identifier.
         std::string iconId;
         if (moduleForObject != nullptr) {
             iconId = moduleForObject->icon_id();
         }
 
-        const float iconRadius = nodeRadius * 0.6F;
-        const float left = cx - iconRadius;
-        const float right = cx + iconRadius;
-        const float top = cy - iconRadius * 0.5F;
-        const float midY = cy;
-        const float bottom = cy + iconRadius * 0.5F;
+        const float iconSize = nodeRadius * 1.4F;
+        const juce::Rectangle<float> iconBounds(cx - iconSize * 0.5F,
+                                                cy - iconSize * 0.5F,
+                                                iconSize, iconSize);
 
-        g.setColour(juce::Colours::white.withAlpha(0.9F));
+        bool drewAtlasIcon = false;
+        if (atlasLoaded_ && !iconId.empty()) {
+            const auto spriteIt = atlasSprites_.find(iconId);
+            if (spriteIt != atlasSprites_.end() && atlasImage_.isValid()) {
+                const auto& src = spriteIt->second.bounds;
 
-        if (iconId == "oscillator") {
-            juce::Path wave;
-            const int segments = 24;
-            for (int i = 0; i <= segments; ++i) {
-                const float t = static_cast<float>(i) /
-                                static_cast<float>(segments);
-                const float x = juce::jmap(t, 0.0F, 1.0F, left, right);
-                const float s = std::sin(t * juce::MathConstants<float>::twoPi);
-                const float y = midY - s * iconRadius * 0.4F;
-                if (i == 0) {
-                    wave.startNewSubPath(x, y);
-                } else {
-                    wave.lineTo(x, y);
+                const int destX = juce::roundToInt(iconBounds.getX());
+                const int destY = juce::roundToInt(iconBounds.getY());
+                const int destW = juce::roundToInt(iconBounds.getWidth());
+                const int destH = juce::roundToInt(iconBounds.getHeight());
+
+                g.drawImage(atlasImage_, destX, destY, destW, destH,
+                            src.getX(), src.getY(), src.getWidth(),
+                            src.getHeight());
+                drewAtlasIcon = true;
+            }
+        }
+
+        if (!drewAtlasIcon) {
+            const float iconRadius = nodeRadius * 0.6F;
+            const float left = cx - iconRadius;
+            const float right = cx + iconRadius;
+            const float top = cy - iconRadius * 0.5F;
+            const float midY = cy;
+            const float bottom = cy + iconRadius * 0.5F;
+
+            g.setColour(juce::Colours::white.withAlpha(0.9F));
+
+            if (iconId == "oscillator") {
+                juce::Path wave;
+                const int segments = 24;
+                for (int i = 0; i <= segments; ++i) {
+                    const float t = static_cast<float>(i) /
+                                    static_cast<float>(segments);
+                    const float x = juce::jmap(t, 0.0F, 1.0F, left, right);
+                    const float s =
+                        std::sin(t * juce::MathConstants<float>::twoPi);
+                    const float y = midY - s * iconRadius * 0.4F;
+                    if (i == 0) {
+                        wave.startNewSubPath(x, y);
+                    } else {
+                        wave.lineTo(x, y);
+                    }
                 }
+                g.strokePath(wave, juce::PathStrokeType(1.6F));
+            } else if (iconId == "filter") {
+                juce::Path curve;
+                curve.startNewSubPath(left, bottom);
+                curve.quadraticTo({cx, top}, {right, midY});
+                g.strokePath(curve, juce::PathStrokeType(1.6F));
+            } else if (iconId == "sampler") {
+                const float barWidth = (right - left) / 6.0F;
+                for (int i = 0; i < 6; ++i) {
+                    const float x = left + (static_cast<float>(i) + 0.5F) *
+                                             barWidth;
+                    const float hFactor = 0.3F + 0.1F *
+                                                        static_cast<float>(i);
+                    const float yTop = midY - iconRadius * hFactor;
+                    const float yBottom = midY + iconRadius * 0.3F;
+                    g.drawLine(x, yTop, x, yBottom, 1.5F);
+                }
+            } else if (iconId == "effect") {
+                const float r = iconRadius * 0.6F;
+                g.drawEllipse(cx - r, cy - r, r * 2.0F, r * 2.0F, 1.5F);
+                for (int i = 0; i < 3; ++i) {
+                    const float a = juce::MathConstants<float>::twoPi *
+                                    static_cast<float>(i) / 3.0F;
+                    const float ex = cx + r * std::cos(a);
+                    const float ey = cy + r * std::sin(a);
+                    g.fillEllipse(ex - 2.0F, ey - 2.0F, 4.0F, 4.0F);
+                }
+            } else if (iconId == "controller") {
+                const float innerR = iconRadius * 0.4F;
+                const float outerR = iconRadius * 0.8F;
+                g.drawEllipse(cx - innerR, cy - innerR, innerR * 2.0F,
+                              innerR * 2.0F, 1.2F);
+                g.drawEllipse(cx - outerR, cy - outerR, outerR * 2.0F,
+                              outerR * 2.0F, 1.2F);
+            } else {
+                // As a last resort, keep the textual label centred in the
+                // node so that modules without an icon remain legible.
+                juce::String fallbackLabel(object.logical_id());
+                if (moduleForObject != nullptr) {
+                    const auto& moduleLabel = moduleForObject->label();
+                    if (!moduleLabel.empty()) {
+                        fallbackLabel = moduleLabel + " (" +
+                                        object.logical_id() + ")";
+                    }
+                }
+                g.setColour(juce::Colours::white);
+                g.setFont(14.0F);
+                g.drawText(fallbackLabel,
+                           juce::Rectangle<float>(cx - nodeRadius,
+                                                  cy - nodeRadius,
+                                                  nodeRadius * 2.0F,
+                                                  nodeRadius * 2.0F),
+                           juce::Justification::centred, false);
             }
-            g.strokePath(wave, juce::PathStrokeType(1.6F));
-        } else if (iconId == "filter") {
-            juce::Path curve;
-            curve.startNewSubPath(left, bottom);
-            curve.quadraticTo({cx, top}, {right, midY});
-            g.strokePath(curve, juce::PathStrokeType(1.6F));
-        } else if (iconId == "sampler") {
-            const float barWidth = (right - left) / 6.0F;
-            for (int i = 0; i < 6; ++i) {
-                const float x = left + (static_cast<float>(i) + 0.5F) *
-                                         barWidth;
-                const float hFactor = 0.3F + 0.1F * static_cast<float>(i);
-                const float yTop = midY - iconRadius * hFactor;
-                const float yBottom = midY + iconRadius * 0.3F;
-                g.drawLine(x, yTop, x, yBottom, 1.5F);
-            }
-        } else if (iconId == "effect") {
-            const float r = iconRadius * 0.6F;
-            g.drawEllipse(cx - r, cy - r, r * 2.0F, r * 2.0F, 1.5F);
-            for (int i = 0; i < 3; ++i) {
-                const float a = juce::MathConstants<float>::twoPi *
-                                static_cast<float>(i) / 3.0F;
-                const float ex = cx + r * std::cos(a);
-                const float ey = cy + r * std::sin(a);
-                g.fillEllipse(ex - 2.0F, ey - 2.0F, 4.0F, 4.0F);
-            }
-        } else if (iconId == "controller") {
-            const float innerR = iconRadius * 0.4F;
-            const float outerR = iconRadius * 0.8F;
-            g.drawEllipse(cx - innerR, cy - innerR, innerR * 2.0F,
-                          innerR * 2.0F, 1.2F);
-            g.drawEllipse(cx - outerR, cy - outerR, outerR * 2.0F,
-                          outerR * 2.0F, 1.2F);
         }
-
-        // Label.
-        juce::String labelText(object.logical_id());
-        if (moduleForObject != nullptr) {
-            const auto& moduleLabel = moduleForObject->label();
-            if (!moduleLabel.empty()) {
-                labelText = moduleLabel + " (" + object.logical_id() + ")";
-            }
-        }
-        g.setColour(juce::Colours::white);
-        g.setFont(14.0F);
-        g.drawText(labelText,
-                   juce::Rectangle<float>(cx - nodeRadius, cy - nodeRadius,
-                                          nodeRadius * 2.0F,
-                                          nodeRadius * 2.0F),
-                   juce::Justification::centredBottom, false);
     }
 
     // ---------------------------------------------------------------------
@@ -724,6 +860,9 @@ void MainComponent::paint(juce::Graphics& g)
     // ---------------------------------------------------------------------
     for (const auto& entry : objects) {
         const auto& object = entry.second;
+        if (object.docked() || object.logical_id() == "-1") {
+            continue;
+        }
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
@@ -766,6 +905,183 @@ void MainComponent::paint(juce::Graphics& g)
             }
         }
     }
+
+    // ---------------------------------------------------------------------
+    // Dock bar: stacked modules that are marked as docked in the .rtp.
+    // These modules live outside the main musical surface but remain
+    // visible and accessible in a dedicated side strip.
+    // ---------------------------------------------------------------------
+    std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+        dockedObjects;
+    dockedObjects.reserve(objects.size());
+    for (const auto& [id, obj] : objects) {
+        if (obj.docked()) {
+            dockedObjects.emplace_back(id, &obj);
+        }
+    }
+
+    if (!dockedObjects.empty()) {
+        auto dockBounds = bounds;
+        const float dockWidth =
+            juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+        juce::Rectangle<float> dockArea =
+            dockBounds.removeFromRight(dockWidth);
+
+        // Background panel.
+        g.setColour(juce::Colours::black.withAlpha(0.75F));
+        g.fillRoundedRectangle(dockArea, 10.0F);
+        g.setColour(juce::Colours::white.withAlpha(0.25F));
+        g.drawRoundedRectangle(dockArea, 10.0F, 1.5F);
+
+        // Title.
+        g.setColour(juce::Colours::white.withAlpha(0.7F));
+        g.setFont(15.0F);
+        const float titleHeight = 24.0F;
+        juce::Rectangle<float> titleArea =
+            dockArea.removeFromTop(titleHeight);
+        g.drawText("Dock", titleArea.reduced(6.0F, 0.0F),
+                   juce::Justification::centredLeft, false);
+
+        if (!dockedObjects.empty()) {
+            std::sort(dockedObjects.begin(), dockedObjects.end(),
+                      [](const auto& a, const auto& b) {
+                          return a.first < b.first;
+                      });
+
+            const float availableHeight = dockArea.getHeight();
+            const float nodeRadiusDock = 18.0F;
+            const float verticalPadding = 12.0F;
+            const float slotHeight =
+                nodeRadiusDock * 2.0F + verticalPadding;
+            const float contentHeight =
+                slotHeight * static_cast<float>(dockedObjects.size());
+
+            const float minOffset =
+                (contentHeight > availableHeight)
+                    ? (availableHeight - contentHeight)
+                    : 0.0F;
+            dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
+                                             dockScrollOffset_);
+
+            const float baseY = dockArea.getY() + dockScrollOffset_;
+
+            for (std::size_t i = 0; i < dockedObjects.size(); ++i) {
+                const auto id = dockedObjects[i].first;
+                const auto* obj = dockedObjects[i].second;
+
+                const float cy = baseY +
+                                 (static_cast<float>(i) + 0.5F) *
+                                     slotHeight;
+                const float cx = dockArea.getX() +
+                                 dockArea.getWidth() * 0.5F;
+
+                // Skip items that are far outside the visible dock area.
+                if (cy + nodeRadiusDock < dockArea.getY() ||
+                    cy - nodeRadiusDock > dockArea.getBottom()) {
+                    continue;
+                }
+
+                const bool isMuted =
+                    mutedObjects_.find(id) != mutedObjects_.end();
+                const auto bodyColour =
+                    getBodyColourForObject(*obj, isMuted);
+                const auto auraColour =
+                    bodyColour.withMultipliedAlpha(0.22F).brighter(0.15F);
+
+                const float glowRadius = nodeRadiusDock + 14.0F;
+                g.setColour(auraColour.withMultipliedAlpha(0.6F));
+                g.fillEllipse(cx - glowRadius, cy - glowRadius,
+                              glowRadius * 2.0F, glowRadius * 2.0F);
+
+                g.setColour(bodyColour);
+                g.fillEllipse(cx - nodeRadiusDock, cy - nodeRadiusDock,
+                              nodeRadiusDock * 2.0F,
+                              nodeRadiusDock * 2.0F);
+
+                const rectai::AudioModule* moduleForObject = nullptr;
+                if (const auto moduleEntryIt = modules.find(
+                        obj->logical_id());
+                    moduleEntryIt != modules.end()) {
+                    moduleForObject = moduleEntryIt->second.get();
+                }
+
+                std::string iconId;
+                if (moduleForObject != nullptr) {
+                    iconId = moduleForObject->icon_id();
+                }
+
+                const float iconSize = nodeRadiusDock * 1.4F;
+                const juce::Rectangle<float> iconBounds(
+                    cx - iconSize * 0.5F, cy - iconSize * 0.5F, iconSize,
+                    iconSize);
+
+                bool drewAtlasIcon = false;
+                if (atlasLoaded_ && !iconId.empty()) {
+                    const auto spriteIt = atlasSprites_.find(iconId);
+                    if (spriteIt != atlasSprites_.end() &&
+                        atlasImage_.isValid()) {
+                        const auto& src = spriteIt->second.bounds;
+                        const int destX =
+                            juce::roundToInt(iconBounds.getX());
+                        const int destY =
+                            juce::roundToInt(iconBounds.getY());
+                        const int destW =
+                            juce::roundToInt(iconBounds.getWidth());
+                        const int destH =
+                            juce::roundToInt(iconBounds.getHeight());
+
+                        g.drawImage(atlasImage_, destX, destY, destW, destH,
+                                    src.getX(), src.getY(), src.getWidth(),
+                                    src.getHeight());
+                        drewAtlasIcon = true;
+                    }
+                }
+
+                if (!drewAtlasIcon) {
+                    // Fallback: reuse simple procedural icons; no text in
+                    // the dock to keep it clean.
+                    const float iconRadius = nodeRadiusDock * 0.7F;
+                    const float left = cx - iconRadius;
+                    const float right = cx + iconRadius;
+                    const float top = cy - iconRadius * 0.5F;
+                    const float midY = cy;
+                    const float bottom = cy + iconRadius * 0.5F;
+
+                    g.setColour(juce::Colours::white.withAlpha(0.9F));
+
+                    if (iconId == "oscillator") {
+                        juce::Path wave;
+                        const int segments = 20;
+                        for (int i = 0; i <= segments; ++i) {
+                            const float t = static_cast<float>(i) /
+                                            static_cast<float>(segments);
+                            const float x = juce::jmap(
+                                t, 0.0F, 1.0F, left, right);
+                            const float s = std::sin(
+                                t * juce::MathConstants<float>::twoPi);
+                            const float y =
+                                midY - s * iconRadius * 0.4F;
+                            if (i == 0) {
+                                wave.startNewSubPath(x, y);
+                            } else {
+                                wave.lineTo(x, y);
+                            }
+                        }
+                        g.strokePath(wave, juce::PathStrokeType(1.4F));
+                    } else if (iconId == "filter") {
+                        juce::Path curve;
+                        curve.startNewSubPath(left, bottom);
+                        curve.quadraticTo({cx, top}, {right, midY});
+                        g.strokePath(curve, juce::PathStrokeType(1.4F));
+                    } else if (iconId == "effect") {
+                        const float r = iconRadius * 0.6F;
+                        g.drawEllipse(cx - r, cy - r, r * 2.0F, r * 2.0F,
+                                      1.4F);
+                    }
+                }
+            }
+        }
+    }
 }
 
 void MainComponent::resized()
@@ -791,6 +1107,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     const float sliderMargin = 6.0F;
 
     for (const auto& [id, object] : objects) {
+        if (object.logical_id() == "-1") {
+            continue;
+        }
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
@@ -859,6 +1178,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
     // Next, try to select an object by clicking on its circle.
     for (const auto& [id, object] : objects) {
+        if (object.logical_id() == "-1" || object.docked()) {
+            continue;
+        }
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
@@ -869,6 +1191,77 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         if (distanceSquared <= radius * radius) {
             draggedObjectId_ = id;
             break;
+        }
+    }
+
+    // If no free object was picked, try selecting a docked module from the
+    // right-hand dock strip so it can be dragged into the musical area.
+    if (draggedObjectId_ == 0) {
+        std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+            dockedObjects;
+        dockedObjects.reserve(objects.size());
+        for (const auto& [id, obj] : objects) {
+            if (obj.docked()) {
+                dockedObjects.emplace_back(id, &obj);
+            }
+        }
+
+        if (!dockedObjects.empty()) {
+            std::sort(dockedObjects.begin(), dockedObjects.end(),
+                      [](const auto& a, const auto& b) {
+                          return a.first < b.first;
+                      });
+
+            auto dockBounds = bounds;
+            const float dockWidth =
+                juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+            juce::Rectangle<float> dockArea =
+                dockBounds.removeFromRight(dockWidth);
+
+            const float availableHeight = dockArea.getHeight();
+            const float nodeRadiusDock = 18.0F;
+            const float verticalPadding = 12.0F;
+            const float slotHeight =
+                nodeRadiusDock * 2.0F + verticalPadding;
+            const float contentHeight =
+                slotHeight * static_cast<float>(dockedObjects.size());
+            const float minOffset =
+                (contentHeight > availableHeight)
+                    ? (availableHeight - contentHeight)
+                    : 0.0F;
+            dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
+                                             dockScrollOffset_);
+            const float baseY = dockArea.getY() + dockScrollOffset_;
+
+            for (std::size_t i = 0; i < dockedObjects.size(); ++i) {
+                const auto id = dockedObjects[i].first;
+
+                const float cy = baseY + (static_cast<float>(i) + 0.5F) *
+                                            slotHeight;
+                const float cx = dockArea.getX() +
+                                 dockArea.getWidth() * 0.5F;
+
+                const float dx = static_cast<float>(event.position.x) - cx;
+                const float dy = static_cast<float>(event.position.y) - cy;
+                const float distanceSquared = dx * dx + dy * dy;
+
+                if (distanceSquared <= nodeRadiusDock * nodeRadiusDock) {
+                    draggedObjectId_ = id;
+                    return;
+                }
+            }
+        }
+        // If click is inside the dock but not on any module, start a
+        // simple drag-based scroll gesture.
+        auto dockBounds = bounds;
+        const float dockWidth =
+            juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+        juce::Rectangle<float> dockArea =
+            dockBounds.removeFromRight(dockWidth);
+        if (dockArea.contains(event.position)) {
+            isDraggingDockScroll_ = true;
+            dockLastDragY_ = static_cast<float>(event.position.y);
+            return;
         }
     }
 
@@ -975,6 +1368,47 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
 {
     const auto bounds = getLocalBounds().toFloat();
 
+    // Dragging the dock scroll area (vertical scroll / pagination).
+    if (isDraggingDockScroll_) {
+        auto dockBounds = bounds;
+        const float dockWidth =
+            juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+        juce::Rectangle<float> dockArea =
+            dockBounds.removeFromRight(dockWidth);
+
+        const auto& objects = scene_.objects();
+        std::size_t dockCount = 0;
+        for (const auto& [id, obj] : objects) {
+            if (obj.docked()) {
+                ++dockCount;
+            }
+        }
+
+        if (dockCount == 0) {
+            return;
+        }
+
+        const float availableHeight = dockArea.getHeight();
+        const float nodeRadiusDock = 18.0F;
+        const float verticalPadding = 12.0F;
+        const float slotHeight = nodeRadiusDock * 2.0F + verticalPadding;
+        const float contentHeight =
+            slotHeight * static_cast<float>(dockCount);
+        const float minOffset =
+            (contentHeight > availableHeight)
+                ? (availableHeight - contentHeight)
+                : 0.0F;
+
+        const float currentY = static_cast<float>(event.position.y);
+        const float dy = currentY - dockLastDragY_;
+        dockLastDragY_ = currentY;
+
+        dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
+                                         dockScrollOffset_ + dy);
+        repaint();
+        return;
+    }
+
     // Dragging per-instrument side controls (Freq / Gain).
     if (sideControlKind_ != SideControlKind::kNone &&
         sideControlObjectId_ != 0) {
@@ -1050,7 +1484,31 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     }
 
     auto updated = it->second;
-    updated.set_position(normX, normY);
+    if (updated.docked()) {
+        // While the pointer is inside the dock area, keep the module
+        // docked so it remains visible in the dock list. Only when the
+        // drag leaves the dock area do we convert it into a regular
+        // object on the table.
+        auto dockBounds = bounds;
+        const float dockWidth =
+            juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+        juce::Rectangle<float> dockArea =
+            dockBounds.removeFromRight(dockWidth);
+
+        if (dockArea.contains(event.position)) {
+            // Still inside the dock: do not change Scene; the icon in the
+            // dock is the visual feedback while the user aims the drag.
+            return;
+        }
+
+        // Pointer has left the dock area: instantiate the object on the
+        // table at the dragged position, marking it as undocked.
+        updated = rectai::ObjectInstance(
+            updated.tracking_id(), updated.logical_id(), normX, normY,
+            updated.angle_radians(), false);
+    } else {
+        updated.set_position(normX, normY);
+    }
     scene_.UpsertObject(updated);
 
     repaint();
@@ -1061,6 +1519,7 @@ void MainComponent::mouseUp(const juce::MouseEvent&)
     draggedObjectId_ = 0;
     sideControlObjectId_ = 0;
     sideControlKind_ = SideControlKind::kNone;
+    isDraggingDockScroll_ = false;
 }
 
 void MainComponent::toggleHardlinkBetweenObjects(const std::int64_t objectIdA,
@@ -1408,6 +1867,10 @@ void MainComponent::timerCallback()
 
     if (!hasAnyActive) {
         mixedFrequency = 0.0;
+        mixedLevel = 0.0F;
+    }
+
+    if (masterMuted_) {
         mixedLevel = 0.0F;
     }
 

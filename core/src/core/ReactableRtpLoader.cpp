@@ -128,6 +128,42 @@ bool ParseBool(const AttributeMap& attrs, const std::string& key,
   }
 }
 
+// Parses a colour attribute encoded as a hexadecimal string. Reactable
+// patches typically use 8-digit ARGB (e.g. d5d5d5ff), but some files may
+// provide 6-digit RGB. In that case we assume an opaque alpha of 0xFF.
+std::uint32_t ParseColourArgb(const AttributeMap& attrs,
+                              const std::string& key,
+                              const std::uint32_t default_value)
+{
+  const auto it = attrs.find(key);
+  if (it == attrs.end()) {
+    return default_value;
+  }
+
+  const std::string& s = it->second;
+  if (s.empty()) {
+    return default_value;
+  }
+
+  try {
+    const std::uint32_t value =
+        static_cast<std::uint32_t>(std::stoul(s, nullptr, 16));
+
+    if (s.size() == 8U) {
+      // Treat as ARGB directly.
+      return value;
+    }
+    if (s.size() == 6U) {
+      // Treat as RGB and prepend opaque alpha.
+      return (0xFFU << 24U) | value;
+    }
+  } catch (...) {
+    // Fall through to default.
+  }
+
+  return default_value;
+}
+
 std::vector<float> SplitFloats(const std::string& csv)
 {
   std::vector<float> values;
@@ -234,6 +270,8 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
   if (metadata != nullptr) {
     metadata->author_name.clear();
     metadata->patch_name.clear();
+    metadata->master_colour_argb = 0xFFFFFFFFU;
+    metadata->master_muted = false;
   }
 
   // Extract author.
@@ -343,6 +381,13 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
 
     if (type == "Output") {
       module = std::make_unique<OutputModule>(module_id);
+
+      if (metadata != nullptr) {
+        metadata->master_colour_argb =
+            ParseColourArgb(attrs, "color", metadata->master_colour_argb);
+        metadata->master_muted =
+            ParseBool(attrs, "muted", metadata->master_muted);
+      }
     } else if (type == "Tonalizer") {
       auto tonalizer = std::make_unique<TonalizerModule>(module_id);
       // Parse <tone> children.

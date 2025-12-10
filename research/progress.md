@@ -197,8 +197,19 @@
 - La ruta al recurso se resuelve de forma robusta probando varias ubicaciones relativas tanto al directorio de trabajo actual como al ejecutable (por ejemplo, `com.reactable/Resources/default.rtp`, `../com.reactable/Resources/default.rtp`, etc.), de manera que funcione tanto al lanzar desde la raíz del repo como desde el árbol `build/`.
 - Si la carga falla (por ausencia de archivo o error de parseo), `MainComponent` recupera el comportamiento anterior creando la pequeña escena de ejemplo hardcodeada (`osc1` → `filter1`) para mantener un fallback visible.
 
+### Iconos de módulos desde atlas Reactable
+- Añadido cargador ligero de atlas en `MainComponent` que localiza `atlas_2048.png` y `atlas_2048.xml` dentro de `com.reactable/Resources`, parsea sus `<sprite>` y construye un mapa en memoria `icon_id → rect` (usando el nombre corto, p.ej. `"oscillator"`, `"filter"`).
+- La UI de nodos utiliza ahora este atlas para dibujar los iconos originales de Reactable dentro de cada círculo cuando existe sprite para el `icon_id` del módulo; en caso contrario, conserva los iconos vectoriales procedurales que ya existían.
+- Cuando un icono del atlas está disponible (por ejemplo, para `OscillatorModule` y `FilterModule`), el texto del módulo deja de renderizarse dentro del nodo y se sustituye visualmente por dicho icono, manteniendo la estética original de Reactable y evitando duplicar label + icono.
+
 ### Flag `docked` en `ObjectInstance` y área musical
 - `rectai::ObjectInstance` se ha ampliado con un flag booleano `docked`, expuesto mediante `bool docked() const`, que indica si el tangible procede de un elemento `docked="1"` en el `.rtp`.
 - El loader de patches Reactable (`ReactableRtpLoader.cpp`) ahora lee el atributo `docked` de cada `<tangible>` y lo propaga al construir el `ObjectInstance` correspondiente, manteniendo el resto de la semántica (tracking_id como `id`, posición `x`,`y` y ángulo en radianes).
 - La función `MainComponent::isInsideMusicArea` utiliza ahora este flag: cualquier objeto marcado como `docked` se considera automáticamente fuera del área musical, incluso si sus coordenadas geométricas cayeran dentro del círculo de la mesa.
 - Con este cambio, los tangibles acoplados (`docked=1` en `default.rtp`, como Tonalizer, Volume, Tempo, LFO, Loop, Sampleplay, etc.) se tratan como módulos “apartados” que no participan en las conexiones espaciales ni en las heurísticas del área musical, alineando la semántica con el comportamiento esperado de la Reactable original.
+
+### Semántica de `Output` (master) y visualización del nodo central
+- El tangible `type="Output"` del patch Reactable se interpreta ahora explícitamente como el **master** de la escena y ya no se representa como un módulo normal en la mesa (no aparece como nodo ni en la barra de dock).
+- `ReactablePatchMetadata` se amplía con `master_colour_argb` y `master_muted`, que el loader rellena leyendo los atributos `color` y `muted` del tangible `Output` (admitiendo colores en formato ARGB de 8 dígitos o RGB de 6 dígitos, asumiendo alfa opaco).
+- `MainComponent` usa `master_colour_argb` para colorear el punto central y sus ondas de pulso, en lugar de un blanco fijo, de modo que el aspecto del master respeta el patch original (`default.rtp` u otros `.rtp`).
+- El atributo `muted` del `Output` se traduce en un flag `masterMuted_` en la UI: cuando está activo, atenúa visualmente el nodo central y fuerza el nivel de mezcla global a cero en `timerCallback`, actuando como un mute maestro sobre todo el sonido generado por los módulos.

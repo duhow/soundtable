@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "core/Scene.h"
@@ -10,6 +11,8 @@ namespace rectai {
 struct ReactablePatchMetadata {
   std::string author_name;
   std::string patch_name;
+  std::uint32_t master_colour_argb{0xFFFFFFFFU};
+  bool master_muted{false};
 };
 
 // Loads a Reactable .rtp XML document from a string and populates a Scene.
