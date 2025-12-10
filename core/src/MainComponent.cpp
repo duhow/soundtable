@@ -26,51 +26,24 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
         using rectai::LoadReactablePatchFromFile;
         using rectai::ReactablePatchMetadata;
 
-        // Try a few likely base directories relative to the current working
-        // directory and to the executable location.
-        juce::File candidates[8];
-        int candidateCount = 0;
+        const juce::File patchFile =
+            rectai::ui::loadFile("Resources/default.rtp");
+        if (!patchFile.existsAsFile()) {
+            return false;
+        }
 
-        const juce::File cwd = juce::File::getCurrentWorkingDirectory();
-        candidates[candidateCount++] = cwd.getChildFile(
-            "com.reactable/Resources/default.rtp");
-        candidates[candidateCount++] = cwd.getChildFile(
-            "../com.reactable/Resources/default.rtp");
-        candidates[candidateCount++] = cwd.getChildFile(
-            "../../com.reactable/Resources/default.rtp");
+        rectai::ReactablePatchMetadata metadata;
+        std::string error;
 
-        const juce::File exeDir = juce::File::getSpecialLocation(
-                                       juce::File::currentExecutableFile)
-                                       .getParentDirectory();
-        candidates[candidateCount++] = exeDir.getChildFile(
-            "com.reactable/Resources/default.rtp");
-        candidates[candidateCount++] = exeDir.getChildFile(
-            "../com.reactable/Resources/default.rtp");
-        candidates[candidateCount++] = exeDir.getChildFile(
-            "../../com.reactable/Resources/default.rtp");
-        candidates[candidateCount++] = exeDir.getParentDirectory().getChildFile(
-            "com.reactable/Resources/default.rtp");
-        candidates[candidateCount++] = exeDir.getParentDirectory().getChildFile(
-            "../com.reactable/Resources/default.rtp");
-
-        for (int i = 0; i < candidateCount; ++i) {
-            const juce::File& f = candidates[i];
-            if (!f.existsAsFile()) {
-                continue;
-            }
-
-            rectai::ReactablePatchMetadata metadata;
-            std::string error;
-
-            scene_ = rectai::Scene{};
-            const bool ok = LoadReactablePatchFromFile(
-                f.getFullPathName().toStdString(), scene_, &metadata, &error);
-            if (ok) {
-                masterColour_ =
-                    rectai::ui::colourFromArgb(metadata.master_colour_argb);
-                masterMuted_ = metadata.master_muted;
-                return true;
-            }
+        scene_ = rectai::Scene{};
+        const bool ok = LoadReactablePatchFromFile(
+            patchFile.getFullPathName().toStdString(), scene_, &metadata,
+            &error);
+        if (ok) {
+            masterColour_ =
+                rectai::ui::colourFromArgb(metadata.master_colour_argb);
+            masterMuted_ = metadata.master_muted;
+            return true;
         }
 
         return false;

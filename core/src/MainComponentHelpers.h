@@ -28,4 +28,15 @@ std::string makeModulePairKey(const std::string& fromId,
 bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
                                      const rectai::ObjectInstance& toObj);
 
+// Try to locate a Reactable resource file given a relative path such as
+// "Resources/default.rtp". The helper will internally prefix the path
+// with "com.reactable/" so that callers only need to specify the
+// subfolder and file within the Reactable content tree. The search is performed
+// relative to the current working directory and to the executable
+// location, attempting a series of plausible prefixes.
+//
+// Returns a valid juce::File if found; otherwise returns an empty file
+// (for which existsAsFile() will be false).
+[[nodiscard]] juce::File loadFile(const juce::String& relativePath);
+
 }  // namespace rectai::ui

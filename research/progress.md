@@ -217,3 +217,9 @@
 ### Helpers de UI con namespace explícito en `MainComponent`
 - Se ha alineado el uso de los helpers de UI definidos en `MainComponentHelpers.h` (`makeConnectionKey`, `makeObjectPairKey`, `makeModulePairKey`, `isConnectionGeometricallyActive`) para que se invoquen siempre cualificados como `rectai::ui::...` desde `MainComponent.cpp`.
 - Esto corrige errores de compilación recientes por símbolos no resueltos y deja más clara la separación entre la lógica de modelo (`rectai`) y las utilidades puramente gráficas/de UI (`rectai::ui`).
+
+### Helper genérico `loadFile` para recursos de Reactable
+- Se ha extraído la lógica de búsqueda de recursos (antes duplicada en `MainComponent` y `MainComponent_Atlas`) a un helper `rectai::ui::loadFile` definido en `MainComponentHelpers.{h,cpp}`.
+- `loadFile` recibe una ruta relativa (por ejemplo, `"com.reactable/Resources/default.rtp"`) y prueba varias ubicaciones plausibles relativas al directorio actual y al ejecutable (`.`, `..`, `../..`, y el parent del binario), devolviendo el primer `juce::File` existente o un archivo vacío si no encuentra nada.
+- `MainComponent` usa ahora `loadFile` para localizar `default.rtp` antes de invocar `LoadReactablePatchFromFile`, eliminando el array local de 8 candidatos.
+- `MainComponent_Atlas` también usa `loadFile` para hallar `com.reactable/Resources/atlas_2048.png` y deriva de ahí el `atlas_2048.xml` en el mismo directorio, unificando la estrategia de búsqueda de recursos Reactable y reduciendo duplicación de código.

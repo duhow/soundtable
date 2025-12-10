@@ -87,4 +87,44 @@ bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
     return std::abs(diff) <= halfCone;
 }
 
+juce::File loadFile(const juce::String& relativePath)
+{
+    static constexpr const char* kReactableRoot = "com.reactable/";
+
+    const juce::String fullRelativePath = juce::String(kReactableRoot) +
+                                          relativePath;
+
+    juce::File candidates[8];
+    int candidateCount = 0;
+
+    const juce::File cwd = juce::File::getCurrentWorkingDirectory();
+    candidates[candidateCount++] = cwd.getChildFile(fullRelativePath);
+    candidates[candidateCount++] =
+        cwd.getChildFile("../" + fullRelativePath);
+    candidates[candidateCount++] =
+        cwd.getChildFile("../../" + fullRelativePath);
+
+    const juce::File exeDir = juce::File::getSpecialLocation(
+                                      juce::File::currentExecutableFile)
+                                      .getParentDirectory();
+    candidates[candidateCount++] = exeDir.getChildFile(fullRelativePath);
+    candidates[candidateCount++] =
+        exeDir.getChildFile("../" + fullRelativePath);
+    candidates[candidateCount++] =
+        exeDir.getChildFile("../../" + fullRelativePath);
+    candidates[candidateCount++] =
+        exeDir.getParentDirectory().getChildFile(fullRelativePath);
+    candidates[candidateCount++] = exeDir.getParentDirectory().getChildFile(
+        "../" + fullRelativePath);
+
+    for (int i = 0; i < candidateCount; ++i) {
+        const juce::File& f = candidates[i];
+        if (f.existsAsFile()) {
+            return f;
+        }
+    }
+
+    return juce::File();
+}
+
 }  // namespace rectai::ui
