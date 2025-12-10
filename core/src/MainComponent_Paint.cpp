@@ -66,6 +66,180 @@ void MainComponent::paint(juce::Graphics& g)
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();
 
+    // Fetch recent per-voice mono snapshots from the audio engine so
+    // that audio-carrying lines can display waveforms that better
+    // match the module or chain that is actually producing sound.
+    constexpr int kWaveformPoints = 128;
+    float voiceWaveforms[AudioEngine::kMaxVoices][kWaveformPoints]{};
+    float voiceNorm[AudioEngine::kMaxVoices]{};
+
+    for (int v = 0; v < AudioEngine::kMaxVoices; ++v) {
+        audioEngine_.getVoiceWaveformSnapshot(v, voiceWaveforms[v],
+                                              kWaveformPoints, 0.05);
+        float maxAbs = 0.0F;
+        for (int i = 0; i < kWaveformPoints; ++i) {
+            maxAbs = std::max(maxAbs,
+                              std::abs(voiceWaveforms[v][i]));
+        }
+        voiceNorm[v] =
+            maxAbs > 1.0e-4F ? 1.0F / maxAbs : 0.0F;
+    }
+
+    auto isAudioConnection = [&modules](const rectai::Connection& conn) {
+        const auto fromModuleIt = modules.find(conn.from_module_id);
+        if (fromModuleIt != modules.end() && fromModuleIt->second != nullptr) {
+            const auto& fromModule = *fromModuleIt->second;
+            for (const auto& port : fromModule.output_ports()) {
+                if (port.name == conn.from_port_name) {
+                    return port.is_audio;
+                }
+            }
+
+            if (fromModule.produces_audio()) {
+                return true;
+            }
+        }
+
+        const auto toModuleIt = modules.find(conn.to_module_id);
+        if (toModuleIt != modules.end() && toModuleIt->second != nullptr) {
+            const auto& toModule = *toModuleIt->second;
+            for (const auto& port : toModule.input_ports()) {
+                if (port.name == conn.to_port_name) {
+                    return port.is_audio;
+                }
+            }
+
+            if (toModule.consumes_audio()) {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    auto drawWaveformOnLine = [&g](const juce::Point<float>& start,
+                                   const juce::Point<float>& end,
+                                   float amplitude, float thickness,
+                                   const float* samples, int numSamples,
+                                   float normalisation, int segments) {
+        const juce::Point<float> delta = end - start;
+        const float length =
+            std::sqrt(delta.x * delta.x + delta.y * delta.y);
+        if (length <= 0.0F) {
+            return;
+        }
+
+        const juce::Point<float> tangent{delta.x / length,
+                                          delta.y / length};
+        const juce::Point<float> normal{-tangent.y, tangent.x};
+
+        juce::Path path;
+        for (int i = 0; i <= segments; ++i) {
+            const float t = static_cast<float>(i) /
+                            static_cast<float>(segments);
+            const float baseX = start.x + delta.x * t;
+            const float baseY = start.y + delta.y * t;
+            int sampleIndex = 0;
+            if (samples != nullptr && numSamples > 0) {
+                const float sampleT =
+                    juce::jlimit(0.0F, 1.0F, t);
+                const float idx = sampleT *
+                                  static_cast<float>(numSamples - 1);
+                sampleIndex = juce::jlimit(
+                    0, numSamples - 1,
+                    static_cast<int>(idx + 0.5F));
+            }
+
+            float sampleValue =
+                (samples != nullptr && numSamples > 0)
+                    ? samples[sampleIndex]
+                    : 0.0F;
+            if (normalisation > 0.0F) {
+                sampleValue *= normalisation;
+            }
+
+            const float displacement = amplitude * sampleValue;
+            const juce::Point<float> offset{normal.x * displacement,
+                                            normal.y * displacement};
+            const float x = baseX + offset.x;
+            const float y = baseY + offset.y;
+            if (i == 0) {
+                path.startNewSubPath(x, y);
+            } else {
+                path.lineTo(x, y);
+            }
+        }
+
+        g.strokePath(path, juce::PathStrokeType(thickness));
+    };
+
+    auto drawWaveformOnQuadratic =
+        [&g](const juce::Point<float>& p1,
+             const juce::Point<float>& control,
+             const juce::Point<float>& p2, float amplitude,
+             float thickness, const float* samples, int numSamples,
+             float normalisation, int segments) {
+            const juce::Point<float> d1 = control - p1;
+            const juce::Point<float> d2 = p2 - control;
+
+            juce::Path path;
+            for (int i = 0; i <= segments; ++i) {
+                const float t = static_cast<float>(i) /
+                                static_cast<float>(segments);
+                const float oneMinusT = 1.0F - t;
+
+                const juce::Point<float> basePoint =
+                    oneMinusT * oneMinusT * p1 +
+                    2.0F * oneMinusT * t * control + t * t * p2;
+
+                juce::Point<float> tangent =
+                    juce::Point<float>{2.0F * ((1.0F - t) * d1.x + t * d2.x),
+                                       2.0F * ((1.0F - t) * d1.y + t * d2.y)};
+                const float len = std::sqrt(tangent.x * tangent.x +
+                                             tangent.y * tangent.y);
+                if (len <= 0.0F) {
+                    continue;
+                }
+
+                tangent =
+                    juce::Point<float>{tangent.x / len, tangent.y / len};
+                const juce::Point<float> normal{-tangent.y, tangent.x};
+
+                int sampleIndex = 0;
+                if (samples != nullptr && numSamples > 0) {
+                    const float sampleT =
+                        juce::jlimit(0.0F, 1.0F, t);
+                    const float idx = sampleT *
+                                      static_cast<float>(numSamples - 1);
+                    sampleIndex = juce::jlimit(
+                        0, numSamples - 1,
+                        static_cast<int>(idx + 0.5F));
+                }
+
+                float sampleValue =
+                    (samples != nullptr && numSamples > 0)
+                        ? samples[sampleIndex]
+                        : 0.0F;
+                if (normalisation > 0.0F) {
+                    sampleValue *= normalisation;
+                }
+
+                const float displacement = amplitude * sampleValue;
+                const juce::Point<float> offset{
+                    normal.x * displacement, normal.y * displacement};
+                const float x = basePoint.x + offset.x;
+                const float y = basePoint.y + offset.y;
+
+                if (i == 0) {
+                    path.startNewSubPath(x, y);
+                } else {
+                    path.lineTo(x, y);
+                }
+            }
+
+            g.strokePath(path, juce::PathStrokeType(thickness));
+        };
+
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
     for (const auto& [id, object] : objects) {
         moduleToObjectId.emplace(object.logical_id(), id);
@@ -137,12 +311,12 @@ void MainComponent::paint(juce::Graphics& g)
         }
 
         // -----------------------------------------------------------------
-        // Connections: centre each object, with optional flow pulses.
-        // All instruments keep their own structural line to the master.
-        // When an instrument is feeding another through an active
-        // connection, its line remains visible but loses the animated
-        // flow pulse so that only the downstream node appears as the
-        // active path to the master bus.
+        // Connections: centre each object. All instruments keep their
+        // own structural line to the master. When an instrument is
+        // feeding another through an active connection, its line
+        // remains visible but loses the animated flow pulse so that
+        // only the downstream node appears as the active path to the
+        // master bus.
         // -----------------------------------------------------------------
         for (const auto& [id, object] : objects) {
             if (object.logical_id() == "-1") {
@@ -183,35 +357,57 @@ void MainComponent::paint(juce::Graphics& g)
 
             juce::Line<float> line(centre.x, centre.y, cx, cy);
 
+            const bool lineCarriesAudio =
+                modulesWithActiveAudio_.find(object.logical_id()) !=
+                modulesWithActiveAudio_.end();
+
             // Dim the line slightly when this instrument is feeding
             // another one, so the downstream instrument stands out.
-            const float lineAlpha = hasActiveOutgoingConnection ? 0.4F : 0.7F;
-            g.setColour(juce::Colours::white.withAlpha(lineAlpha));
+            const float baseAlpha =
+                hasActiveOutgoingConnection ? 0.4F : 0.7F;
 
-            if (isMuted) {
-                const float dashLengths[] = {6.0F, 4.0F};
-                g.drawDashedLine(line, dashLengths,
-                                 static_cast<int>(std::size(dashLengths)),
-                                 2.0F);
+            if (lineCarriesAudio && !isMuted) {
+                const auto voiceIt =
+                    moduleVoiceIndex_.find(object.logical_id());
+                const int voiceIndex =
+                    (voiceIt != moduleVoiceIndex_.end())
+                        ? voiceIt->second
+                        : -1;
+
+                if (voiceIndex >= 0 &&
+                    voiceIndex < AudioEngine::kMaxVoices &&
+                    voiceNorm[voiceIndex] > 0.0F) {
+                    g.setColour(
+                        juce::Colours::white.withAlpha(baseAlpha));
+                    const float waveformAmplitude = 3.0F;
+                    const float waveformThickness = 1.4F;
+                    drawWaveformOnLine(
+                        line.getStart(), line.getEnd(),
+                        waveformAmplitude, waveformThickness,
+                        voiceWaveforms[voiceIndex], kWaveformPoints,
+                        voiceNorm[voiceIndex], 72);
+                    continue;
+                }
             } else {
-                g.drawLine(line, 2.0F);
+                g.setColour(juce::Colours::white.withAlpha(baseAlpha));
+                if (isMuted) {
+                    const float dashLengths[] = {6.0F, 4.0F};
+                    g.drawDashedLine(
+                        line, dashLengths,
+                        static_cast<int>(std::size(dashLengths)), 2.0F);
+                } else {
+                    g.drawLine(line, 2.0F);
+                }
             }
 
-            // Flow pulse travelling from node to centre to sugerir dirección.
+            // Flow pulse travelling from node to centre to suggest
+            // direction.
             const float t = static_cast<float>(std::fmod(
                 connectionFlowPhase_ +
                     0.25 * static_cast<double>(id % 4),
                 1.0));
             const float px = juce::jmap(t, 0.0F, 1.0F, cx, centre.x);
             const float py = juce::jmap(t, 0.0F, 1.0F, cy, centre.y);
-
-            // Only instruments that are not muted and are currently
-            // feeding the master directly (i.e. without an active
-            // outgoing connection) show the animated pulse.
-            const bool showPulse = !isMuted && !hasActiveOutgoingConnection;
-            g.setColour(juce::Colours::white.withAlpha(
-                showPulse ? 0.9F : 0.0F));
-            g.fillEllipse(px - 3.0F, py - 3.0F, 6.0F, 6.0F);
         }
 
         // -----------------------------------------------------------------
@@ -258,9 +454,9 @@ void MainComponent::paint(juce::Graphics& g)
             const juce::Point<float> p2{tx, ty};
             const juce::Point<float> mid = (p1 + p2) * 0.5F;
 
-            // Control point desplazado ligeramente para dar curvatura en
-            // conexiones dinámicas. Los hardlinks se dibujan como líneas
-            // rectas simples entre nodos.
+            // Control point slightly offset to provide curvature for
+            // dynamic connections. Hardlinks are drawn as simple
+            // straight segments between nodes.
             const juce::Point<float> delta = p2 - p1;
             const float length =
                 std::sqrt(delta.x * delta.x + delta.y * delta.y);
@@ -274,6 +470,13 @@ void MainComponent::paint(juce::Graphics& g)
             const bool isMutedConnection =
                 mutedConnections_.find(makeConnectionKey(conn)) !=
                 mutedConnections_.end();
+
+            const bool audioConn =
+                isAudioConnection(conn) &&
+                (modulesWithActiveAudio_.find(conn.from_module_id) !=
+                     modulesWithActiveAudio_.end() ||
+                 modulesWithActiveAudio_.find(conn.to_module_id) !=
+                     modulesWithActiveAudio_.end());
 
             const juce::Colour activeColour =
                 conn.is_hardlink
@@ -294,26 +497,65 @@ void MainComponent::paint(juce::Graphics& g)
                 // Hardlink: straight segment with a pulse travelling
                 // directly from source to destination.
                 g.setColour(activeColour);
-                g.drawLine(juce::Line<float>(p1, p2), 1.8F);
+                bool drewWave = false;
 
-                const double phaseOffset =
-                    0.25 * static_cast<double>(connectionIndex);
-                const float t = static_cast<float>(
-                    std::fmod(connectionFlowPhase_ + phaseOffset, 1.0));
+                if (audioConn) {
+                    int voiceIndex = -1;
+                    if (const auto it = moduleVoiceIndex_.find(
+                            conn.from_module_id);
+                        it != moduleVoiceIndex_.end()) {
+                        voiceIndex = it->second;
+                    } else if (const auto it2 = moduleVoiceIndex_.find(
+                                   conn.to_module_id);
+                               it2 != moduleVoiceIndex_.end()) {
+                        voiceIndex = it2->second;
+                    }
 
-                const juce::Point<float> flowPoint =
-                    p1 + (p2 - p1) * t;
+                    if (voiceIndex >= 0 &&
+                        voiceIndex < AudioEngine::kMaxVoices &&
+                        voiceNorm[voiceIndex] > 0.0F) {
+                        const float waveformAmplitude = 2.0F;
+                        const float waveformThickness = 1.2F;
+                        drawWaveformOnLine(
+                            p1, p2, waveformAmplitude,
+                            waveformThickness,
+                            voiceWaveforms[voiceIndex],
+                            kWaveformPoints, voiceNorm[voiceIndex], 64);
+                        drewWave = true;
+                    }
+                }
 
-                g.setColour(juce::Colours::red.withAlpha(0.9F));
-                g.fillEllipse(flowPoint.x - 2.5F, flowPoint.y - 2.5F, 5.0F,
-                              5.0F);
+                if (!drewWave) {
+                    g.drawLine(juce::Line<float>(p1, p2), 1.8F);
+                }
             } else {
-                juce::Path path;
-                path.startNewSubPath(p1);
-                path.quadraticTo(control, p2);
+                bool useWaveformPath = false;
+                int voiceIndex = -1;
+                if (audioConn) {
+                    if (const auto it = moduleVoiceIndex_.find(
+                            conn.from_module_id);
+                        it != moduleVoiceIndex_.end()) {
+                        voiceIndex = it->second;
+                    } else if (const auto it2 = moduleVoiceIndex_.find(
+                                   conn.to_module_id);
+                               it2 != moduleVoiceIndex_.end()) {
+                        voiceIndex = it2->second;
+                    }
 
-                g.setColour(activeColour);
-                g.strokePath(path, juce::PathStrokeType(1.5F));
+                    useWaveformPath =
+                        voiceIndex >= 0 &&
+                        voiceIndex < AudioEngine::kMaxVoices &&
+                        voiceNorm[voiceIndex] > 0.0F;
+                }
+
+                if (!useWaveformPath) {
+                    juce::Path path;
+                    path.startNewSubPath(p1);
+                    path.quadraticTo(control, p2);
+
+                    g.setColour(activeColour);
+                    g.strokePath(path, juce::PathStrokeType(1.5F));
+                }
 
                 // Animated pulse travelling along the curved
                 // connection.
@@ -330,6 +572,19 @@ void MainComponent::paint(juce::Graphics& g)
                 g.setColour(juce::Colours::white.withAlpha(0.85F));
                 g.fillEllipse(flowPoint.x - 2.5F, flowPoint.y - 2.5F, 5.0F,
                               5.0F);
+
+                if (useWaveformPath && voiceIndex >= 0 &&
+                    voiceIndex < AudioEngine::kMaxVoices) {
+                    const float waveformAmplitude = 2.0F;
+                    const float waveformThickness = 1.2F;
+
+                    g.setColour(juce::Colours::white.withAlpha(0.8F));
+                    drawWaveformOnQuadratic(
+                        p1, control, p2, waveformAmplitude,
+                        waveformThickness,
+                        voiceWaveforms[voiceIndex], kWaveformPoints,
+                        voiceNorm[voiceIndex], 72);
+                }
             }
 
             ++connectionIndex;

@@ -326,6 +326,9 @@ void MainComponent::timerCallback()
         moduleToObjectId.emplace(obj.logical_id(), objId);
     }
 
+    modulesWithActiveAudio_.clear();
+    moduleVoiceIndex_.clear();
+
     struct VoiceParams {
         double frequency{0.0};
         float level{0.0F};
@@ -422,7 +425,21 @@ void MainComponent::timerCallback()
         if (level > 0.0F && voiceIndex < AudioEngine::kMaxVoices) {
             voices[voiceIndex].frequency = frequency;
             voices[voiceIndex].level = masterMuted_ ? 0.0F : level;
+            const int assignedVoice = voiceIndex;
             ++voiceIndex;
+
+            // Mark generator and, when present, its downstream module
+            // as actively carrying audio so the visual layer can
+            // render waveforms only on those paths, and remember
+            // which AudioEngine voice index represents this chain.
+            modulesWithActiveAudio_.insert(module->id());
+            moduleVoiceIndex_[module->id()] = assignedVoice;
+            if (downstreamModule != nullptr && downstreamInside &&
+                !connectionMuted) {
+                modulesWithActiveAudio_.insert(
+                    downstreamModule->id());
+                moduleVoiceIndex_[downstreamModule->id()] = assignedVoice;
+            }
         }
     }
 
@@ -437,9 +454,18 @@ void MainComponent::timerCallback()
         }
     }
 
-    // Update BPM pulse animation.
-    const double fps = 60.0;  // Timer frequency.
-    const double dt = 1.0 / fps;
+    // Update BPM pulse animation using real dt between timer ticks so
+    // visuals remain stable even if the timer frequency changes or the
+    // event loop hiccups.
+    const double nowSeconds =
+        juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    double dt = nowSeconds - lastTimerSeconds_;
+    if (dt <= 0.0 || dt > 0.5) {
+        // Fallback to a small, reasonable timestep in case of the
+        // first frame or large pauses (e.g. debugger).
+        dt = 1.0 / 120.0;
+    }
+    lastTimerSeconds_ = nowSeconds;
 
     // Age existing pulses and remove the ones that have fully faded.
     constexpr double pulseLifetimeSeconds = 1.0;
@@ -455,7 +481,7 @@ void MainComponent::timerCallback()
 
     // Spawn a new pulse on every beat; every 4th beat is stronger.
     const double bps = bpm_ / 60.0;  // beats per second
-    beatPhase_ += bps / fps;
+    beatPhase_ += bps * dt;
     if (beatPhase_ >= 1.0) {
         beatPhase_ -= 1.0;
 
@@ -477,7 +503,7 @@ void MainComponent::timerCallback()
     // Simple sequencer phase for widgets (steps per bar = 8).
     const int stepsPerBar = 8;
     const double stepsPerSecond = bps * static_cast<double>(stepsPerBar);
-    sequencerPhase_ += stepsPerSecond / fps;
+    sequencerPhase_ += stepsPerSecond * dt;
     if (sequencerPhase_ >= 1.0) {
         sequencerPhase_ -= 1.0;
     }

@@ -99,6 +99,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     const int voiceCount =
         std::clamp(numVoices_.load(std::memory_order_relaxed), 0, kMaxVoices);
 
+    const int historySize = kWaveformHistorySize;
+    const int baseWriteIndex =
+        waveformWriteIndex_.fetch_add(numSamples, std::memory_order_relaxed);
+
     for (int sample = 0; sample < numSamples; ++sample) {
         float mixed = 0.0F;
 
@@ -106,20 +110,34 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             const double twoPiOverFs =
                 juce::MathConstants<double>::twoPi / sampleRate_;
 
+            const int writeIndex = baseWriteIndex + sample;
+            const int bufIndex = writeIndex % historySize;
+
             for (int v = 0; v < voiceCount; ++v) {
                 const auto freq =
                     voices_[v].frequency.load(std::memory_order_relaxed);
                 const auto level =
                     voices_[v].level.load(std::memory_order_relaxed);
 
-                if (level <= 0.0F || freq <= 0.0) {
-                    continue;
+                float s = 0.0F;
+                if (level > 0.0F && freq > 0.0) {
+                    phases_[v] += twoPiOverFs * freq;
+                    s = static_cast<float>(std::sin(phases_[v])) *
+                        level;
+                    mixed += s;
                 }
 
-                phases_[v] += twoPiOverFs * freq;
-                const auto s = static_cast<float>(std::sin(phases_[v])) *
-                               level;
-                mixed += s;
+                voiceWaveformBuffer_[v][bufIndex] = s;
+            }
+
+            waveformBuffer_[bufIndex] = mixed;
+        } else {
+            const int writeIndex = baseWriteIndex + sample;
+            const int bufIndex = writeIndex % historySize;
+
+            waveformBuffer_[bufIndex] = 0.0F;
+            for (int v = 0; v < voiceCount; ++v) {
+                voiceWaveformBuffer_[v][bufIndex] = 0.0F;
             }
         }
 
@@ -128,5 +146,102 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 buffer[sample] = mixed;
             }
         }
+    }
+}
+
+void AudioEngine::getWaveformSnapshot(float* dst, const int numPoints,
+                                      const double windowSeconds)
+{
+    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0) {
+        return;
+    }
+
+    const int historySize = kWaveformHistorySize;
+    const int writeIndex =
+        waveformWriteIndex_.load(std::memory_order_relaxed);
+    const int availableSamples =
+        std::min(historySize, std::max(writeIndex, 0));
+
+    if (availableSamples <= 0) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    double window = windowSeconds;
+    if (window <= 0.0) {
+        window = 0.05;  // Default to ~50 ms.
+    }
+
+    int windowSamples = static_cast<int>(window * sampleRate_);
+    windowSamples = std::max(1, std::min(windowSamples, availableSamples));
+
+    const int startIndex =
+        (writeIndex - windowSamples + historySize * 4) % historySize;
+
+    // Downsample the requested window into `numPoints` evenly spaced
+    // samples. The UI can then normalise and map these to screen-space.
+    const int points = std::min(numPoints, windowSamples);
+    const float denom = static_cast<float>(std::max(points - 1, 1));
+
+    for (int i = 0; i < points; ++i) {
+        const float t = static_cast<float>(i) / denom;
+        const int offset = static_cast<int>(t * static_cast<float>(windowSamples - 1));
+        const int bufIndex =
+            (startIndex + offset + historySize) % historySize;
+        dst[i] = waveformBuffer_[bufIndex];
+    }
+
+    // If numPoints > points (e.g. extremely small window), pad the
+    // remainder with the last value to keep the curve continuous.
+    for (int i = points; i < numPoints; ++i) {
+        dst[i] = dst[points - 1];
+    }
+}
+
+void AudioEngine::getVoiceWaveformSnapshot(const int voiceIndex,
+                                           float* dst,
+                                           const int numPoints,
+                                           const double windowSeconds)
+{
+    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0 ||
+        voiceIndex < 0 || voiceIndex >= kMaxVoices) {
+        return;
+    }
+
+    const int historySize = kWaveformHistorySize;
+    const int writeIndex =
+        waveformWriteIndex_.load(std::memory_order_relaxed);
+    const int availableSamples =
+        std::min(historySize, std::max(writeIndex, 0));
+
+    if (availableSamples <= 0) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    double window = windowSeconds;
+    if (window <= 0.0) {
+        window = 0.05;  // Default to ~50 ms.
+    }
+
+    int windowSamples = static_cast<int>(window * sampleRate_);
+    windowSamples = std::max(1, std::min(windowSamples, availableSamples));
+
+    const int startIndex =
+        (writeIndex - windowSamples + historySize * 4) % historySize;
+
+    const int points = std::min(numPoints, windowSamples);
+    const float denom = static_cast<float>(std::max(points - 1, 1));
+
+    for (int i = 0; i < points; ++i) {
+        const float t = static_cast<float>(i) / denom;
+        const int offset = static_cast<int>(t * static_cast<float>(windowSamples - 1));
+        const int bufIndex =
+            (startIndex + offset + historySize) % historySize;
+        dst[i] = voiceWaveformBuffer_[voiceIndex][bufIndex];
+    }
+
+    for (int i = points; i < numPoints; ++i) {
+        dst[i] = dst[points - 1];
     }
 }

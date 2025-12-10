@@ -79,6 +79,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
     // gracefully fall back to the existing vector-based icons and labels.
     (void)loadAtlasResources();
 
-    // Periodically map scene state to audio parameters.
-    startTimerHz(60);
+    // Periodically map scene state to audio parameters and refresh the
+    // UI. Use a relatively high update rate so that waveform
+    // visualisations and other animations feel responsive.
+    lastTimerSeconds_ =
+        juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    startTimerHz(120);
 }

@@ -68,6 +68,11 @@ private:
     double beatPhase_{0.0};
     int beatIndex_{0};
 
+    // Last timer tick timestamp (seconds) used to derive dt for
+    // animations, so visuals remain stable if the timer frequency
+    // changes.
+    double lastTimerSeconds_{0.0};
+
     // Master output (type=Output in .rtp) presentation state.
     juce::Colour masterColour_{juce::Colours::white};
     bool masterMuted_{false};
@@ -83,6 +88,17 @@ private:
     double connectionFlowPhase_{0.0};
     double sequencerPhase_{0.0};
     int sequencerStep_{0};
+
+    // Set of module ids that are currently contributing audible audio
+    // to the master bus. Used by the visual layer to decide which
+    // lines should display a waveform instead of a plain line.
+    std::unordered_set<std::string> modulesWithActiveAudio_;
+
+    // Mapping from module id to the AudioEngine voice index currently
+    // representing its audio chain (generator and optional downstream
+    // module). This lets the paint code fetch a module-specific
+    // waveform instead of relying on the global mix only.
+    std::unordered_map<std::string, int> moduleVoiceIndex_;
 
     // Per-instrument side controls (left: freq, right: gain).
     std::int64_t sideControlObjectId_{0};

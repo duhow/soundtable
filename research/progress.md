@@ -199,6 +199,25 @@
 - Los hardlinks se pintan ahora en rojo (línea y pulso animado) en `MainComponent::paint`, distinguiéndose de las conexiones dinámicas blancas.
 - El cálculo de conexiones “activas” y el ruteo de audio en `timerCallback` consideran los hardlinks como siempre activos dentro del área musical, ignorando las restricciones geométricas de cono, pero se eliminan automáticamente si cualquiera de los dos módulos sale fuera del área de música.
 
+### Visualización de forma de onda sobre líneas de audio
+- Se ha extendido `MainComponent::paint` para que cada línea que genera o transporta sonido muestre una forma de onda superpuesta sobre la línea blanca base.
+- Se añaden helpers internos para:
+  - Detectar si una `rectai::Connection` es de audio (consultando los `PortDescriptor` de `AudioModule` y, en su defecto, las flags `produces_audio`/`consumes_audio`).
+  - Dibujar una forma de onda senoidal animada sobre un segmento recto (`drawWaveformOnLine`) o sobre una curva cuadrática de Bézier (`drawWaveformOnQuadratic`).
+- Las líneas radiales centro→objeto que corresponden a módulos que producen o consumen audio ahora se dibujan como una única línea ondulada, sin duplicar la línea blanca estática. Esta línea se obtiene a partir de una muestra real del audio mezclado en `AudioEngine`.
+- Las conexiones entre módulos (`Scene::connections`) marcadas como de audio sustituyen igualmente su trazo base por una única curva ondulada (recta o Bézier según el tipo de conexión) siempre que la conexión no esté muteada, reforzando visualmente qué rutas llevan señal.
+- Se ha añadido un pequeño buffer circular de muestras mono en `AudioEngine` (unos ~90 ms de historial) y un método `getWaveformSnapshot` que devuelve una ventana de ~50 ms ya decimada a un número fijo de puntos para que la UI pueda normalizar y dibujar la forma de onda.
+- Las conexiones y líneas muteadas mantienen su aspecto atenuado/punteado pero no muestran forma de onda, reflejando que no están transportando audio, y cuando el nivel de audio es prácticamente nulo la línea ondulada converge visualmente a una recta.
+
+### Ajustes de rendimiento y precisión de la onda
+- El `MainComponent` ahora usa un timer a 120 Hz (en lugar de 60 Hz) y calcula el `dt` real entre ticks mediante `juce::Time::getMillisecondCounterHiRes`, lo que hace que las animaciones y la visualización de la forma de onda respondan con menor latencia y sin depender de una frecuencia fija.
+- Se ha eliminado la animación antigua del “punto” que viajaba desde cada módulo al centro (línea módulo→Master), para reducir ruido visual y dejar que la forma de onda sea el principal indicador de flujo de audio.
+- En `MainComponent::timerCallback` se mantiene ahora un conjunto `modulesWithActiveAudio_` con los ids de módulos que realmente están contribuyendo audio al master (generadores y, cuando procede, sus módulos destino aguas abajo).
+- El pintado de líneas radiales y conexiones consulta este conjunto, de forma que solo los módulos y conexiones con audio activo muestran una onda: por ejemplo, un filtro colocado en el área musical sin estar conectado a ningún oscilador ya no dibuja onda, y su línea vuelve a ser plana.
+
+### Eliminación de la animación de bola en hardlinks
+- Se ha eliminado también el pequeño círculo rojo animado que recorría las conexiones marcadas como `is_hardlink`, de forma que estas rutas se representan únicamente mediante su línea (recta u ondulada si llevan audio) sin elementos adicionales que distraigan de la lectura del grafo de módulos.
+
 ### Debug view del tracker con resaltado de fiduciales
 - En `tracker/src/main.cpp` se ha extendido el modo `--debug-view` para que, en modo live, dibuje un rectángulo rojo alrededor de cada fiducial estable detectado.
 - Se reutiliza la lista de `TrackedObject` estabilizada (tras el filtro de detecciones consecutivas) para que solo se resalten objetos “confiables”; si un fiducial desaparece de la escena deja de aparecer también su rectángulo.
@@ -252,6 +271,11 @@
 - `loadFile` recibe una ruta relativa (por ejemplo, `"com.reactable/Resources/default.rtp"`) y prueba varias ubicaciones plausibles relativas al directorio actual y al ejecutable (`.`, `..`, `../..`, y el parent del binario), devolviendo el primer `juce::File` existente o un archivo vacío si no encuentra nada.
 - `MainComponent` usa ahora `loadFile` para localizar `default.rtp` antes de invocar `LoadReactablePatchFromFile`, eliminando el array local de 8 candidatos.
 - `MainComponent_Atlas` también usa `loadFile` para hallar `com.reactable/Resources/atlas_2048.png` y deriva de ahí el `atlas_2048.xml` en el mismo directorio, unificando la estrategia de búsqueda de recursos Reactable y reduciendo duplicación de código.
+
+### Alineación del hit-test de líneas centro→objeto con hardlinks
+- Ajustada la lógica de `mouseDown` en `MainComponent_Input.cpp` para que el hit-test sobre las líneas centro→objeto siga exactamente las mismas reglas de visibilidad que el dibujado en `MainComponent_Paint.cpp`.
+- Ahora, los módulos generadores (`ModuleType::kGenerator`) que tengan una conexión saliente activa (incluyendo conexiones marcadas como `is_hardlink`) dejan de dibujar su línea directa al Master **y** dejan de ser clicables a través de esa línea, evitando que un “link invisible” al centro pueda mutear el módulo.
+- El filtro de hit-test también ignora objetos `docked` y el tangible `Output` (`logical_id == "-1"`), de forma que solo los instrumentos realmente representados con una línea visible hacia el Master pueden togglear su estado de mute mediante click cerca de dicha línea.
 
 ### Giro de módulos y modulación de frecuencia por rotación
 - El protocolo OSC de tracking (`TrackingOscReceiver`) interpreta ahora el quinto argumento de `/rectai/object` como ángulo en grados dentro del rango `[0, 360]` y lo convierte internamente a radianes antes de poblar `rectai::ObjectInstance`, manteniendo la semántica del modelo (`angle_radians`) coherente con el loader `.rtp`.
