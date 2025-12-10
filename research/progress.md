@@ -409,3 +409,8 @@
 - En `audioDeviceAboutToStart` se inicializa un `StateVariableTPTFilter` por cada voz con un `ProcessSpec` mono (1 canal) y el tamaño máximo de bloque reportado por el dispositivo de audio; cada filtro se resetea tanto al iniciar como al detener el dispositivo.
 - El método `setVoiceFilter` configura ahora directamente el tipo (`lowpass`, `bandpass`, `highpass`) con `setType`, y ajusta frecuencia de corte y resonancia con `setCutoffFrequency` y `setResonance`, tras limitar la frecuencia al rango físico válido por debajo de Nyquist.
 - En `audioDeviceIOCallbackWithContext`, cuando una voz tiene modo de filtro distinto de cero, la muestra senoidal generada para esa voz se pasa por `filters_[v].processSample(0, raw)`, y solo entonces se acumula en la mezcla y en el buffer de forma de onda, eliminando los artefactos de “crispado” que producía la implementación biquad anterior.
+
+### Evitar reseteos continuos del filtro por voz
+- `AudioEngine::setVoiceFilter` ya no resetea incondicionalmente el estado interno del filtro en cada tick del `timerCallback`; en su lugar, actualiza solo el tipo (`lowpass`, `bandpass`, `highpass`), la frecuencia de corte (clampada a < Nyquist) y la resonancia (`Q`) en el filtro JUCE sin borrar su memoria interna.
+- Si el modo de filtro es 0 (bypass) o la frecuencia de corte resulta ≤ 0 tras el clamping, el filtro se deja efectivamente en bypass (no se aplica procesamiento adicional), pero sin reseteos periódicos que pudieran introducir clicks.
+- Esta eliminación de reseteos innecesarios reduce los chasquidos y el ruido “crisp” que se apreciaban al escuchar un oscilador pasando por un filtro estático, manteniendo a la vez un flujo de audio continuo incluso cuando los parámetros del filtro se mantienen fijos.
