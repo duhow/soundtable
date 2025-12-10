@@ -2,10 +2,19 @@
 
 ## 2025-12-09
 
-### Modelo y UI básica
-- Modelo de dominio inicial implementado en `rectai::Scene` (`Scene.h/.cpp`), con:
-  - `ObjectInstance` (id de tracking, id lógico, posición normalizada, ángulo).
-  - `AudioModule` + `ModuleType` y descriptores de puertos.
+
+### Servicio de tracking: modo sintético vs live y esqueleto de engine
+- El binario `rectai-tracker` se ha estructurado para soportar dos modos de ejecución diferenciados:
+  - Modo `--mode=synthetic` (por defecto), que conserva el comportamiento anterior: envía un único objeto sintético `/rectai/object` con `trackingId=1` y `logicalId="osc1"` moviéndose horizontalmente.
+  - Modo `--mode=live`, que inicializa un nuevo `rectai::tracker::TrackerEngine` y pasa cada frame capturado para que devuelva una lista de `TrackedObject` con coordenadas normalizadas y ángulo en radianes.
+- Se ha introducido un pequeño modelo de tracking en `tracker/src/TrackerTypes.h` (`TrackedObject` + alias `TrackedObjectList`) y un esqueleto de `TrackerEngine` en `tracker/src/TrackerEngine.{h,cpp}` con API:
+  - `bool initialise(int cameraIndex, int requestedWidth, int requestedHeight, std::string& errorMessage)` para preparar parámetros internos.
+  - `TrackedObjectList processFrame(const cv::Mat& frame) const` para extraer objetos de cada frame (por ahora implementación placeholder sin detección real).
+- `tracker/src/main.cpp` ahora:
+  - Parsea `--mode=synthetic` / `--mode=live` desde línea de comandos.
+  - En modo live, inicializa `TrackerEngine` con la resolución actual de la cámara y, en cada frame, obtiene una lista de objetos y envía un mensaje `/rectai/object` por cada uno, usando una función `mapLogicalId(int markerId)` para traducir ids numéricos a `logicalId` (por ahora mapeo fijo `1→osc1`, `2→filter1`).
+  - Mantiene el cálculo de FPS y los mensajes de log con prefijo `[rectai-tracker]`.
+- `tracker/CMakeLists.txt` se ha actualizado para compilar e incluir los nuevos archivos de tracking en el ejecutable `rectai-tracker`.
   - `Connection` y operaciones de alta coherencia sobre la escena.
 - Tests sencillos en `tests/scene_tests.cpp` que validan:
   - Inserción única de módulos.
@@ -223,3 +232,9 @@
 - `loadFile` recibe una ruta relativa (por ejemplo, `"com.reactable/Resources/default.rtp"`) y prueba varias ubicaciones plausibles relativas al directorio actual y al ejecutable (`.`, `..`, `../..`, y el parent del binario), devolviendo el primer `juce::File` existente o un archivo vacío si no encuentra nada.
 - `MainComponent` usa ahora `loadFile` para localizar `default.rtp` antes de invocar `LoadReactablePatchFromFile`, eliminando el array local de 8 candidatos.
 - `MainComponent_Atlas` también usa `loadFile` para hallar `com.reactable/Resources/atlas_2048.png` y deriva de ahí el `atlas_2048.xml` en el mismo directorio, unificando la estrategia de búsqueda de recursos Reactable y reduciendo duplicación de código.
+
+### Target Earthly para AppImage
+- Añadido un nuevo target `appimage` en el `Earthfile` que reutiliza la imagen base `the-base`, compila los binarios en modo Release y prepara un `AppDir` con `RectaiTable` y `rectai-tracker` en `usr/bin`.
+- El target descarga `linuxdeploy` y `appimagetool` como AppImages y los usa para recolectar todas las dependencias compartidas (incluyendo `curl`, OpenCV y librerías del sistema necesarias para JUCE) y empaquetarlas en un único `rectai-table-x86_64.AppImage`.
+- Se genera un archivo `.desktop` mínimo para `RectaiTable` mediante un comando `printf` (en lugar de heredocs), evitando problemas de sintaxis en Earthly/Docker debidos a la indentación del marcador `EOF`.
+- El AppImage resultante se exporta como artefacto local en `build/rectai-table-x86_64.AppImage` al ejecutar `earthly -P +appimage` desde la raíz del repositorio.
