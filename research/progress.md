@@ -182,3 +182,23 @@
 - Extendido `SampleplayModule` en `core/src/core/AudioModules.{h,cpp}` para asociar un único archivo SoundFont (.sf2) por módulo.
 - Añadido método `bool LoadSoundfont(const std::string& path, std::string* error_message)` que realiza una validación ligera del encabezado SF2 (RIFF + "sfbk") usando solo C++ estándar y, en caso de éxito, almacena el path en el módulo (`soundfont_path_`) y marca `has_soundfont()`.
 - Añadido un test en `tests/scene_tests.cpp` que genera un archivo SF2 sintético mínimo en disco, invoca `SampleplayModule::LoadSoundfont`, verifica que se marca como cargado y elimina el archivo temporal.
+
+### Interacción de hardlinks en la UI
+- Ampliada la semántica de `Connection::is_hardlink` para que también se use en la interacción de la UI, no solo en el loader `.rtp`.
+- En `MainComponent` se introducen hardlinks dinámicos creados por colisión: cuando dos objetos (módulos) hacen contacto en la interfaz (sus círculos se tocan dentro del área musical), se detecta el evento de choque y se llama a un helper que alterna la conexión hardlink entre ambos módulos siempre que `AudioModule::CanConnectTo` lo permita.
+- Cada nuevo choque entre un par de objetos alterna el estado: si no existe conexión, se crea una `Connection` con `is_hardlink = true`; si ya existe un hardlink entre esos módulos, se elimina; si existe una conexión normal, se “promueve” a hardlink.
+- Los hardlinks se pintan ahora en rojo (línea y pulso animado) en `MainComponent::paint`, distinguiéndose de las conexiones dinámicas blancas.
+- El cálculo de conexiones “activas” y el ruteo de audio en `timerCallback` consideran los hardlinks como siempre activos dentro del área musical, ignorando las restricciones geométricas de cono, pero se eliminan automáticamente si cualquiera de los dos módulos sale fuera del área de música.
+ - El umbral de choque para crear/eliminar hardlinks se ha afinado usando un radio virtual de 30px por nodo y exigiendo al menos 4px de “solapamiento” entre esos círculos virtuales (distancia entre centros ≤ 2*30 - 4), de forma que el hardlink solo se activa cuando los módulos se acercan de manera clara, sin romper la restricción de que los nodos no se sobrepongan visualmente.
+
+### Carga de `default.rtp` desde `com.reactable`
+- La aplicación JUCE principal (`rectai-core`) ahora intenta cargar automáticamente el patch Reactable por defecto ubicado en `com.reactable/Resources/default.rtp` al inicializar `MainComponent`.
+- Se reutiliza el loader existente `LoadReactablePatchFromFile` de `core/src/core/ReactableRtpLoader.{h,cpp}` para poblar directamente un `rectai::Scene` con módulos, conexiones y objetos a partir del `.rtp` original.
+- La ruta al recurso se resuelve de forma robusta probando varias ubicaciones relativas tanto al directorio de trabajo actual como al ejecutable (por ejemplo, `com.reactable/Resources/default.rtp`, `../com.reactable/Resources/default.rtp`, etc.), de manera que funcione tanto al lanzar desde la raíz del repo como desde el árbol `build/`.
+- Si la carga falla (por ausencia de archivo o error de parseo), `MainComponent` recupera el comportamiento anterior creando la pequeña escena de ejemplo hardcodeada (`osc1` → `filter1`) para mantener un fallback visible.
+
+### Flag `docked` en `ObjectInstance` y área musical
+- `rectai::ObjectInstance` se ha ampliado con un flag booleano `docked`, expuesto mediante `bool docked() const`, que indica si el tangible procede de un elemento `docked="1"` en el `.rtp`.
+- El loader de patches Reactable (`ReactableRtpLoader.cpp`) ahora lee el atributo `docked` de cada `<tangible>` y lo propaga al construir el `ObjectInstance` correspondiente, manteniendo el resto de la semántica (tracking_id como `id`, posición `x`,`y` y ángulo en radianes).
+- La función `MainComponent::isInsideMusicArea` utiliza ahora este flag: cualquier objeto marcado como `docked` se considera automáticamente fuera del área musical, incluso si sus coordenadas geométricas cayeran dentro del círculo de la mesa.
+- Con este cambio, los tangibles acoplados (`docked=1` en `default.rtp`, como Tonalizer, Volume, Tempo, LFO, Loop, Sampleplay, etc.) se tratan como módulos “apartados” que no participan en las conexiones espaciales ni en las heurísticas del área musical, alineando la semántica con el comportamiento esperado de la Reactable original.

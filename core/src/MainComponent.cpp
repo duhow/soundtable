@@ -7,6 +7,7 @@
 
 #include "AudioEngine.h"
 #include "core/AudioModules.h"
+#include "core/ReactableRtpLoader.h"
 
 namespace {
 
@@ -33,6 +34,27 @@ std::string makeConnectionKey(const rectai::Connection& c)
         .append(c.to_module_id)
         .append(1U, ':')
         .append(c.to_port_name);
+    return key;
+}
+
+std::string makeObjectPairKey(std::int64_t a, std::int64_t b)
+{
+    if (a > b) {
+        std::swap(a, b);
+    }
+    std::string key;
+    key.reserve(32U);
+    key.append(std::to_string(a)).append(1U, '>').append(
+        std::to_string(b));
+    return key;
+}
+
+std::string makeModulePairKey(const std::string& fromId,
+                              const std::string& toId)
+{
+    std::string key;
+    key.reserve(fromId.size() + toId.size() + 1U);
+    key.append(fromId).append(1U, '>').append(toId);
     return key;
 }
 
@@ -78,6 +100,10 @@ bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
 
 bool MainComponent::isInsideMusicArea(const rectai::ObjectInstance& obj) const
 {
+    if (obj.docked()) {
+        return false;
+    }
+
     const auto bounds = getLocalBounds().toFloat();
 
     const float centreX = bounds.getX() + 0.5F * bounds.getWidth();
@@ -98,25 +124,83 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
 {
     setSize(1280, 720);
 
-    // Example scene with a couple of modules and objects.
-    auto osc1 = std::make_unique<rectai::OscillatorModule>("osc1");
-    auto filter1 = std::make_unique<rectai::FilterModule>("filter1");
+    // Load default Reactable patch from com.reactable/Resources/default.rtp.
+    // If loading fails (e.g., when running tests without assets), fall back
+    // to the small hardcoded demo scene used originally.
+    const auto loadDefaultPatch = [this]() {
+        using rectai::LoadReactablePatchFromFile;
+        using rectai::ReactablePatchMetadata;
 
-    (void)scene_.AddModule(std::move(osc1));
-    (void)scene_.AddModule(std::move(filter1));
+        // Try a few likely base directories relative to the current working
+        // directory and to the executable location.
+        juce::File candidates[8];
+        int candidateCount = 0;
 
-    rectai::Connection connection{
-        .from_module_id = "osc1",
-        .from_port_name = "out",
-        .to_module_id = "filter1",
-        .to_port_name = "in",
+        const juce::File cwd = juce::File::getCurrentWorkingDirectory();
+        candidates[candidateCount++] = cwd.getChildFile(
+            "com.reactable/Resources/default.rtp");
+        candidates[candidateCount++] = cwd.getChildFile(
+            "../com.reactable/Resources/default.rtp");
+        candidates[candidateCount++] = cwd.getChildFile(
+            "../../com.reactable/Resources/default.rtp");
+
+        const juce::File exeDir = juce::File::getSpecialLocation(
+                                       juce::File::currentExecutableFile)
+                                       .getParentDirectory();
+        candidates[candidateCount++] = exeDir.getChildFile(
+            "com.reactable/Resources/default.rtp");
+        candidates[candidateCount++] = exeDir.getChildFile(
+            "../com.reactable/Resources/default.rtp");
+        candidates[candidateCount++] = exeDir.getChildFile(
+            "../../com.reactable/Resources/default.rtp");
+        candidates[candidateCount++] = exeDir.getParentDirectory().getChildFile(
+            "com.reactable/Resources/default.rtp");
+        candidates[candidateCount++] = exeDir.getParentDirectory().getChildFile(
+            "../com.reactable/Resources/default.rtp");
+
+        for (int i = 0; i < candidateCount; ++i) {
+            const juce::File& f = candidates[i];
+            if (!f.existsAsFile()) {
+                continue;
+            }
+
+            rectai::ReactablePatchMetadata metadata;
+            std::string error;
+
+            scene_ = rectai::Scene{};
+            const bool ok = LoadReactablePatchFromFile(
+                f.getFullPathName().toStdString(), scene_, &metadata, &error);
+            if (ok) {
+                return true;
+            }
+        }
+
+        return false;
     };
-    (void)scene_.AddConnection(connection);
 
-    // Normalized positions on the table.
-    scene_.UpsertObject(rectai::ObjectInstance(1, "osc1", 0.3F, 0.5F, 0.0F));
-    scene_.UpsertObject(
-        rectai::ObjectInstance(2, "filter1", 0.7F, 0.5F, 0.0F));
+    if (!loadDefaultPatch()) {
+        // Fallback: example scene with a couple of modules and objects.
+        auto osc1 = std::make_unique<rectai::OscillatorModule>("osc1");
+        auto filter1 =
+            std::make_unique<rectai::FilterModule>("filter1");
+
+        (void)scene_.AddModule(std::move(osc1));
+        (void)scene_.AddModule(std::move(filter1));
+
+        rectai::Connection connection{
+            .from_module_id = "osc1",
+            .from_port_name = "out",
+            .to_module_id = "filter1",
+            .to_port_name = "in",
+        };
+        (void)scene_.AddConnection(connection);
+
+        // Normalized positions on the table.
+        scene_.UpsertObject(
+            rectai::ObjectInstance(1, "osc1", 0.3F, 0.5F, 0.0F));
+        scene_.UpsertObject(rectai::ObjectInstance(
+            2, "filter1", 0.7F, 0.5F, 0.0F));
+    }
 
     // Periodically map scene state to audio parameters.
     startTimerHz(60);
@@ -299,9 +383,9 @@ void MainComponent::paint(juce::Graphics& g)
         // with a small animated pulse suggesting signal flow. Dynamic
         // connections are active only when the target lies inside the
         // 120º cone of the source; hardlink connections remain active
-        // regardless of that angular constraint.
+        // regardless of that angular constraint and are drawn in red
+        // instead of white.
         // -----------------------------------------------------------------
-        g.setColour(juce::Colours::white.withAlpha(0.7F));
         int connectionIndex = 0;
         for (const auto& conn : scene_.connections()) {
             const auto fromIt = std::find_if(objects.begin(), objects.end(),
@@ -352,12 +436,17 @@ void MainComponent::paint(juce::Graphics& g)
                 mutedConnections_.find(makeConnectionKey(conn)) !=
                 mutedConnections_.end();
 
+            const juce::Colour activeColour =
+                conn.is_hardlink
+                    ? juce::Colours::red.withAlpha(0.8F)
+                    : juce::Colours::white.withAlpha(0.7F);
+
             if (isMutedConnection) {
                 // Muted connection: render as a dashed straight line
                 // between the two nodes and omit the animated flow
                 // pulse.
                 const float dashLengths[] = {6.0F, 4.0F};
-                g.setColour(juce::Colours::white.withAlpha(0.6F));
+                g.setColour(activeColour.withAlpha(0.6F));
                 g.drawDashedLine(juce::Line<float>(p1, p2), dashLengths,
                                  static_cast<int>(std::size(dashLengths)),
                                  1.5F);
@@ -366,6 +455,7 @@ void MainComponent::paint(juce::Graphics& g)
                 path.startNewSubPath(p1);
                 path.quadraticTo(control, p2);
 
+                g.setColour(activeColour);
                 g.strokePath(path, juce::PathStrokeType(1.5F));
 
                 // Animated pulse travelling along the curved
@@ -380,7 +470,9 @@ void MainComponent::paint(juce::Graphics& g)
                     oneMinusT * oneMinusT * p1 +
                     2.0F * oneMinusT * t * control + t * t * p2;
 
-                g.setColour(juce::Colours::white.withAlpha(0.85F));
+                g.setColour(conn.is_hardlink
+                                 ? juce::Colours::red.withAlpha(0.9F)
+                                 : juce::Colours::white.withAlpha(0.85F));
                 g.fillEllipse(flowPoint.x - 2.5F, flowPoint.y - 2.5F, 5.0F,
                               5.0F);
             }
@@ -834,7 +926,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             const auto& toObj = toObjIt->second;
 
             if (!isInsideMusicArea(fromObj) || !isInsideMusicArea(toObj) ||
-                !isConnectionGeometricallyActive(fromObj, toObj)) {
+                (!conn.is_hardlink &&
+                 !isConnectionGeometricallyActive(fromObj, toObj))) {
                 continue;
             }
 
@@ -931,6 +1024,31 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         return;
     }
 
+    // Prevent objects from overlapping: treat nodes as solid circles
+    // and reject moves that would cause intersections with other
+    // objects.
+    constexpr float nodeRadius = 26.0F;
+    const float centreX = bounds.getX() + normX * bounds.getWidth();
+    const float centreY = bounds.getY() + normY * bounds.getHeight();
+    const float minDist = 2.0F * nodeRadius;
+    const float minDistSq = minDist * minDist;
+
+    for (const auto& [otherId, otherObj] : objects) {
+        if (otherId == draggedObjectId_) {
+            continue;
+        }
+
+        const float ox = bounds.getX() + otherObj.x() * bounds.getWidth();
+        const float oy = bounds.getY() + otherObj.y() * bounds.getHeight();
+        const float dx = centreX - ox;
+        const float dy = centreY - oy;
+        const float distSq = dx * dx + dy * dy;
+        if (distSq < minDistSq) {
+            // Block this movement; keep previous position.
+            return;
+        }
+    }
+
     auto updated = it->second;
     updated.set_position(normX, normY);
     scene_.UpsertObject(updated);
@@ -945,6 +1063,106 @@ void MainComponent::mouseUp(const juce::MouseEvent&)
     sideControlKind_ = SideControlKind::kNone;
 }
 
+void MainComponent::toggleHardlinkBetweenObjects(const std::int64_t objectIdA,
+                                                 const std::int64_t objectIdB)
+{
+    const auto& objects = scene_.objects();
+    const auto& modules = scene_.modules();
+
+    const auto itA = objects.find(objectIdA);
+    const auto itB = objects.find(objectIdB);
+    if (itA == objects.end() || itB == objects.end()) {
+        return;
+    }
+
+    const auto& objA = itA->second;
+    const auto& objB = itB->second;
+
+    const auto modItA = modules.find(objA.logical_id());
+    const auto modItB = modules.find(objB.logical_id());
+    if (modItA == modules.end() || modItB == modules.end() ||
+        modItA->second == nullptr || modItB->second == nullptr) {
+        return;
+    }
+
+    auto* moduleA = modItA->second.get();
+    auto* moduleB = modItB->second.get();
+
+    // Decide connection direction based on existing connection policies.
+    std::string fromId;
+    std::string toId;
+
+    if (moduleA->CanConnectTo(*moduleB)) {
+        fromId = moduleA->id();
+        toId = moduleB->id();
+    } else if (moduleB->CanConnectTo(*moduleA)) {
+        fromId = moduleB->id();
+        toId = moduleA->id();
+    } else {
+        // No valid audio routing between these modules.
+        return;
+    }
+
+    // Look for an existing connection between these two modules using the
+    // standard audio port names.
+    const auto& connections = scene_.connections();
+    bool found = false;
+    bool isHardlink = false;
+    for (const auto& c : connections) {
+        if (c.from_module_id == fromId && c.to_module_id == toId &&
+            c.from_port_name == "out" && c.to_port_name == "in") {
+            found = true;
+            isHardlink = c.is_hardlink;
+            break;
+        }
+    }
+
+    if (!found) {
+        // No existing connection: create a new hardlink.
+        rectai::Connection connection{.from_module_id = fromId,
+                                      .from_port_name = "out",
+                                      .to_module_id = toId,
+                                      .to_port_name = "in",
+                                      .is_hardlink = true};
+        (void)scene_.AddConnection(connection);
+        return;
+    }
+
+    if (isHardlink) {
+        // Existing hardlink: remove it. If this pair had a dynamic
+        // connection that was previously promoted to hardlink, restore
+        // that dynamic connection instead of leaving it disconnected.
+        (void)scene_.RemoveConnection(fromId, "out", toId, "in");
+
+        const std::string pairKey = makeModulePairKey(fromId, toId);
+        const auto promotedIt = promotedHardlinkPairs_.find(pairKey);
+        if (promotedIt != promotedHardlinkPairs_.end()) {
+            promotedHardlinkPairs_.erase(promotedIt);
+
+            rectai::Connection restored{.from_module_id = fromId,
+                                        .from_port_name = "out",
+                                        .to_module_id = toId,
+                                        .to_port_name = "in",
+                                        .is_hardlink = false};
+            (void)scene_.AddConnection(restored);
+        }
+        return;
+    }
+
+    // Existing non-hardlink connection: promote it to hardlink and
+    // remember that this pair had a base dynamic connection so that we
+    // can restore it when toggling the hardlink off again.
+    const std::string pairKey = makeModulePairKey(fromId, toId);
+    promotedHardlinkPairs_.insert(pairKey);
+    (void)scene_.RemoveConnection(fromId, "out", toId, "in");
+    rectai::Connection upgraded{.from_module_id = fromId,
+                                .from_port_name = "out",
+                                .to_module_id = toId,
+                                .to_port_name = "in",
+                                .is_hardlink = true};
+    (void)scene_.AddConnection(upgraded);
+}
+
 void MainComponent::timerCallback()
 {
     // Map scene state to audio parameters using AudioModule metadata.
@@ -952,6 +1170,132 @@ void MainComponent::timerCallback()
     // mix them into a single voice 0 for simplicity.
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();
+
+    // ------------------------------------------------------------------
+    // Hardlink maintenance and collision-based toggling.
+    // ------------------------------------------------------------------
+    {
+        const auto bounds = getLocalBounds().toFloat();
+        // Virtual collision radius used to trigger hardlinks. We treat
+        // nodes as if they had radius 30 px and require at least 4 px of
+        // overlap between those virtual circles before considering it a
+        // "strong" collision that toggles a hardlink.
+        const float collisionRadius = 30.0F;
+        const float maxDist = 2.0F * collisionRadius - 4.0F;  // >=4 px overlap
+        const float maxDistSq = maxDist * maxDist;
+
+        // Objects currently inside the musical area.
+        std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+            inside;
+        inside.reserve(objects.size());
+        for (const auto& [objId, obj] : objects) {
+            if (isInsideMusicArea(obj)) {
+                inside.emplace_back(objId, &obj);
+            }
+        }
+
+        // Detect new collisions between objects (touching circles) and
+        // toggle hardlinks on each new contact event.
+        std::unordered_set<std::string> currentPairs;
+        for (std::size_t i = 0; i < inside.size(); ++i) {
+            const auto idA = inside[i].first;
+            const auto* objA = inside[i].second;
+            const float ax = bounds.getX() + objA->x() * bounds.getWidth();
+            const float ay = bounds.getY() + objA->y() * bounds.getHeight();
+
+            for (std::size_t j = i + 1; j < inside.size(); ++j) {
+                const auto idB = inside[j].first;
+                const auto* objB = inside[j].second;
+                const float bx =
+                    bounds.getX() + objB->x() * bounds.getWidth();
+                const float by =
+                    bounds.getY() + objB->y() * bounds.getHeight();
+
+                const float dx = bx - ax;
+                const float dy = by - ay;
+                const float distSq = dx * dx + dy * dy;
+                if (distSq > maxDistSq) {
+                    continue;
+                }
+
+                const std::string pairKey = makeObjectPairKey(idA, idB);
+                currentPairs.insert(pairKey);
+
+                if (activeHardlinkCollisions_.find(pairKey) ==
+                    activeHardlinkCollisions_.end()) {
+                    // New collision event between these two objects:
+                    // toggle the hardlink connection if allowed.
+                    toggleHardlinkBetweenObjects(idA, idB);
+                    activeHardlinkCollisions_.insert(pairKey);
+                }
+            }
+        }
+
+        // Clear pairs that are no longer colliding so that a future
+        // contact between them can toggle the hardlink again.
+        for (auto it = activeHardlinkCollisions_.begin();
+             it != activeHardlinkCollisions_.end();) {
+            if (currentPairs.find(*it) == currentPairs.end()) {
+                it = activeHardlinkCollisions_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        // Remove hardlink connections whose endpoints are outside the
+        // musical area.
+        std::unordered_map<std::string, std::int64_t> moduleToObjectId;
+        for (const auto& [objId, obj] : objects) {
+            moduleToObjectId.emplace(obj.logical_id(), objId);
+        }
+
+        std::vector<std::pair<std::string, std::string>> hardlinksToRemove;
+        for (const auto& conn : scene_.connections()) {
+            if (!conn.is_hardlink) {
+                continue;
+            }
+
+            const auto fromObjIdIt =
+                moduleToObjectId.find(conn.from_module_id);
+            const auto toObjIdIt =
+                moduleToObjectId.find(conn.to_module_id);
+
+            const rectai::ObjectInstance* fromObj = nullptr;
+            const rectai::ObjectInstance* toObj = nullptr;
+            if (fromObjIdIt != moduleToObjectId.end()) {
+                const auto it = objects.find(fromObjIdIt->second);
+                if (it != objects.end()) {
+                    fromObj = &it->second;
+                }
+            }
+            if (toObjIdIt != moduleToObjectId.end()) {
+                const auto it = objects.find(toObjIdIt->second);
+                if (it != objects.end()) {
+                    toObj = &it->second;
+                }
+            }
+
+            if (fromObj == nullptr || toObj == nullptr ||
+                !isInsideMusicArea(*fromObj) ||
+                !isInsideMusicArea(*toObj)) {
+                hardlinksToRemove.emplace_back(conn.from_module_id,
+                                               conn.to_module_id);
+
+                // Clear any collision tracking for this pair.
+                if (fromObj != nullptr && toObj != nullptr) {
+                    const auto pairKey = makeObjectPairKey(
+                        moduleToObjectId[conn.from_module_id],
+                        moduleToObjectId[conn.to_module_id]);
+                    activeHardlinkCollisions_.erase(pairKey);
+                }
+            }
+        }
+
+        for (const auto& ids : hardlinksToRemove) {
+            (void)scene_.RemoveConnection(ids.first, "out", ids.second,
+                                          "in");
+        }
+    }
 
     double mixedFrequency = 0.0;
     float mixedLevel = 0.0F;
@@ -1006,7 +1350,8 @@ void MainComponent::timerCallback()
 
             const auto& toObj = objIt->second;
             if (!isInsideMusicArea(toObj) ||
-                !isConnectionGeometricallyActive(obj, toObj)) {
+                (!conn.is_hardlink &&
+                 !isConnectionGeometricallyActive(obj, toObj))) {
                 continue;
             }
 

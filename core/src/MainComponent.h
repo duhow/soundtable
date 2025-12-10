@@ -44,6 +44,17 @@ private:
     // Per-connection mute state, keyed by a stable connection id.
     std::unordered_set<std::string> mutedConnections_;
 
+    // Pairs of objects that are currently colliding (touching) and have
+    // already triggered a hardlink toggle while in contact. Used to
+    // detect new collision events as objects move.
+    std::unordered_set<std::string> activeHardlinkCollisions_;
+
+    // Module-level pairs for which an existing dynamic connection has been
+    // temporarily promoted to a hardlink. When the hardlink is toggled
+    // off again, these pairs restore their original non-hardlink
+    // connection instead of removing it entirely.
+    std::unordered_set<std::string> promotedHardlinkPairs_;
+
     // Transport / tempo visualisation.
     double bpm_{120.0};
     double beatPhase_{0.0};
@@ -65,6 +76,9 @@ private:
     std::int64_t sideControlObjectId_{0};
     enum class SideControlKind { kNone = 0, kFreq = 1, kGain = 2 };
     SideControlKind sideControlKind_{SideControlKind::kNone};
+
+    void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
+                                      std::int64_t objectIdB);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

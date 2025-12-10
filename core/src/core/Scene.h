@@ -14,13 +14,14 @@ class ObjectInstance {
  public:
   ObjectInstance() = default;
   ObjectInstance(std::int64_t tracking_id, std::string logical_id, float x,
-                 float y, float angle_radians);
+                 float y, float angle_radians, bool docked = false);
 
   [[nodiscard]] std::int64_t tracking_id() const { return tracking_id_; }
   [[nodiscard]] const std::string& logical_id() const { return logical_id_; }
   [[nodiscard]] float x() const { return x_; }
   [[nodiscard]] float y() const { return y_; }
   [[nodiscard]] float angle_radians() const { return angle_radians_; }
+  [[nodiscard]] bool docked() const { return docked_; }
 
   void set_position(float x, float y);
   void set_angle_radians(float angle_radians);
@@ -31,6 +32,7 @@ class ObjectInstance {
   float x_{0.0F};
   float y_{0.0F};
   float angle_radians_{0.0F};
+  bool docked_{false};
 };
 
 // High-level category so UI/logic can reason about module families.

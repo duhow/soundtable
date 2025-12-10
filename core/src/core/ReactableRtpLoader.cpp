@@ -111,6 +111,23 @@ int ParseInt(const AttributeMap& attrs, const std::string& key,
   }
 }
 
+// Parses boolean-like attributes that are encoded as integers (0/1) in the
+// .rtp schema. Any non-zero value is treated as true.
+bool ParseBool(const AttributeMap& attrs, const std::string& key,
+               const bool default_value)
+{
+  const auto it = attrs.find(key);
+  if (it == attrs.end()) {
+    return default_value;
+  }
+  try {
+    const int v = std::stoi(it->second);
+    return v != 0;
+  } catch (...) {
+    return default_value;
+  }
+}
+
 std::vector<float> SplitFloats(const std::string& csv)
 {
   std::vector<float> values;
@@ -663,14 +680,17 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
       (void)scene.AddModule(std::move(module));
     }
 
-    // Create corresponding ObjectInstance.
+    // Create corresponding ObjectInstance. Reactable uses a `docked` flag to
+    // indicate that certain tangibles live in a dock/toolbar area instead of
+    // the main musical surface.
     const float x = ParseFloat(attrs, "x", 0.0F);
     const float y = ParseFloat(attrs, "y", 0.0F);
     const float angle_deg = ParseFloat(attrs, "angle", 0.0F);
     const float angle_rad = DegreesToRadians(angle_deg);
+    const bool docked = ParseBool(attrs, "docked", false);
 
     ObjectInstance obj(static_cast<std::int64_t>(tangible_id), module_id,
-                       x, y, angle_rad);
+               x, y, angle_rad, docked);
     scene.UpsertObject(obj);
   }
 

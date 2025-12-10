@@ -6,12 +6,14 @@ namespace rectai {
 
 ObjectInstance::ObjectInstance(const std::int64_t tracking_id,
                                std::string logical_id, const float x,
-                               const float y, const float angle_radians)
+                               const float y, const float angle_radians,
+                               const bool docked)
     : tracking_id_(tracking_id),
       logical_id_(std::move(logical_id)),
       x_(x),
       y_(y),
-      angle_radians_(angle_radians) {}
+      angle_radians_(angle_radians),
+      docked_(docked) {}
 
 void ObjectInstance::set_position(const float x, const float y)
 {
