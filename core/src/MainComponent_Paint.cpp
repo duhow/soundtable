@@ -861,7 +861,11 @@ void MainComponent::paint(juce::Graphics& g)
 
             g.setColour(juce::Colours::white.withAlpha(0.9F));
 
-            if (iconId == "oscillator") {
+            const bool isOscillatorIcon =
+                (iconId == "oscillator" ||
+                 iconId.rfind("oscillator_", 0) == 0);
+
+            if (isOscillatorIcon) {
                 juce::Path wave;
                 const int segments = 24;
                 for (int i = 0; i <= segments; ++i) {
@@ -1180,7 +1184,11 @@ void MainComponent::paint(juce::Graphics& g)
 
                     g.setColour(juce::Colours::white.withAlpha(0.9F));
 
-                    if (iconId == "oscillator") {
+                    const bool isOscillatorIconDock =
+                        (iconId == "oscillator" ||
+                         iconId.rfind("oscillator_", 0) == 0);
+
+                    if (isOscillatorIconDock) {
                         juce::Path wave;
                         const int segments = 20;
                         for (int i = 0; i <= segments; ++i) {

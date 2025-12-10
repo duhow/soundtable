@@ -59,6 +59,24 @@ int main()
     scene.RemoveObject(1);
     assert(scene.objects().empty());
 
+    // Oscillator waveform cycling should update icon id.
+    {
+        OscillatorModule oscWave("oscWave");
+        assert(oscWave.icon_id() == std::string("oscillator_sine"));
+
+        oscWave.cycle_waveform();
+        assert(oscWave.icon_id() == std::string("oscillator_saw"));
+
+        oscWave.cycle_waveform();
+        assert(oscWave.icon_id() == std::string("oscillator_square"));
+
+        oscWave.cycle_waveform();
+        assert(oscWave.icon_id() == std::string("oscillator_noise"));
+
+        oscWave.cycle_waveform();
+        assert(oscWave.icon_id() == std::string("oscillator_sine"));
+    }
+
     // Basic serialization smoke test.
     const auto serialized = SerializeScene(scene);
     assert(!serialized.empty());
@@ -99,6 +117,11 @@ int main()
         const rectai::AudioModule* module = module_it->second.get();
         assert(module != nullptr);
         assert(module->id() == "46");
+
+        const auto* oscModule =
+            dynamic_cast<const OscillatorModule*>(module);
+        assert(oscModule != nullptr);
+        assert(oscModule->icon_id() == std::string("oscillator_sine"));
 
         const auto& objects = loaded_scene.objects();
         const auto obj_it = objects.find(46);

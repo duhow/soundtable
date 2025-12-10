@@ -57,19 +57,33 @@ struct SampleInstrument {
 
 class OscillatorModule : public AudioModule {
  public:
-        explicit OscillatorModule(const std::string& id,
-                                                                                                                float default_freq = 0.5F,
-                                                                                                                float default_gain = 0.5F);
+         enum class Waveform {
+                  kSine = 0,
+                  kSaw,
+                  kSquare,
+                  kNoise,
+         };
 
-        [[nodiscard]] float default_parameter_value(
-                        const std::string& name) const override;
+         explicit OscillatorModule(const std::string& id,
+													float default_freq = 0.5F,
+													float default_gain = 0.5F);
 
-        // Reactable Oscillator tangibles also carry an envelope.
-        [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-        Envelope& mutable_envelope() { return envelope_; }
+         [[nodiscard]] float default_parameter_value(
+							const std::string& name) const override;
+
+         // Reactable Oscillator tangibles also carry an envelope.
+         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
+         Envelope& mutable_envelope() { return envelope_; }
+
+         [[nodiscard]] Waveform waveform() const { return waveform_; }
+         void set_waveform(Waveform waveform);
+         void set_waveform_from_subtype(const std::string& subtype);
+         void cycle_waveform();
+         [[nodiscard]] std::string subtype_string() const;
 
  private:
-        Envelope envelope_{};
+         Envelope envelope_{};
+         Waveform waveform_{Waveform::kSine};
 };
 
 // Output / Master module.
@@ -114,7 +128,8 @@ class FilterModule : public AudioModule {
          Envelope& mutable_envelope() { return envelope_; }
 
          [[nodiscard]] Mode mode() const { return mode_; }
-         void set_mode(Mode mode) { mode_ = mode; }
+		 void set_mode(Mode mode);
+		 void cycle_mode();
          void set_mode_from_subtype(const std::string& subtype);
 
  private:

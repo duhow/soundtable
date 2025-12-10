@@ -27,7 +27,7 @@ OscillatorModule::OscillatorModule(const std::string& id,
   set_label("Oscillator");
   set_description(
       "Tone generator feeding the master bus or downstream modules.");
-  set_icon_id("oscillator");
+  set_waveform(Waveform::kSine);
   enable_frequency_control(true);
   enable_gain_control(true);
   set_frequency_mapping(200.0, 800.0);  // 200–1000 Hz
@@ -48,6 +48,63 @@ float OscillatorModule::default_parameter_value(
   return AudioModule::default_parameter_value(name);
 }
 
+void OscillatorModule::set_waveform(const Waveform waveform)
+{
+  waveform_ = waveform;
+  switch (waveform_) {
+    case Waveform::kSine:
+      set_icon_id("oscillator_sine");
+      break;
+    case Waveform::kSaw:
+      set_icon_id("oscillator_saw");
+      break;
+    case Waveform::kSquare:
+      set_icon_id("oscillator_square");
+      break;
+    case Waveform::kNoise:
+      set_icon_id("oscillator_noise");
+      break;
+  }
+}
+
+void OscillatorModule::set_waveform_from_subtype(
+    const std::string& subtype)
+{
+  if (subtype == "sine") {
+    set_waveform(Waveform::kSine);
+  } else if (subtype == "saw") {
+    set_waveform(Waveform::kSaw);
+  } else if (subtype == "square") {
+    set_waveform(Waveform::kSquare);
+  } else if (subtype == "noise") {
+    set_waveform(Waveform::kNoise);
+  } else {
+    set_waveform(Waveform::kSine);
+  }
+}
+
+void OscillatorModule::cycle_waveform()
+{
+  const int current = static_cast<int>(waveform_);
+  const int next = (current + 1) % 4;
+  set_waveform(static_cast<Waveform>(next));
+}
+
+std::string OscillatorModule::subtype_string() const
+{
+  switch (waveform_) {
+    case Waveform::kSine:
+      return "sine";
+    case Waveform::kSaw:
+      return "saw";
+    case Waveform::kSquare:
+      return "square";
+    case Waveform::kNoise:
+      return "noise";
+  }
+  return "sine";
+}
+
 FilterModule::FilterModule(const std::string& id,
                            const float default_cutoff,
                            const float default_q)
@@ -57,7 +114,7 @@ FilterModule::FilterModule(const std::string& id,
   set_colour(MakeColour(0x40, 0xE0, 0xA0));
   set_label("Filter");
   set_description("Shapes incoming audio based on spatial relationships.");
-  set_icon_id("filter_bandpass");
+  set_mode(Mode::kBandPass);
   enable_frequency_control(true);
   enable_gain_control(true);
   set_frequency_mapping(200.0, 800.0);
@@ -76,6 +133,29 @@ float FilterModule::default_parameter_value(const std::string& name) const
     return 0.5F;
   }
   return AudioModule::default_parameter_value(name);
+}
+
+void FilterModule::set_mode(const Mode mode)
+{
+  mode_ = mode;
+  switch (mode_) {
+    case Mode::kLowPass:
+      set_icon_id("filter_lowpass");
+      break;
+    case Mode::kBandPass:
+      set_icon_id("filter_bandpass");
+      break;
+    case Mode::kHighPass:
+      set_icon_id("filter_hipass");
+      break;
+  }
+}
+
+void FilterModule::cycle_mode()
+{
+  const int current = static_cast<int>(mode_);
+  const int next = (current + 1) % 3;
+  set_mode(static_cast<Mode>(next));
 }
 
 void FilterModule::set_mode_from_subtype(const std::string& subtype)

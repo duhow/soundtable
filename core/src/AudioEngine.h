@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -46,6 +47,10 @@ public:
     // Multi-voice control: index in [0, kMaxVoices).
     void setVoice(int index, double frequency, float level);
 
+    // Selects the waveform shape for a given voice. The waveform
+    // index is clamped to the supported range [0, 3].
+    void setVoiceWaveform(int index, int waveformIndex);
+
     // Copies a downsampled snapshot of the recent mono output mix into
     // `dst`, representing approximately `windowSeconds` of audio
     // (clamped to the internal history size). The snapshot is safe to
@@ -73,6 +78,10 @@ private:
     struct Voice {
         std::atomic<double> frequency{0.0};
         std::atomic<float> level{0.0F};
+        // Waveform shape selector: 0 = sine, 1 = saw, 2 = square,
+        // 3 = noise. The audio callback interprets these indices per
+        // voice to generate different oscillator shapes.
+        std::atomic<int> waveform{0};
         // Filter parameters controlled from the Scene. Mode is an
         // integer selector (0 = bypass, 1 = low-pass, 2 = band-pass,
         // 3 = high-pass).
@@ -99,4 +108,7 @@ private:
     // mix buffer so that all curves are time-aligned.
     float voiceWaveformBuffer_[kMaxVoices][kWaveformHistorySize]{};
     std::atomic<int> waveformWriteIndex_{0};
+
+    // Simple per-voice RNG state used for noise waveforms.
+    std::uint32_t noiseState_[kMaxVoices]{};
 };

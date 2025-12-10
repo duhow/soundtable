@@ -47,6 +47,9 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
         voices_[v].filterMode.store(0, std::memory_order_relaxed);
         voices_[v].filterCutoffHz.store(0.0, std::memory_order_relaxed);
         voices_[v].filterQ.store(0.7071F, std::memory_order_relaxed);
+        voices_[v].waveform.store(0, std::memory_order_relaxed);
+        noiseState_[v] = 0x1234567u + static_cast<std::uint32_t>(v) *
+                                         0x01010101u;
     }
 }
 
@@ -105,11 +108,55 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 const float level =
                     voices_[v].level.load(std::memory_order_relaxed);
 
+                const int waveformIndex =
+                    voices_[v].waveform.load(std::memory_order_relaxed);
+
                 float raw = 0.0F;
                 if (level > 0.0F && freq > 0.0) {
                     phases_[v] += twoPiOverFs * freq;
-                    raw = static_cast<float>(std::sin(phases_[v])) *
-                          level;
+
+                    const double phase = phases_[v];
+                    const double s = std::sin(phase);
+
+                    switch (waveformIndex) {
+                        case 1: { // Saw
+                            const double twoPi =
+                                juce::MathConstants<double>::twoPi;
+                            double local = std::fmod(phase, twoPi);
+                            if (local < 0.0) {
+                                local += twoPi;
+                            }
+                            const float t = static_cast<float>(
+                                local * (1.0 / twoPi));  // [0,1)
+                            const float saw = 2.0F * t - 1.0F;  // [-1,1]
+                            raw = saw * level;
+                            break;
+                        }
+                        case 2: { // Square
+                            const float sq = (s >= 0.0 ? 1.0F : -1.0F);
+                            raw = sq * level;
+                            break;
+                        }
+                        case 3: { // Noise
+                            std::uint32_t state = noiseState_[v];
+                            // xorshift32
+                            state ^= state << 13U;
+                            state ^= state >> 17U;
+                            state ^= state << 5U;
+                            noiseState_[v] = state;
+                            const float n =
+                                static_cast<float>(
+                                    static_cast<std::int32_t>(state)) /
+                                2147483647.0F;  // ~[-1,1]
+                            raw = n * level;
+                            break;
+                        }
+                        case 0:
+                        default: { // Sine
+                            raw = static_cast<float>(s) * level;
+                            break;
+                        }
+                    }
                 }
 
                 // Apply optional per-voice filter via JUCE's
@@ -170,6 +217,17 @@ void AudioEngine::setVoice(const int index,
     if (index + 1 > current) {
         numVoices_.store(index + 1, std::memory_order_relaxed);
     }
+}
+
+void AudioEngine::setVoiceWaveform(const int index,
+                                   const int waveformIndex)
+{
+    if (index < 0 || index >= kMaxVoices) {
+        return;
+    }
+
+    const int clamped = juce::jlimit(0, 3, waveformIndex);
+    voices_[index].waveform.store(clamped, std::memory_order_relaxed);
 }
 
 void AudioEngine::getWaveformSnapshot(float* dst, const int numPoints,

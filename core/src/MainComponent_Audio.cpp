@@ -406,6 +406,7 @@ void MainComponent::timerCallback()
     struct VoiceParams {
         double frequency{0.0};
         float level{0.0F};
+        int waveform{0};
     };
 
     VoiceParams voices[AudioEngine::kMaxVoices];
@@ -504,9 +505,26 @@ void MainComponent::timerCallback()
         const float extra = module->level_range() * gainParam;
         const float level = chainMuted ? 0.0F : (baseLevel + extra);
 
+        int waveformIndex = 0;  // 0 = sine by default.
+        if (const auto* oscModule =
+                dynamic_cast<const rectai::OscillatorModule*>(module)) {
+            using Waveform = rectai::OscillatorModule::Waveform;
+            const auto wf = oscModule->waveform();
+            if (wf == Waveform::kSaw) {
+                waveformIndex = 1;
+            } else if (wf == Waveform::kSquare) {
+                waveformIndex = 2;
+            } else if (wf == Waveform::kNoise) {
+                waveformIndex = 3;
+            } else {
+                waveformIndex = 0;
+            }
+        }
+
         if (level > 0.0F && voiceIndex < AudioEngine::kMaxVoices) {
             voices[voiceIndex].frequency = frequency;
             voices[voiceIndex].level = masterMuted_ ? 0.0F : level;
+            voices[voiceIndex].waveform = waveformIndex;
             const int assignedVoice = voiceIndex;
             ++voiceIndex;
 
@@ -560,6 +578,7 @@ void MainComponent::timerCallback()
 
             audioEngine_.setVoiceFilter(assignedVoice, filterMode,
                                         filterCutoffHz, filterQ);
+            audioEngine_.setVoiceWaveform(assignedVoice, waveformIndex);
 
             // Mark generator and, when present, its downstream module
             // as actively carrying audio so the visual layer can

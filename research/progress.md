@@ -259,6 +259,29 @@
 ### Semántica de `Output` (master) y visualización del nodo central
 - El tangible `type="Output"` del patch Reactable se interpreta ahora explícitamente como el **master** de la escena y ya no se representa como un módulo normal en la mesa (no aparece como nodo ni en la barra de dock).
 
+### Oscillator con subtipos y cambio por click derecho
+- `OscillatorModule` incorpora ahora un enum `Waveform` con cuatro subtipos alineados con la Reactable original: `sine`, `saw`, `square` y `noise`.
+- El constructor de `OscillatorModule` inicializa la forma de onda a `sine` y asigna automáticamente el `icon_id` correspondiente del atlas (`oscillator_sine`).
+- Se exponen helpers en el modelo:
+  - `set_waveform(Waveform)` y `waveform()` para gestionar el estado interno.
+  - `set_waveform_from_subtype(const std::string&)` para mapear directamente el atributo `subtype` de los tangibles `type="Oscillator"` en los patches `.rtp`.
+  - `cycle_waveform()` para avanzar cíclicamente por los cuatro subtipos y actualizar el `icon_id` a `oscillator_sine`, `oscillator_saw`, `oscillator_square` u `oscillator_noise`.
+  - `subtype_string()` como representación textual del subtipo actual (útil de cara a futura serialización).
+- El loader de patches `ReactableRtpLoader` ahora lee el atributo `subtype` de los tangibles `Oscillator` y llama a `set_waveform_from_subtype`, de modo que un `<tangible type="Oscillator" ... subtype="sine" ...>` se traduce a un módulo con icono `oscillator_sine` y estado de forma de onda coherente.
+- En la UI (`MainComponent_Input`), un click derecho sobre el círculo de un Oscillator (en la superficie musical) invoca `cycle_waveform()` sobre el módulo asociado, cambiando inmediatamente el icono según el subtipo seleccionado.
+- El pintado de iconos (`MainComponent_Paint`) se ha ajustado para que los `icon_id` que comienzan por `"oscillator"` (`oscillator_sine`, `oscillator_saw`, etc.) sigan usando el mismo fallback vectorial que el icono genérico `oscillator` cuando el atlas de sprites no está disponible, conservando la legibilidad en modo degradado.
+- Se han añadido tests en `tests/scene_tests.cpp` que validan:
+  - El ciclo completo de formas de onda e iconos (`sine → saw → square → noise → sine`).
+  - Que un patch `.rtp` mínimo con un Oscillator de subtipo `sine` se carga como `OscillatorModule` y expone el icono `oscillator_sine` en el modelo.
+
+### Filtro con cambio de modo por click derecho e iconos específicos
+- `FilterModule::Mode` se aprovecha ahora no solo para la lógica interna del filtro sino también para la selección de icono: `set_mode(Mode)` actualiza siempre tanto el estado `mode_` como el `icon_id` asociado del módulo.
+- Los tres modos (`kLowPass`, `kBandPass`, `kHighPass`) se mapean directamente a los sprites del atlas `atlas_2048.xml`: `filter_lowpass`, `filter_bandpass` y `filter_hipass` respectivamente.
+- El constructor de `FilterModule` inicializa el módulo llamando a `set_mode(Mode::kBandPass)`, de modo que el icono por defecto queda alineado con el modo efectivo (band-pass) sin duplicar lógica de selección de iconos.
+- Se añade el helper `cycle_mode()` en `FilterModule`, que recorre cíclicamente los tres modos (`lowpass → bandpass → highpass → lowpass`) reutilizando `set_mode` para mantener `mode_` e `icon_id` siempre sincronizados.
+- `set_mode_from_subtype(const std::string&)` continúa leyendo el atributo `subtype` de los tangibles de tipo filtro en los patches `.rtp`, pero ahora delega toda la actualización de estado e icono en `set_mode`, garantizando que cualquier cambio de modo (ya sea por loader o por interacción en la UI) use el mismo código.
+- En la UI (`MainComponent_Input`), el bloque de click derecho que antes solo afectaba a los Oscillator se amplía: un click derecho sobre un tangible asociado a `FilterModule` invoca `cycle_mode()`, cambiando el modo del filtro y actualizando inmediatamente el icono renderizado en la mesa.
+
 ### Módulo de filtro con modos y resonancia
 - `FilterModule` se ha ampliado para soportar tres modos explícitos (`lowpass`, `bandpass`, `highpass`) mediante un enum interno y un helper `set_mode_from_subtype` que inicializa el modo a partir del atributo `subtype` del `.rtp` (por defecto `bandpass` cuando no se reconoce el valor).
 - La rotación física del tangible de filtro sigue mapeándose al parámetro normalizado `freq` del módulo, que en adelante se interpreta como frecuencia de corte (low/high-pass) o frecuencia central (band-pass), delegando en el futuro motor de audio la traducción a Hz según el modo.

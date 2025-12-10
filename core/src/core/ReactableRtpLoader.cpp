@@ -688,6 +688,10 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         } catch (...) {
         }
       }
+      const auto it_subtype = attrs.find("subtype");
+      if (it_subtype != attrs.end()) {
+        osc->set_waveform_from_subtype(it_subtype->second);
+      }
       const std::size_t env_pos = FindTag(xml, "envelope", inner_start, inner_end);
       if (env_pos != std::string::npos) {
         std::size_t env_end = 0U;

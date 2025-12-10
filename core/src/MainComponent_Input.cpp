@@ -5,6 +5,7 @@
 #include <unordered_set>
 
 #include "MainComponentHelpers.h"
+#include "core/AudioModules.h"
 
 using rectai::ui::isConnectionGeometricallyActive;
 using rectai::ui::makeConnectionKey;
@@ -14,12 +15,65 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     const auto bounds = getLocalBounds().toFloat();
     const float radius = 30.0F;
 
+    const bool isRightClick = event.mods.isRightButtonDown();
+
     draggedObjectId_ = 0;
     sideControlObjectId_ = 0;
     sideControlKind_ = SideControlKind::kNone;
 
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();
+
+    // Right-click on an Oscillator tangible cycles its waveform
+    // (sine -> saw -> square -> noise -> ...), updating the icon
+    // to match the selected subtype. Right-click on a Filter tangible
+    // cycles its mode (low-pass -> band-pass -> high-pass) and updates
+    // the icon accordingly.
+    if (isRightClick) {
+        for (const auto& [id, object] : objects) {
+            if (object.logical_id() == "-1" || object.docked()) {
+                continue;
+            }
+
+            const auto cx = bounds.getX() +
+                            object.x() * bounds.getWidth();
+            const auto cy = bounds.getY() +
+                            object.y() * bounds.getHeight();
+
+            const auto dx = static_cast<float>(event.position.x) - cx;
+            const auto dy = static_cast<float>(event.position.y) - cy;
+            const auto distanceSquared = dx * dx + dy * dy;
+
+            if (distanceSquared > radius * radius) {
+                continue;
+            }
+
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt == modules.end() ||
+                modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
+                modIt->second.get());
+            if (oscModule != nullptr) {
+                oscModule->cycle_waveform();
+                repaint();
+                return;
+            }
+
+            auto* filterModule =
+                dynamic_cast<rectai::FilterModule*>(modIt->second.get());
+            if (filterModule != nullptr) {
+                filterModule->cycle_mode();
+                repaint();
+                return;
+            }
+        }
+        // Right-click that does not hit any oscillator or filter tangible
+        // falls through without side effects.
+        return;
+    }
 
     // First, try to grab one of the per-instrument side controls
     // (left: Freq, right: Gain) by clicking near its handle.
