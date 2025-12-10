@@ -86,6 +86,12 @@ target_sources(${PROJECT_NAME}
         src/Main.cpp
         src/MainComponent.cpp
         src/MainComponent.h
+        src/MainComponent_Paint.cpp
+        src/MainComponent_Input.cpp
+        src/MainComponent_Audio.cpp
+        src/MainComponent_Atlas.cpp
+        src/MainComponentHelpers.cpp
+        src/MainComponentHelpers.h
         src/AudioEngine.cpp
         src/AudioEngine.h
         src/TrackingOscReceiver.cpp

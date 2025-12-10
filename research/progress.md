@@ -213,3 +213,7 @@
 - `ReactablePatchMetadata` se amplía con `master_colour_argb` y `master_muted`, que el loader rellena leyendo los atributos `color` y `muted` del tangible `Output` (admitiendo colores en formato ARGB de 8 dígitos o RGB de 6 dígitos, asumiendo alfa opaco).
 - `MainComponent` usa `master_colour_argb` para colorear el punto central y sus ondas de pulso, en lugar de un blanco fijo, de modo que el aspecto del master respeta el patch original (`default.rtp` u otros `.rtp`).
 - El atributo `muted` del `Output` se traduce en un flag `masterMuted_` en la UI: cuando está activo, atenúa visualmente el nodo central y fuerza el nivel de mezcla global a cero en `timerCallback`, actuando como un mute maestro sobre todo el sonido generado por los módulos.
+
+### Helpers de UI con namespace explícito en `MainComponent`
+- Se ha alineado el uso de los helpers de UI definidos en `MainComponentHelpers.h` (`makeConnectionKey`, `makeObjectPairKey`, `makeModulePairKey`, `isConnectionGeometricallyActive`) para que se invoquen siempre cualificados como `rectai::ui::...` desde `MainComponent.cpp`.
+- Esto corrige errores de compilación recientes por símbolos no resueltos y deja más clara la separación entre la lógica de modelo (`rectai`) y las utilidades puramente gráficas/de UI (`rectai::ui`).
