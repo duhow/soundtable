@@ -198,7 +198,27 @@
 - Cada nuevo choque entre un par de objetos alterna el estado: si no existe conexión, se crea una `Connection` con `is_hardlink = true`; si ya existe un hardlink entre esos módulos, se elimina; si existe una conexión normal, se “promueve” a hardlink.
 - Los hardlinks se pintan ahora en rojo (línea y pulso animado) en `MainComponent::paint`, distinguiéndose de las conexiones dinámicas blancas.
 - El cálculo de conexiones “activas” y el ruteo de audio en `timerCallback` consideran los hardlinks como siempre activos dentro del área musical, ignorando las restricciones geométricas de cono, pero se eliminan automáticamente si cualquiera de los dos módulos sale fuera del área de música.
+
+### Debug view del tracker con resaltado de fiduciales
+- En `tracker/src/main.cpp` se ha extendido el modo `--debug-view` para que, en modo live, dibuje un rectángulo rojo alrededor de cada fiducial estable detectado.
+- Se reutiliza la lista de `TrackedObject` estabilizada (tras el filtro de detecciones consecutivas) para que solo se resalten objetos “confiables”; si un fiducial desaparece de la escena deja de aparecer también su rectángulo.
+- Las coordenadas normalizadas (`x_norm`, `y_norm`) de cada objeto se convierten a píxeles sobre el frame binarizado que ya se mostraba en la ventana de debug, compensando el `flip` horizontal aplicado para que la posición del rectángulo coincida con la del marcador en la imagen.
+
+### Rango de IDs válidos para fiduciales amoeba
+- En `tracker/src/TrackerEngine.cpp` se han introducido constantes para definir el rango de IDs de fiduciales “reconocidos” por el tracker (`kMinRecognisedMarkerId = 1`, `kMaxRecognisedMarkerId = 107`).
+- La función `detectAmoebaFiducials` ahora descarta cualquier fiducial cuyo `id` esté fuera de ese intervalo y, además, ignora explícitamente el ID `1` aunque sea el mínimo, de modo que solo los marcadores previstos en el sistema se tienen en cuenta para el tracking y el envío OSC.
  - El umbral de choque para crear/eliminar hardlinks se ha afinado usando un radio virtual de 30px por nodo y exigiendo al menos 4px de “solapamiento” entre esos círculos virtuales (distancia entre centros ≤ 2*30 - 4), de forma que el hardlink solo se activa cuando los módulos se acercan de manera clara, sin romper la restricción de que los nodos no se sobrepongan visualmente.
+
+### Tamaño mínimo de imagen para detección de fiduciales amoeba
+- En `tracker/src/TrackerEngine.cpp` se ha introducido la constante `kMinFiducialImageSize = 32` dentro del namespace interno del tracker.
+- `detectAmoebaFiducials` ahora comprueba también que la imagen binarizada tenga al menos `32x32` píxeles antes de llamar a `step_segmenter`/`find_fiducialsX`; si el frame es más pequeño, devuelve una lista vacía y `TrackerEngine::processFrame` cae automáticamente al modo de tracking por blobs.
+- Este filtro reduce falsos positivos en escenas con fondo blanco o ruido muy pequeño que no corresponde realmente a un patrón amoeba, especialmente cuando se trabaja con resoluciones reducidas o zonas recortadas.
+
+### Validación local del patrón amoeba por contenido negro
+- Además del tamaño mínimo global, `detectAmoebaFiducials` realiza ahora una validación local por patrón sobre la imagen binarizada.
+- Para cada `FiducialX` detectado se recorta una región alrededor de su centro de `64x64` píxeles (ajustada a los bordes si es necesario) en el frame binario.
+- Se calcula el porcentaje de píxeles negros dentro de ese recorte (recordando que el binarizado produce 0 para negro y 255 para blanco) y, si el ratio de negro es inferior al 10%, el fiducial se descarta como falso positivo.
+- Este chequeo adicional evita aceptar “marcadores” que en realidad son parches casi blancos con muy poco contenido de patrón, lo que ayuda a filtrar ruido visual o reflejos en fondos claros.
 
 ### Carga de `default.rtp` desde `com.reactable`
 - La aplicación JUCE principal (`rectai-core`) ahora intenta cargar automáticamente el patch Reactable por defecto ubicado en `com.reactable/Resources/default.rtp` al inicializar `MainComponent`.
@@ -233,8 +253,45 @@
 - `MainComponent` usa ahora `loadFile` para localizar `default.rtp` antes de invocar `LoadReactablePatchFromFile`, eliminando el array local de 8 candidatos.
 - `MainComponent_Atlas` también usa `loadFile` para hallar `com.reactable/Resources/atlas_2048.png` y deriva de ahí el `atlas_2048.xml` en el mismo directorio, unificando la estrategia de búsqueda de recursos Reactable y reduciendo duplicación de código.
 
+### Tracker basado en blobs tipo "amoeba" y eliminación de ArUco
+- `TrackerEngine` deja de depender de `cv::aruco` y ya no intenta detectar marcadores ArUco ni usar diccionarios predefinidos.
+- La ruta de detección se basaba inicialmente únicamente en segmentación de blobs: conversión a escala de grises, `GaussianBlur`, `adaptiveThreshold` y `findContours` para localizar regiones orgánicas de un tamaño mínimo configurable.
+- Para cada contorno suficientemente grande se calculaba el centroide mediante momentos y la orientación aproximada con `cv::fitEllipse`, generando un `TrackedObject` con coordenadas normalizadas y ángulo en radianes.
+- Se mantenía un pequeño estado interno (`lastObjects_` + `nextId_`) que asociaba cada nueva detección con el objeto previo más cercano en coordenadas normalizadas, asignando así IDs numéricos estables entre frames sin depender de IDs codificados en el marcador.
+- `tracker/CMakeLists.txt` y `tests/CMakeLists.txt` se han simplificado para pedir solo los módulos de OpenCV necesarios (`core`, `imgproc`, `videoio`, `highgui`) eliminando `aruco` e `imgcodecs` del flujo de compilación.
+
+### Detección real de fiduciales "amoeba" usando libfidtrack
+- El ejecutable `rectai-tracker` ahora enlaza directamente con el código original de reacTIVision (`reacTIVision/ext/libfidtrack`), añadiendo a su target los archivos `segment.c`, `fidtrackX.c`, `topologysearch.c` y `treeidmap.cpp`, e incluyendo su cabecera pública.
+- `TrackerEngine` inicializa en `initialise` las estructuras de libfidtrack (`TreeIdMap`, `Segmenter`, `FidtrackerX`) usando el set de símbolos `"default"` de amoeba incluido en `default_trees.h`, alineado con el comportamiento por defecto de reacTIVision.
+- En `processFrame`, tras convertir el frame a escala de grises y aplicar un `GaussianBlur` + `adaptiveThreshold` con `THRESH_BINARY` (0 negro, 255 blanco), se pasa la imagen binaria a `step_segmenter` y se invoca `find_fiducialsX` para obtener un array de `FiducialX` con `id`, posición y ángulo.
+- Cada `FiducialX` con `id >= 0` se normaliza a coordenadas [0,1] usando el ancho/alto configurados en `initialise`, y se traduce a un `TrackedObject` cuyo `id` coincide con el ID amoeba real del marcador físico; el ángulo se preserva en radianes desde libfidtrack.
+- Si en un frame no se detecta ningún fiducial válido (por ausencia de marcadores amoeba o por condiciones de iluminación), el engine mantiene un **fallback** basado en blobs: se ejecuta la ruta anterior de `findContours` + `fitEllipse` y se siguen asignando IDs estables mediante proximidad (`lastObjects_` + `nextId_`), de manera que los tests sintéticos y escenarios sin marcadores físicos siguen funcionando.
+- El destructor de `TrackerEngine` libera correctamente los recursos de libfidtrack (`terminate_segmenter`, `terminate_fidtrackerX`, `terminate_treeidmap`), evitando fugas de memoria en ejecuciones prolongadas del servicio de tracking.
+
 ### Target Earthly para AppImage
 - Añadido un nuevo target `appimage` en el `Earthfile` que reutiliza la imagen base `the-base`, compila los binarios en modo Release y prepara un `AppDir` con `RectaiTable` y `rectai-tracker` en `usr/bin`.
 - El target descarga `linuxdeploy` y `appimagetool` como AppImages y los usa para recolectar todas las dependencias compartidas (incluyendo `curl`, OpenCV y librerías del sistema necesarias para JUCE) y empaquetarlas en un único `rectai-table-x86_64.AppImage`.
 - Se genera un archivo `.desktop` mínimo para `RectaiTable` mediante un comando `printf` (en lugar de heredocs), evitando problemas de sintaxis en Earthly/Docker debidos a la indentación del marcador `EOF`.
 - El AppImage resultante se exporta como artefacto local en `build/rectai-table-x86_64.AppImage` al ejecutar `earthly -P +appimage` desde la raíz del repositorio.
+
+### Tests del tracker con PNGs de fiduciales amoeba
+- `tests/tracker_tests.cpp` utiliza ahora explícitamente los recursos `fiducial_30.png` y `fiducial_55.png` ubicados en `tests/`, cargándolos directamente desde disco mediante `cv::imread` (en modo escala de grises) sin necesidad de copiarlos al directorio de binarios.
+- El test inicializa `TrackerEngine` con las dimensiones de la primera imagen y procesa cada PNG, verificando que entre los `TrackedObject` devueltos se encuentra al menos uno cuyo `id` coincide exactamente con el número codificado en el nombre del archivo (30 y 55 respectivamente). Esto endurece la aserción anterior (que solo comprobaba que hubiera algún ID positivo) y valida de forma más directa la decodificación de fiduciales amoeba vía libfidtrack.
+
+### Vista de debug del tracker alineada con `processFrame`
+- `TrackerEngine` expone ahora una sobrecarga `TrackedObjectList processFrame(const cv::Mat& frame, cv::Mat& debugFrame)` que, además de devolver la lista de `TrackedObject`, rellena `debugFrame` con la imagen binarizada (`adaptiveThreshold`) que se utiliza internamente para la detección de fiduciales amoeba y el fallback de blobs.
+- La implementación pública sin imagen de debug (`processFrame(const cv::Mat& frame)`) delega en un helper privado `processFrameInternal(const cv::Mat& frame, cv::Mat* debugFrame)`, garantizando que ambos caminos comparten exactamente el mismo pipeline de procesamiento.
+- En `tracker/src/main.cpp`, cuando se ejecuta en modo `--mode=live` y con `--debug-view`, el bucle principal llama a la nueva variante de `processFrame` con `debugFrame`, y la ventana OpenCV de debug muestra ese `debugFrame` (espejado en horizontal), que es una imagen de un solo canal (grises/0-255) exactamente igual a la que consume libfidtrack.
+- En modo sintético (o si no hay `debugFrame` disponible por cualquier motivo), el debug view ya no enseña el frame de cámara en color, sino que convierte el frame a escala de grises antes de mostrarlo, de forma que la vista de debug se parezca siempre al input que espera reacTIVision.
+
+### Vista de depuración de cámara en `rectai-tracker`
+- Añadido flag `--debug-view` al ejecutable `rectai-tracker`.
+- Cuando se pasa este flag (en cualquier modo), el proceso abre una ventana de OpenCV titulada `rectai-tracker debug` donde muestra el frame de la webcam espejado horizontalmente (`cv::flip`), permitiendo verificar que la cámara está capturando correctamente y que el área de trabajo está bien encuadrada.
+- Mientras la vista de depuración está activa, pulsar `Esc`, `q` o `Q` cierra la ventana y termina el tracker con un mensaje de log `[rectai-tracker] Debug view exit requested by user`.
+
+### Estabilización de fiduciales por frames consecutivos en `rectai-tracker`
+- En el modo `--mode=live`, el bucle principal de `rectai-tracker` mantiene ahora un contador por ID de fiducial con el número de frames consecutivos en los que se ha detectado cada marcador.
+- Solo se consideran "objetos estables" aquellos fiduciales que se han visto al menos en un umbral configurable de **N frames consecutivos** (actualmente 10); únicamente estos objetos se usan para actualizar `TrackerState` y para enviar mensajes OSC `/rectai/object` al core JUCE.
+- Además del número de frames, se comprueba que la posición normalizada del fiducial no cambie bruscamente entre frames: si la distancia entre posiciones sucesivas supera ~10% del tamaño de la mesa, se resetea el contador a 1 para ese ID.
+- Si un fiducial deja de aparecer en un frame, su contador y su última posición se eliminan de las tablas internas, de modo que detecciones espurias que solo duran uno o dos frames (o que saltan de sitio) nunca llegan a producir logs ni eventos OSC.
+- Las eliminaciones (`/rectai/remove`) siguen basándose en `TrackerState::collectRemovals`, pero este estado solo se alimenta con los objetos estables, por lo que también se reducen los mensajes de "fiducial X removed" causados por falsos positivos de la cámara.

@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(OpenCV REQUIRED core imgproc videoio aruco)
+find_package(OpenCV REQUIRED core imgproc videoio highgui)
 
 add_executable(rectai-tracker
     src/main.cpp
@@ -14,6 +14,10 @@ add_executable(rectai-tracker
     src/TrackerTypes.h
     src/TrackerState.cpp
     src/TrackerEngine.cpp
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/segment.c
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/fidtrackX.c
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/topologysearch.c
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/treeidmap.cpp
 )
 
 # Place the executable in the top-level build directory so that
@@ -30,6 +34,9 @@ else()
     target_compile_options(rectai-tracker PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 
-target_include_directories(rectai-tracker PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_include_directories(rectai-tracker PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack
+)
 
 target_link_libraries(rectai-tracker PRIVATE ${OpenCV_LIBS})
