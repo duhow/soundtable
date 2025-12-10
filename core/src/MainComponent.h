@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -39,6 +40,9 @@ private:
 
     // Simple per-object mute state (by tracking id).
     std::unordered_set<std::int64_t> mutedObjects_;
+
+    // Per-connection mute state, keyed by a stable connection id.
+    std::unordered_set<std::string> mutedConnections_;
 
     // Transport / tempo visualisation.
     double bpm_{120.0};

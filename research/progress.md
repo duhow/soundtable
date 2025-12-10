@@ -122,3 +122,24 @@
 - **UI/Escenas**:
   - Completar la deserialización (carga) de escenas usando el formato line-based `rectai_scene_v1` de `SceneSerialization` o migrar a un formato JSON cuando se introduzca una librería dedicada.
   - Añadir comandos básicos a la UI para guardar la `Scene` actual en disco y recargarla (presets simples).
+
+### Corrección visual de mute en cadenas Oscilador → Filtro
+- Ajustada la lógica de dibujo de líneas centro→objeto en `MainComponent` para que los instrumentos silenciados mantengan siempre visible su línea discontinua hacia el centro, incluso cuando están alimentando a otro módulo mediante una conexión activa.
+- Ahora, si un oscilador está en mute pero conectado a un filtro, su línea hacia el Master sigue mostrándose como discontinua, evitando que la “línea silenciada” desaparezca cuando se configura la cadena `osc1 → filter1`.
+
+### Cambio de mapeo de frecuencia del oscilador
+- La frecuencia del oscilador deja de depender de la posición X del objeto en la mesa y pasa a controlarse únicamente mediante el parámetro `freq` del módulo (`slider` lateral en la UI).
+- En `MainComponent::timerCallback`, la frecuencia se calcula ahora como un rango fijo (aprox. 200–1000 Hz) derivado solo del valor del slider, manteniendo la interacción tangible para mute/posición dentro del área musical pero sin afectar al pitch.
+
+### Visibilidad de líneas y rutas activas hacia Master
+- Ajustadas las conexiones centro→objeto en `MainComponent` para que **todas** las líneas de instrumentos permanezcan siempre visibles mientras el objeto esté dentro del área musical; cada instrumento conserva su propia línea hacia el centro.
+- Cuando un instrumento alimenta a otro mediante una conexión espacial activa, su línea se dibuja ligeramente atenuada y sin pulso animado, de modo que solo el instrumento aguas abajo (p.ej. el filtro) muestra el pulso hacia Master, reflejando mejor la ruta de audio efectiva sin perder el control visual de mute por instrumento.
+
+### Enrutado visual y mute de conexión Oscilador → Filtro
+- Cuando el oscilador (`osc1`) tiene una conexión espacialmente activa hacia el filtro (`filter1`), deja de dibujarse la línea directa oscilador→Master (centro); solo el filtro mantiene la línea activa hacia el núcleo central, reforzando visualmente que la ruta efectiva pasa por el filtro.
+- Se ha introducido un estado de mute por conexión (`mutedConnections_` en `MainComponent`) indexado por un identificador estable de `rectai::Connection`.
+- Las conexiones entre módulos se dibujan como:
+  - Curvas con pulso animado cuando están activas.
+  - Líneas rectas punteadas (sin pulso) cuando la conexión está silenciada, manteniendo la legibilidad topológica de la escena.
+- El click sobre la línea entre instrumentos ya no mutea el objeto de origen, sino que conmuta el estado de mute de la conexión correspondiente (por ahora especialmente útil en la cadena `osc1 → filter1`).
+- La lógica de audio en `timerCallback` tiene en cuenta el mute de conexión: si la conexión `osc1→filter1` está silenciada, la cadena completa osc→filtro→Master se considera muda (el oscilador no vuelve a alimentarse directamente al Master mientras exista esa conexión), respetando siempre los estados de mute por objeto.

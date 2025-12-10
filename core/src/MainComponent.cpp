@@ -7,6 +7,21 @@
 
 namespace {
 
+std::string makeConnectionKey(const rectai::Connection& c)
+{
+    std::string key;
+    key.reserve(c.from_module_id.size() + c.from_port_name.size() +
+                c.to_module_id.size() + c.to_port_name.size() + 4U);
+    key.append(c.from_module_id)
+        .append(1U, ':')
+        .append(c.from_port_name)
+        .append(1U, '>')
+        .append(c.to_module_id)
+        .append(1U, ':')
+        .append(c.to_port_name);
+    return key;
+}
+
 // Returns true if `toObj` lies inside a 120º cone (not visible) whose
 // vertex is at the centre of the table and whose axis points towards
 // `fromObj`.
@@ -128,6 +143,8 @@ void MainComponent::paint(juce::Graphics& g)
 
     const auto& objects = scene_.objects();
 
+    const auto& modules = scene_.modules();
+
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
     for (const auto& [id, object] : objects) {
         moduleToObjectId.emplace(object.logical_id(), id);
@@ -192,18 +209,37 @@ void MainComponent::paint(juce::Graphics& g)
         }
 
         // -----------------------------------------------------------------
-        // Connections: centre → each object, with optional flow pulses.
-        // If an instrument is currently feeding another through an active
-        // connection, its line to master is hidden.
+        // Connections: centre each object, with optional flow pulses.
+        // All instruments keep their own structural line to the master.
+        // When an instrument is feeding another through an active
+        // connection, its line remains visible but loses the animated
+        // flow pulse so that only the downstream node appears as the
+        // active path to the master bus.
         // -----------------------------------------------------------------
-        g.setColour(juce::Colours::white.withAlpha(0.7F));
         for (const auto& [id, object] : objects) {
-            if (objectsWithOutgoingActiveConnection.find(id) !=
-                objectsWithOutgoingActiveConnection.end()) {
+            const bool isMuted =
+                mutedObjects_.find(id) != mutedObjects_.end();
+
+            const bool hasActiveOutgoingConnection =
+                objectsWithOutgoingActiveConnection.find(id) !=
+                objectsWithOutgoingActiveConnection.end();
+
+            const auto modForConnectionIt =
+                modules.find(object.logical_id());
+            const bool isOscillator =
+                modForConnectionIt != modules.end() &&
+                modForConnectionIt->second.kind() ==
+                    rectai::ModuleKind::kOscillator;
+
+            if (!isInsideMusicArea(object)) {
                 continue;
             }
 
-            if (!isInsideMusicArea(object)) {
+            // When an oscillator is feeding another module through an
+            // active connection, it should not render a direct line to
+            // the master centre; only the downstream module keeps the
+            // visual link to the master bus.
+            if (isOscillator && hasActiveOutgoingConnection) {
                 continue;
             }
 
@@ -212,8 +248,10 @@ void MainComponent::paint(juce::Graphics& g)
 
             juce::Line<float> line(centre.x, centre.y, cx, cy);
 
-            const bool isMuted =
-                mutedObjects_.find(id) != mutedObjects_.end();
+            // Dim the line slightly when this instrument is feeding
+            // another one, so the downstream instrument stands out.
+            const float lineAlpha = hasActiveOutgoingConnection ? 0.4F : 0.7F;
+            g.setColour(juce::Colours::white.withAlpha(lineAlpha));
 
             if (isMuted) {
                 const float dashLengths[] = {6.0F, 4.0F};
@@ -230,7 +268,12 @@ void MainComponent::paint(juce::Graphics& g)
             const float px = juce::jmap(t, 0.0F, 1.0F, cx, centre.x);
             const float py = juce::jmap(t, 0.0F, 1.0F, cy, centre.y);
 
-            g.setColour(juce::Colours::white.withAlpha(isMuted ? 0.0F : 0.9F));
+            // Only instruments that are not muted and are currently
+            // feeding the master directly (i.e. without an active
+            // outgoing connection) show the animated pulse.
+            const bool showPulse = !isMuted && !hasActiveOutgoingConnection;
+            g.setColour(juce::Colours::white.withAlpha(
+                showPulse ? 0.9F : 0.0F));
             g.fillEllipse(px - 3.0F, py - 3.0F, 6.0F, 6.0F);
         }
 
@@ -285,27 +328,42 @@ void MainComponent::paint(juce::Graphics& g)
                                              delta.x / length * 20.0F};
             }
             const juce::Point<float> control = mid + perpDir;
+            const bool isMutedConnection =
+                mutedConnections_.find(makeConnectionKey(conn)) !=
+                mutedConnections_.end();
 
-            juce::Path path;
-            path.startNewSubPath(p1);
-            path.quadraticTo(control, p2);
+            if (isMutedConnection) {
+                // Muted connection: render as a dashed straight line
+                // between the two nodes and omit the animated flow
+                // pulse.
+                const float dashLengths[] = {6.0F, 4.0F};
+                g.setColour(juce::Colours::white.withAlpha(0.6F));
+                g.drawDashedLine(juce::Line<float>(p1, p2), dashLengths,
+                                 static_cast<int>(std::size(dashLengths)),
+                                 1.5F);
+            } else {
+                juce::Path path;
+                path.startNewSubPath(p1);
+                path.quadraticTo(control, p2);
 
-            g.strokePath(path, juce::PathStrokeType(1.5F));
+                g.strokePath(path, juce::PathStrokeType(1.5F));
 
-            // Animated pulse travelling along the curved connection.
-            const double phaseOffset =
-                0.25 * static_cast<double>(connectionIndex);
-            const float t = static_cast<float>(
-                std::fmod(connectionFlowPhase_ + phaseOffset, 1.0));
-            const float oneMinusT = 1.0F - t;
+                // Animated pulse travelling along the curved
+                // connection.
+                const double phaseOffset =
+                    0.25 * static_cast<double>(connectionIndex);
+                const float t = static_cast<float>(
+                    std::fmod(connectionFlowPhase_ + phaseOffset, 1.0));
+                const float oneMinusT = 1.0F - t;
 
-            const juce::Point<float> flowPoint =
-                oneMinusT * oneMinusT * p1 +
-                2.0F * oneMinusT * t * control + t * t * p2;
+                const juce::Point<float> flowPoint =
+                    oneMinusT * oneMinusT * p1 +
+                    2.0F * oneMinusT * t * control + t * t * p2;
 
-            g.setColour(juce::Colours::white.withAlpha(0.85F));
-            g.fillEllipse(flowPoint.x - 2.5F, flowPoint.y - 2.5F, 5.0F,
-                          5.0F);
+                g.setColour(juce::Colours::white.withAlpha(0.85F));
+                g.fillEllipse(flowPoint.x - 2.5F, flowPoint.y - 2.5F, 5.0F,
+                              5.0F);
+            }
 
             ++connectionIndex;
         }
@@ -315,8 +373,6 @@ void MainComponent::paint(juce::Graphics& g)
     // Objects: aura + parameter arcs + icon + label.
     // ---------------------------------------------------------------------
     const float nodeRadius = 26.0F;
-
-    const auto& modules = scene_.modules();
 
     auto getBodyColourForObject = [&modules](const rectai::ObjectInstance& obj,
                                              bool isMuted) {
@@ -775,12 +831,12 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             const auto ty = bounds.getY() + toObj.y() * bounds.getHeight();
 
             if (isPointNearSegment(click, {fx, fy}, {tx, ty}, maxDistanceSq)) {
-                const auto sourceId = fromIdIt->second;
-                const auto itMuted = mutedObjects_.find(sourceId);
-                if (itMuted == mutedObjects_.end()) {
-                    mutedObjects_.insert(sourceId);
+                const std::string key = makeConnectionKey(conn);
+                const auto itMuted = mutedConnections_.find(key);
+                if (itMuted == mutedConnections_.end()) {
+                    mutedConnections_.insert(key);
                 } else {
-                    mutedObjects_.erase(itMuted);
+                    mutedConnections_.erase(itMuted);
                 }
 
                 repaint();
@@ -893,7 +949,6 @@ void MainComponent::timerCallback()
     if (oscIt != objects.end()) {
         const auto& oscObject = oscIt->second;
         const std::int64_t oscObjectId = oscIt->first;
-        const float x = juce::jlimit(0.0F, 1.0F, oscObject.x());
 
         const bool oscInside = isInsideMusicArea(oscObject);
         if (!oscInside) {
@@ -902,7 +957,8 @@ void MainComponent::timerCallback()
         }
 
         // Look for a filter object that could be downstream from the
-        // oscillator according to the spatial connection rule.
+        // oscillator according to the spatial connection rule and
+        // connection mute state.
         auto filterIt = std::find_if(objects.begin(), objects.end(),
                                      [](const auto& pair) {
                                          return pair.second.logical_id() ==
@@ -910,6 +966,7 @@ void MainComponent::timerCallback()
                                      });
 
         bool hasActiveConnectionToFilter = false;
+        bool connectionMuted = false;
         std::int64_t filterObjectId = 0;
         bool filterInside = false;
         if (filterIt != objects.end()) {
@@ -919,6 +976,22 @@ void MainComponent::timerCallback()
             hasActiveConnectionToFilter =
                 filterInside &&
                 isConnectionGeometricallyActive(oscObject, filterObject);
+
+            if (hasActiveConnectionToFilter) {
+                // Check whether the logical connection osc1→filter1 is
+                // currently muted; if so, the whole chain will be
+                // considered silent (oscillator does not feed the
+                // master directly while this connection exists).
+                rectai::Connection logicalConn{
+                    .from_module_id = "osc1",
+                    .from_port_name = "out",
+                    .to_module_id = "filter1",
+                    .to_port_name = "in",
+                };
+                connectionMuted =
+                    mutedConnections_.find(makeConnectionKey(logicalConn)) !=
+                    mutedConnections_.end();
+            }
         }
 
         // Each instrument has its own mute; when the filter is in the
@@ -935,10 +1008,13 @@ void MainComponent::timerCallback()
             // Oscillator is loose: only its own mute matters.
             chainMuted = oscMuted;
         } else {
-            // Oscillator feeds the filter: muting either one or having
-            // the filter outside the musical area silences the audible
-            // chain.
-            chainMuted = oscMuted || filterMuted || !filterInside;
+            // Oscillator feeds the filter: muting either one, having
+            // the filter outside the musical area or muting the
+            // connection itself silences the audible chain. The
+            // oscillator never falls back to a direct path to master
+            // while this connection exists.
+            chainMuted = oscMuted || filterMuted || !filterInside ||
+                         connectionMuted;
         }
 
         // Read UI parameters from the associated modules (radial menus).
@@ -954,11 +1030,12 @@ void MainComponent::timerCallback()
                 "filter1", "gain", gainParam);
         }
 
-        // Position X still influences the base frequency, but the
-        // oscillator's "Freq" slider scales it, giving tangible + UI
-        // control.
-        const double baseFreq = 200.0 + static_cast<double>(x) * 800.0;
-        const double frequency = baseFreq * (0.5 + 1.0 * oscFreqParam);
+        // Frequency is controlled only by the oscillator's "Freq" slider
+        // (module parameter), independent of the object's position on
+        // the table.
+        const double baseFreq = 200.0;
+        const double frequency =
+            baseFreq + 800.0 * static_cast<double>(oscFreqParam);
         audioEngine_.setFrequency(frequency);
 
         // Gain slider(s) control the output level envelope.
