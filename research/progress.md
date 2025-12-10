@@ -83,18 +83,29 @@
   - El widget de secuenciador (grid de puntos) se posiciona ahora utilizando la rotación del objeto cuya `logical_id` empieza por `"seq"`, proyectando la cuadrícula hacia la dirección del cubo físico.
   - Se mantiene el menú radial de parámetros alrededor del objeto seleccionado, alineado con la estética de menús radiales flotantes descrita en `ui-interface.md`.
 
-### Flujo de señal basado en proximidad y mute en cadena
-- Conexiones espaciales entre instrumentos:
-  - Se introduce una heurística geométrica `isConnectionGeometricallyActive` que considera distancia (radio máximo en coordenadas normalizadas) y orientación (el segundo objeto debe estar aproximadamente “delante” del primero según su ángulo) para decidir si una conexión `Scene::connections` está activa visualmente.
-  - Cuando una conexión módulo→módulo está activa (por ejemplo, `osc1 → filter1`), solo se dibuja la línea curvada entre los instrumentos y la línea directa desde el módulo fuente al Master desaparece. Visualmente, el sonido “pasa” primero por el filtro y luego al centro.
-- Rutas hacia Master y líneas mutables:
-  - Las líneas centro→objeto solo se dibujan para instrumentos que no estén alimentando a otro módulo a través de una conexión activa. El último módulo de una cadena (p. ej. `filter1`) es el que mantiene la conexión visible hacia el Master.
-  - El click de mute sobre una línea centro→objeto solo es válido para estos módulos “terminales”; si un instrumento está alimentando a otro, su línea directa a Master se considera inactiva y no se puede mutear directamente.
-- Propagación de mute en la cadena de audio:
-  - En `MainComponent::timerCallback` el oscilador (`osc1`) se enruta dinámicamente:
-    - Si no hay conexión activa `osc1 → filter1`, el oscilador se conecta directamente al Master y el mute depende solo de su propia línea al centro.
-    - Si hay conexión activa hacia el filtro, el oscilador se considera alimentando a `filter1` y la línea de `filter1` hacia el Master controla el silencio de toda la cadena. Mutear esa línea silencia también al oscilador.
-  - El parámetro `Gain` del oscilador controla el nivel cuando va directo a Master, mientras que cuando pasa por el filtro se utiliza el `Gain` del filtro como control principal de loudness.
+### Flujo de señal por sectores y mute por instrumento
+- Conexiones espaciales entre instrumentos por sectores:
+  - La heurística `isConnectionGeometricallyActive` ahora divide el área musical en cuatro sectores angulares alrededor del centro (90º cada uno en coordenadas normalizadas de la mesa).
+  - Dos instrumentos se consideran conectados (p.ej. `osc1 → filter1`) solo si ambos caen en el mismo sector; en ese caso se dibuja la línea curvada entre ellos con su pulso animado.
+- Rutas hacia Master y líneas individuales:
+  - Cada instrumento mantiene siempre su línea directa `instrumento → Master`, independientemente de si está conectado a otro. Esto permite que cada fiducial tenga un control de mute propio, visible y clickable en todo momento.
+- Mute independiente pero con efecto en la cadena de audio:
+  - Cada instrumento gestiona su propio estado de mute (click sobre su línea al centro), de forma independiente de las conexiones activas.
+  - En el caso `osc1`/`filter1`, cuando hay conexión activa en el mismo sector, el audio que se oye sigue siendo la cadena oscilador→filtro→Master, pero si cualquiera de los dos instrumentos está en estado mute, la salida conjunta se silencia.
+  - Cuando no hay conexión activa por sector, solo el mute del oscilador afecta al audio generado (el filtro no forma parte de la ruta audible en ese caso, aunque su estado de mute se conserve para cuando vuelva a entrar en cadena).
+
+### Ajuste de conexiones según área de música
+- Las conexiones visuales `instrumento → instrumento` (curvas con pulso) solo se consideran activas y se dibujan cuando **ambos** instrumentos están dentro del círculo de música y el destino cae dentro de un cono desde el centro en dirección al origen (inicialmente 90º, ampliado posteriormente a 120º).
+- Si cualquiera de los dos objetos sale fuera del área de música, la conexión desaparece visualmente y deja de participar en el routing lógico:
+  - En el caso `osc1 → filter1`, si el filtro queda fuera del círculo, la cadena osc→filtro se considera no válida y el audio se silencia para evitar una ruta incoherente hacia el Master.
+- El hit-test para mutear conexiones entre instrumentos también respeta esta regla: solo se puede mutear una conexión clicando sobre ella si ambos instrumentos están dentro del área de música.
+
+### Ajuste del ángulo del cono de conexión
+- Se ha ampliado el cono geométrico de conexión entre instrumentos de 90º a 120º alrededor del origen, de modo que `isConnectionGeometricallyActive` considera ahora activas más configuraciones espaciales entre módulos `from` y `to`, manteniendo la misma lógica de sectorización pero con mayor tolerancia angular.
+
+### Alineación del área de música con la UI
+- La función de utilidad `isInsideMusicArea` se ha movido a `MainComponent` y ahora calcula el área musical en coordenadas de píxel usando exactamente el mismo centro y radio que el círculo de la mesa renderizado en `paint`.
+- Esto garantiza que un instrumento se desactive justo cuando su nodo sale visualmente del círculo azul (zona con fondo negro), independientemente de la relación de aspecto de la ventana.
 
 ### Próximos pasos sugeridos (UI)
 - Introducir un efecto de glow/bloom real mediante un pipeline de renderizado con OpenGL o similar, en lugar de aproximarlo solo con halos y transparencias.

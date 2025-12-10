@@ -25,6 +25,9 @@ public:
     void timerCallback() override;
 
 private:
+    [[nodiscard]] bool isInsideMusicArea(
+        const rectai::ObjectInstance& obj) const;
+
     AudioEngine& audioEngine_;
     rectai::Scene scene_;
 
@@ -54,12 +57,10 @@ private:
     double sequencerPhase_{0.0};
     int sequencerStep_{0};
 
-    // Selection state for radial menu.
-    std::int64_t selectedObjectId_{0};
-
-    // Radial slider interaction state (index: 0=freq, 1=gain, 2=fx).
-    bool draggingRadialSlider_{false};
-    int draggingSliderIndex_{-1};
+    // Per-instrument side controls (left: freq, right: gain).
+    std::int64_t sideControlObjectId_{0};
+    enum class SideControlKind { kNone = 0, kFreq = 1, kGain = 2 };
+    SideControlKind sideControlKind_{SideControlKind::kNone};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
