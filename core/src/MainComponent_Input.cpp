@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 #include "MainComponentHelpers.h"
 
@@ -30,8 +31,19 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         if (object.logical_id() == "-1") {
             continue;
         }
+
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
+
+        const bool insideMusic = isInsideMusicArea(object);
+        float rotationAngle = 0.0F;
+        if (insideMusic) {
+            const float dx = cx - bounds.getCentreX();
+            const float dy = cy - bounds.getCentreY();
+            rotationAngle =
+                std::atan2(dy, dx) -
+                juce::MathConstants<float>::halfPi;
+        }
 
         const auto modIt = modules.find(object.logical_id());
         const rectai::AudioModule* moduleForObject =
@@ -77,7 +89,12 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             gainHandleX = cx + dx;
         }
 
-        const auto click = event.position;
+        juce::Point<float> click = event.position;
+        if (insideMusic) {
+            click = click.transformedBy(
+                juce::AffineTransform::rotation(-rotationAngle, cx, cy));
+        }
+
         auto isNearHandle = [](float hx, float hy, juce::Point<float> p) {
             const float dx = p.x - hx;
             const float dy = p.y - hy;
@@ -195,6 +212,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         const float maxDistanceSq = maxDistance * maxDistance;
 
         const auto& objectsLocal = scene_.objects();
+        const auto& modulesLocal = scene_.modules();
 
         auto isPointNearSegment = [](juce::Point<float> p, juce::Point<float> a,
                                      juce::Point<float> b,
@@ -218,6 +236,40 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         std::unordered_map<std::string, std::int64_t> moduleToObjectId;
         for (const auto& [id, object] : objectsLocal) {
             moduleToObjectId.emplace(object.logical_id(), id);
+        }
+
+        // Track which objects currently have an active outgoing connection
+        // so that the hit-test for the centre  object line follows the
+        // same visibility rules used in paint(): generators that are feeding
+        // another module through an active connection do not render a direct
+        // line to the master and therefore should not be clickable either.
+        std::unordered_set<std::int64_t> objectsWithOutgoingActiveConnection;
+        for (const auto& conn : scene_.connections()) {
+            const auto fromIdIt = moduleToObjectId.find(conn.from_module_id);
+            const auto toIdIt = moduleToObjectId.find(conn.to_module_id);
+            if (fromIdIt == moduleToObjectId.end() ||
+                toIdIt == moduleToObjectId.end()) {
+                continue;
+            }
+
+            const auto fromObjIt = objectsLocal.find(fromIdIt->second);
+            const auto toObjIt = objectsLocal.find(toIdIt->second);
+            if (fromObjIt == objectsLocal.end() ||
+                toObjIt == objectsLocal.end()) {
+                continue;
+            }
+
+            const auto& fromObj = fromObjIt->second;
+            const auto& toObj = toObjIt->second;
+
+            if (!isInsideMusicArea(fromObj) || !isInsideMusicArea(toObj)) {
+                continue;
+            }
+
+            if (conn.is_hardlink ||
+                isConnectionGeometricallyActive(fromObj, toObj)) {
+                objectsWithOutgoingActiveConnection.insert(fromIdIt->second);
+            }
         }
 
         for (const auto& conn : scene_.connections()) {
@@ -263,8 +315,37 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             }
         }
 
-        // Fallback: muting via the line centre → object.
+        // Fallback: muting via the line centre  object. Only objects that
+        // actually render a visible line to the master in paint() should be
+        // clickable here.
         for (const auto& [id, object] : objectsLocal) {
+            if (object.logical_id() == "-1" || object.docked()) {
+                continue;
+            }
+
+            if (!isInsideMusicArea(object)) {
+                continue;
+            }
+
+            const bool hasActiveOutgoingConnection =
+                objectsWithOutgoingActiveConnection.find(id) !=
+                objectsWithOutgoingActiveConnection.end();
+
+            const auto modForConnectionIt =
+                modulesLocal.find(object.logical_id());
+            const bool isGenerator =
+                modForConnectionIt != modulesLocal.end() &&
+                modForConnectionIt->second != nullptr &&
+                modForConnectionIt->second->type() ==
+                    rectai::ModuleType::kGenerator;
+
+            // Generators feeding another module through an active connection
+            // hide their direct visual link to the master, so that line
+            // should not be clickable either.
+            if (isGenerator && hasActiveOutgoingConnection) {
+                continue;
+            }
+
             const auto cx = bounds.getX() + object.x() * bounds.getWidth();
             const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
@@ -342,13 +423,29 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
+        const bool insideMusic = isInsideMusicArea(object);
+        float rotationAngle = 0.0F;
+        if (insideMusic) {
+            const float dx = cx - bounds.getCentreX();
+            const float dy = cy - bounds.getCentreY();
+            rotationAngle =
+                std::atan2(dy, dx) -
+                juce::MathConstants<float>::halfPi;
+        }
+
+        juce::Point<float> mousePos = event.position;
+        if (insideMusic) {
+            mousePos = mousePos.transformedBy(
+                juce::AffineTransform::rotation(-rotationAngle, cx, cy));
+        }
+
         const float nodeRadius = 26.0F;
         const float ringRadius = nodeRadius + 10.0F;
         const float sliderMargin = 6.0F;
         const float sliderTop = cy - ringRadius + sliderMargin;
         const float sliderBottom = cy + ringRadius - sliderMargin;
 
-        const float mouseY = static_cast<float>(event.position.y);
+        const float mouseY = mousePos.y;
         const float clampedY = juce::jlimit(sliderTop, sliderBottom, mouseY);
         const float value = juce::jmap(clampedY, sliderBottom, sliderTop,
                                        0.0F, 1.0F);

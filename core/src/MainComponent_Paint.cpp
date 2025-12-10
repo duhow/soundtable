@@ -215,12 +215,13 @@ void MainComponent::paint(juce::Graphics& g)
         }
 
         // -----------------------------------------------------------------
-        // Connections between modules (Scene::connections) as curved edges
-        // with a small animated pulse suggesting signal flow. Dynamic
-        // connections are active only when the target lies inside the
-        // 120º cone of the source; hardlink connections remain active
-        // regardless of that angular constraint and are drawn in red
-        // instead of white.
+        // Connections between modules (Scene::connections) as edges with a
+        // small animated pulse suggesting signal flow. Dynamic connections
+        // are drawn as curved Bézier paths, while hardlink connections use
+        // straight segments. Dynamic connections are active only when the
+        // target lies inside the 120º cone of the source; hardlink
+        // connections remain active regardless of that angular constraint
+        // and are drawn in red instead of white.
         // -----------------------------------------------------------------
         int connectionIndex = 0;
         for (const auto& conn : scene_.connections()) {
@@ -257,7 +258,9 @@ void MainComponent::paint(juce::Graphics& g)
             const juce::Point<float> p2{tx, ty};
             const juce::Point<float> mid = (p1 + p2) * 0.5F;
 
-            // Control point desplazado ligeramente para dar curvatura.
+            // Control point desplazado ligeramente para dar curvatura en
+            // conexiones dinámicas. Los hardlinks se dibujan como líneas
+            // rectas simples entre nodos.
             const juce::Point<float> delta = p2 - p1;
             const float length =
                 std::sqrt(delta.x * delta.x + delta.y * delta.y);
@@ -284,8 +287,26 @@ void MainComponent::paint(juce::Graphics& g)
                 const float dashLengths[] = {6.0F, 4.0F};
                 g.setColour(activeColour.withAlpha(0.6F));
                 g.drawDashedLine(juce::Line<float>(p1, p2), dashLengths,
-                                 static_cast<int>(std::size(dashLengths)),
+                                 static_cast<int>(
+                                     std::size(dashLengths)),
                                  1.5F);
+            } else if (conn.is_hardlink) {
+                // Hardlink: straight segment with a pulse travelling
+                // directly from source to destination.
+                g.setColour(activeColour);
+                g.drawLine(juce::Line<float>(p1, p2), 1.8F);
+
+                const double phaseOffset =
+                    0.25 * static_cast<double>(connectionIndex);
+                const float t = static_cast<float>(
+                    std::fmod(connectionFlowPhase_ + phaseOffset, 1.0));
+
+                const juce::Point<float> flowPoint =
+                    p1 + (p2 - p1) * t;
+
+                g.setColour(juce::Colours::red.withAlpha(0.9F));
+                g.fillEllipse(flowPoint.x - 2.5F, flowPoint.y - 2.5F, 5.0F,
+                              5.0F);
             } else {
                 juce::Path path;
                 path.startNewSubPath(p1);
@@ -306,9 +327,7 @@ void MainComponent::paint(juce::Graphics& g)
                     oneMinusT * oneMinusT * p1 +
                     2.0F * oneMinusT * t * control + t * t * p2;
 
-                g.setColour(conn.is_hardlink
-                                 ? juce::Colours::red.withAlpha(0.9F)
-                                 : juce::Colours::white.withAlpha(0.85F));
+                g.setColour(juce::Colours::white.withAlpha(0.85F));
                 g.fillEllipse(flowPoint.x - 2.5F, flowPoint.y - 2.5F, 5.0F,
                               5.0F);
             }
@@ -353,6 +372,32 @@ void MainComponent::paint(juce::Graphics& g)
 
         const juce::Colour auraColour =
             bodyColour.withMultipliedAlpha(0.22F).brighter(0.2F);
+
+        // Compute the orientation of the module when it lives in the
+        // musical area. Modules outside the table (or docked) keep a
+        // fixed screen-space orientation. Inside the music surface
+        // they are rotated so that their local "up" axis aligns with
+        // the radial audio line (white) connecting them to the master
+        // centre.
+        const bool insideMusic = isInsideMusicArea(object);
+        float rotationAngle = 0.0F;
+        if (insideMusic) {
+            const float dx = cx - centre.x;
+            const float dy = cy - centre.y;
+            // Align the module's local "up" axis with the radial
+            // audio line. Compensate a 90-degree offset so that the
+            // visual upright orientation matches the direction of the
+            // white line instead of being rotated to its side.
+            rotationAngle =
+                std::atan2(dy, dx) -
+                juce::MathConstants<float>::halfPi;
+        }
+
+        juce::Graphics::ScopedSaveState nodeTransform(g);
+        if (insideMusic) {
+            g.addTransform(juce::AffineTransform::rotation(rotationAngle,
+                                                           cx, cy));
+        }
 
         // Aura: soft glow under the object.
         const float glowRadiusOuter = nodeRadius + 22.0F;
@@ -604,8 +649,10 @@ void MainComponent::paint(juce::Graphics& g)
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
         // Simple sequencer: attach to any object whose logical_id starts
-        // with "seq" for now. The grid is positioned using the
-        // tangibles rotation so that it "projects" outwards.
+        // with "seq" for now. When the object is in the musical area
+        // the sequencer grid orientation follows the same radial
+        // direction as the audio line so that it visually projects
+        // outwards from the table centre.
         if (object.logical_id().rfind("seq", 0) == 0) {
             const int cols = 8;
             const int rows = 3;
@@ -613,7 +660,13 @@ void MainComponent::paint(juce::Graphics& g)
             const float gridWidth = cols * cellSize;
             const float gridHeight = rows * cellSize;
 
-            const float angle = object.angle_radians();
+            float angle = object.angle_radians();
+            if (isInsideMusicArea(object)) {
+                const float dx = cx - centre.x;
+                const float dy = cy - centre.y;
+                angle = std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+            }
             const float offset = nodeRadius + 40.0F;
             const float gx = cx + offset * std::cos(angle);
             const float gy = cy + offset * std::sin(angle);
