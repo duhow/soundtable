@@ -1,5 +1,7 @@
 #include "core/Scene.h"
 
+#include <algorithm>
+
 namespace rectai {
 
 ObjectInstance::ObjectInstance(const std::int64_t tracking_id,
@@ -22,26 +24,30 @@ void ObjectInstance::set_angle_radians(const float angle_radians)
   angle_radians_ = angle_radians;
 }
 
-Module::Module(std::string id, const ModuleKind kind)
-    : id_(std::move(id)), kind_(kind) {}
+AudioModule::AudioModule(std::string id, const ModuleType type,
+                         const bool produces_audio, const bool consumes_audio)
+    : id_(std::move(id)),
+      type_(type),
+      produces_audio_(produces_audio),
+      consumes_audio_(consumes_audio) {}
 
-void Module::AddInputPort(const std::string& name, const bool is_audio)
+void AudioModule::AddInputPort(const std::string& name, const bool is_audio)
 {
   input_ports_.push_back(PortDescriptor{name, is_audio});
 }
 
-void Module::AddOutputPort(const std::string& name, const bool is_audio)
+void AudioModule::AddOutputPort(const std::string& name, const bool is_audio)
 {
   output_ports_.push_back(PortDescriptor{name, is_audio});
 }
 
-void Module::SetParameter(const std::string& name, const float value)
+void AudioModule::SetParameter(const std::string& name, const float value)
 {
   parameters_[name] = value;
 }
 
-float Module::GetParameterOrDefault(const std::string& name,
-                                    const float default_value) const
+float AudioModule::GetParameterOrDefault(const std::string& name,
+                                         const float default_value) const
 {
   const auto it = parameters_.find(name);
   if (it == parameters_.end()) {
@@ -50,12 +56,53 @@ float Module::GetParameterOrDefault(const std::string& name,
   return it->second;
 }
 
-bool Scene::AddModule(const Module& module)
+float AudioModule::default_parameter_value(const std::string& /*name*/) const
 {
-  const auto id = module.id();
-  const auto [it, inserted] = modules_.emplace(id, module);
-  (void)it;  // Silenciar warning en builds sin uso.
-  return inserted;
+  // Base implementation: no specific knowledge of parameters; concrete
+  // modules (Oscillator, Filter, etc.) are expected to override this
+  // to provide meaningful defaults for names like "freq" or "gain".
+  return 0.0F;
+}
+
+void AudioModule::set_connection_targets(
+    std::unordered_set<ModuleType> targets)
+{
+  allowed_targets_ = std::move(targets);
+  allow_any_target_ = allowed_targets_.empty();
+}
+
+void AudioModule::allow_any_connection_target()
+{
+  allow_any_target_ = true;
+  allowed_targets_.clear();
+}
+
+bool AudioModule::CanConnectTo(const AudioModule& other) const
+{
+  if (!produces_audio_ || !other.consumes_audio_) {
+    return false;
+  }
+
+  if (allow_any_target_) {
+    return true;
+  }
+
+  return allowed_targets_.find(other.type_) != allowed_targets_.end();
+}
+
+bool Scene::AddModule(std::unique_ptr<AudioModule> module)
+{
+  if (!module) {
+    return false;
+  }
+
+  const auto id = module->id();
+  if (modules_.find(id) != modules_.end()) {
+    return false;
+  }
+
+  modules_.emplace(id, std::move(module));
+  return true;
 }
 
 bool Scene::RemoveModule(const std::string& module_id)
@@ -79,9 +126,13 @@ bool Scene::RemoveModule(const std::string& module_id)
 
 bool Scene::AddConnection(const Connection& connection)
 {
-  // Comprobar que los módulos existen.
-  if (modules_.find(connection.from_module_id) == modules_.end() ||
-      modules_.find(connection.to_module_id) == modules_.end()) {
+  auto* fromModule = FindModule(connection.from_module_id);
+  auto* toModule = FindModule(connection.to_module_id);
+  if (fromModule == nullptr || toModule == nullptr) {
+    return false;
+  }
+
+  if (!fromModule->CanConnectTo(*toModule)) {
     return false;
   }
 
@@ -140,7 +191,7 @@ void Scene::SetModuleParameter(const std::string& module_id,
   if (it == modules_.end()) {
     return;
   }
-  it->second.SetParameter(name, value);
+  it->second->SetParameter(name, value);
 }
 
 float Scene::GetModuleParameterOrDefault(const std::string& module_id,
@@ -151,7 +202,25 @@ float Scene::GetModuleParameterOrDefault(const std::string& module_id,
   if (it == modules_.end()) {
     return default_value;
   }
-  return it->second.GetParameterOrDefault(name, default_value);
+  return it->second->GetParameterOrDefault(name, default_value);
+}
+
+AudioModule* Scene::FindModule(const std::string& module_id)
+{
+  const auto it = modules_.find(module_id);
+  if (it == modules_.end()) {
+    return nullptr;
+  }
+  return it->second.get();
+}
+
+const AudioModule* Scene::FindModule(const std::string& module_id) const
+{
+  const auto it = modules_.find(module_id);
+  if (it == modules_.end()) {
+    return nullptr;
+  }
+  return it->second.get();
 }
 
 }  // namespace rectai

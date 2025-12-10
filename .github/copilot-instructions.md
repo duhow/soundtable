@@ -16,7 +16,7 @@ El objetivo principal es mantenerse alineado con la arquitectura actual y los fl
   - `core/src/MainComponent.{h,cpp}`: componente principal de UI que pinta una "escena" de objetos/módulos.
   - `core/src/core/Scene.{h,cpp}`: modelo de dominio con:
     - `rectai::ObjectInstance`: objeto físico/virtual sobre la mesa (id de tracking, `logical_id`, posición normalizada, ángulo).
-    - `rectai::Module` + `rectai::ModuleKind`: módulos lógicos (oscilador, filtro, etc.) con puertos y parámetros.
+    - `rectai::AudioModule` + `rectai::ModuleType`: módulos lógicos (oscilador, filtro, etc.) con puertos, parámetros y metadata UI.
     - `rectai::Connection`: conexiones dirigidas entre puertos de módulos.
     - `rectai::Scene`: agrega módulos, conexiones y objetos con operaciones de alta coherencia (no duplicar ids, limpieza de conexiones al borrar un módulo, etc.).
 - `tracker/`: binario `rectai-tracker` basado en OpenCV.
@@ -41,14 +41,14 @@ Al extender el modelo de dominio (nuevos tipos de módulos, propiedades de objet
 - Ejecución de tests C++:
   - Desde `build/` tras configurar con CMake: `ctest --output-on-failure`.
 
-Si haces cambios en `Scene`, `Module` o `ObjectInstance`, asegúrate de que `tests/scene_tests.cpp` siga compilando y pasando con `ctest`.
+Si haces cambios en `Scene`, `AudioModule` o `ObjectInstance`, asegúrate de que `tests/scene_tests.cpp` siga compilando y pasando con `ctest`.
 
 ## Convenciones de código C++
 
 - Estándar: C++20, sin extensiones (`CMAKE_CXX_EXTENSIONS OFF`).
 - Espacio de nombres de dominio: `rectai` (ver `core/src/core/Scene.h`).
 - Estilo observado:
-  - Clases y enums en `PascalCase` (`ObjectInstance`, `ModuleKind`).
+  - Clases y enums en `PascalCase` (`ObjectInstance`, `ModuleType`).
   - Métodos en `camelCase` (`AddModule`, `RemoveConnection`, `set_position`).
   - Uso de `[[nodiscard]]` en getters públicos y métodos que devuelven valores importantes.
   - Uso de `std::unique_ptr` para ownership en la parte JUCE (`MainWindow` en `Main.cpp`).

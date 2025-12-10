@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<reactablepatch>
+    <background color="0,0.101961,0.501961" texture="" alpha="0.5" rotation="0" revolution="0" random="0" />
+    <tangibles>
+        <tangible type="Output" id="-1" x="0" y="0" angle="0" color="ffffffff" docked="0" muted="0" point="0" />
+        <tangible type="Tonalizer" id="0" x="2.60833" y="0.9" angle="0" color="d5d5d5ff" docked="1" muted="0" point="0" subtype="tonalizer" current_track="0">
+            <tone key="0" scale="1,1,1,1,1,1,1,1,1,1,1,1" />
+            <tone key="0" scale="1,1,1,1,1,1,1,1,1,1,1,1" />
+            <tone key="0" scale="1,1,1,1,1,1,1,1,1,1,1,1" />
+            <tone key="0" scale="1,1,1,1,1,1,1,1,1,1,1,1" />
+            <tone key="0" scale="1,1,1,1,1,1,1,1,1,1,1,1" />
+            <tone key="0" scale="1,1,1,1,1,1,1,1,1,1,1,1" />
+        </tangible>
+        <tangible type="Volume" id="1" x="2.40833" y="0.9" angle="0" color="d5d5d5ff" docked="1" muted="0" point="0" subtype="volume" volume="90" compression_level="0" compression_on="0" reverb_level="0" reverb_input="0" reverb_on="0" delay_fb="0" delay_time="0.7" />
+        <tangible type="Tempo" id="2" x="2.20833" y="0.9" angle="0" color="d5d5d5ff" docked="1" muted="0" point="0" tempo="128" meter="4" swing="0" />
+        <tangible type="Accelerometer" id="3" x="2.00833" y="0.9" angle="0" color="ffff00ff" docked="1" muted="0" point="0" amp_mult="1" freq_mult="1" freq="12" duration="0.75" />
+        <tangible type="LFO" id="4" x="1.80833" y="0.9" angle="0" color="000000ff" docked="1" muted="0" point="0" subtype="sine" freq="9" mult="0.906058" samplehold="1" />
+        <tangible type="Sequencer" id="5" x="1.60833" y="0.9" angle="0" color="000000ff" docked="1" muted="0" point="1" subtype="sequencer" current_track="0" autoseq_on="0" noteedit_on="0" duration="0.998737" num_tracks="6" offset="0">
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="5" speed_type="binary" step_frequencies="0,0,0,0.166667,0,0.166667,0,0,0.166667,0,0.166667,0.166667,0.166667,0.166667,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+        </tangible>
+        <tangible type="Sequencer" id="6" x="0.337708" y="-0.68854" angle="0" color="000000ff" docked="0" muted="0" point="0" subtype="sequencer" current_track="0" autoseq_on="0" noteedit_on="0" duration="0.75" num_tracks="6" offset="0">
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,0,0,1,0,0,0,1,0,1,0,0,1,0,0,0" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,0.233645,1,1,1,0.771028,1,0.140187,1,1,0.630841,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+            <sequence rows="1,1,1,1,1,1,1,1,1,1,1,1,1" speed="1" speed_type="binary" step_frequencies="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" steps="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" tenori0="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori1="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori10="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori11="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori12="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori2="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori3="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori4="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori5="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori6="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori7="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori8="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" tenori9="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" volumes="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" />
+        </tangible>
+        <tangible type="Filter" id="8" x="1.40833" y="0.9" angle="0" color="000000ff" docked="1" muted="0" point="0" subtype="lowpass" freq="123.9" q="0">
+            <envelope attack="0" decay="0" duration="0" points_x="0,0,0,1,1" points_y="0,1,0.5,0.5,0" release="0" />
+        </tangible>
+        <tangible type="Filter" id="9" x="1.20833" y="0.9" angle="0" color="000000ff" docked="1" muted="0" point="0" subtype="lowpass" freq="97.4083" q="0.811374">
+            <envelope attack="484.877" decay="469.944" duration="1193" points_x="0,0.406256,0.8,1,1" points_y="0,1,0.5,0.5,0" release="0" />
+        </tangible>
+        <tangible type="Delay" id="10" x="0.100481" y="-0.111485" angle="310.5" color="000000ff" docked="0" muted="0" point="0" subtype="pingpong" delay="0.66" fb="0.5" sweep="0">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+            <hardlink to="-1" />
+        </tangible>
+        <tangible type="Delay" id="11" x="1.00833" y="0.9" angle="0" color="000000ff" docked="1" muted="0" point="0" subtype="feedback" delay="0.66" fb="0.5" sweep="0">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+        </tangible>
+        <tangible type="Modulator" id="12" x="0.808333" y="0.9" angle="0" color="000000ff" docked="1" muted="0" point="0" subtype="ringmod" effect="0.5" drywet="0.5" depth="0.5" min="0.5" fb="0.5">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+        </tangible>
+        <tangible type="WaveShaper" id="14" x="0.608333" y="0.9" angle="0" color="000000ff" docked="1" muted="0" point="0" subtype="distort" effect="0.5" drywet="0.5">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+        </tangible>
+        <tangible type="Input" id="20" x="0.408333" y="0.9" angle="0" color="23cb43ff" docked="1" muted="0" point="0" amp="0">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+        </tangible>
+        <tangible type="Loop" id="24" x="0.345833" y="0.379167" angle="0" color="d4cd06ff" docked="0" muted="0" point="3" subtype="loop" amp="0.356205" sample="0" speed="1">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+            <loop beats="8" filename="Demoloops/pl_padloop1.wav" order="0" />
+            <loop beats="8" filename="Demoloops/pl_padloop1.wav" order="1" />
+            <loop beats="8" filename="Demoloops/pl_padloop1.wav" order="2" />
+            <loop beats="8" filename="Demoloops/pl_padloop1.wav" order="3" />
+        </tangible>
+        <tangible type="Loop" id="29" x="0.208333" y="0.9" angle="0" color="e76200ff" docked="1" muted="0" point="2" subtype="loop" amp="0.366843" sample="0" speed="1">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+            <loop beats="8" filename="" order="0" />
+            <loop beats="8" filename="" order="1" />
+            <loop beats="8" filename="" order="2" />
+            <loop beats="8" filename="" order="3" />
+        </tangible>
+        <tangible type="Loop" id="34" x="-0.258333" y="0.358333" angle="319.5" color="2366e1ff" docked="0" muted="0" point="1" subtype="loop" amp="1" sample="0" speed="1">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+            <loop beats="4" filename="Demoloops/pl_subendbreak1.wav" order="0" />
+            <loop beats="4" filename="Demoloops/pl_subendbreak2.wav" order="1" />
+            <loop beats="4" filename="Demoloops/pl_subendbreak1.wav" order="2" />
+            <loop beats="4" filename="Demoloops/pl_subendbreak2.wav" order="3" />
+        </tangible>
+        <tangible type="Loop" id="39" x="-0.466667" y="-0.095833" angle="340.5" color="23cb43ff" docked="0" muted="0" point="0" subtype="loop" amp="1" sample="0" speed="1">
+            <envelope attack="0" decay="0" duration="25" points_x="0,0,0,0.2,1" points_y="0,1,1,1,0" release="20" />
+            <loop beats="4" filename="Demoloops/pl_Kick54.wav" order="0" />
+            <loop beats="4" filename="Demoloops/pl_Kick54.wav" order="1" />
+            <loop beats="4" filename="Demoloops/pl_Kick54.wav" order="2" />
+            <loop beats="4" filename="Demoloops/pl_Kick54.wav" order="3" />
+        </tangible>
+        <tangible type="Oscillator" id="46" x="0.00833335" y="0.9" angle="0" color="2366e1ff" docked="1" muted="0" point="1" subtype="saw" amp="0" sweep="0" current_osc="1" second_tonalize="0" midifreq="44" second_amp1="0.869318" offset1="12" detune1="1.26263" wave1="1" second_amp2="0.70202" offset2="7" detune2="0.505049" wave2="1" bite="0">
+            <envelope attack="1021.02" decay="106.6" duration="1434.52" points_x="0,0.711747,0.786058,0.986058,1" points_y="0,1,0.889881,0.889881,0" release="20" />
+        </tangible>
+        <tangible type="Oscillator" id="47" x="0.0345229" y="-0.475" angle="343.5" color="ed0000ff" docked="0" muted="0" point="0" subtype="sine" amp="0.326353" sweep="0" current_osc="0" second_tonalize="0" midifreq="66" second_amp1="0" offset1="0" detune1="0" wave1="0" second_amp2="0" offset2="0" detune2="0" wave2="0" bite="0">
+            <envelope attack="0" decay="52.3438" duration="65" points_x="0,0,0.8,1,1" points_y="0,1,0,0,0" release="0" />
+        </tangible>
+        <tangible type="Sampleplay" id="48" x="-0.191667" y="0.9" angle="0" color="19ccdcff" docked="1" muted="0" point="1" subtype="drum" amp="1" midifreq="57" filename="default.sf2">
+            <instrument name="TR-101 Drumset" />
+            <instrument name="Grungy Ramp Bass" />
+        </tangible>
+        <tangible type="Sampleplay" id="49" x="-0.391667" y="0.9" angle="0" color="a51ffbff" docked="1" muted="0" point="0" subtype="synth" amp="1" midifreq="57" filename="default.sf2">
+            <instrument name="TR-101 Drumset" />
+            <instrument name="Grungy Ramp Bass" />
+        </tangible>
+    </tangibles>
+    <author name="Reactable" />
+    <patch name="Loopdemo" />
+</reactablepatch>

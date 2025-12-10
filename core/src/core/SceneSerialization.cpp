@@ -6,9 +6,9 @@ namespace rectai {
 
 namespace {
 
-int ToUnderlying(const ModuleKind kind)
+int ToUnderlying(const ModuleType type)
 {
-    return static_cast<int>(kind);
+    return static_cast<int>(type);
 }
 
 }  // namespace
@@ -21,7 +21,11 @@ std::string SerializeScene(const Scene& scene)
 
     // Modules.
     for (const auto& [id, module] : scene.modules()) {
-        out << "module " << id << ' ' << ToUnderlying(module.kind()) << '\n';
+        if (module == nullptr) {
+            continue;
+        }
+        out << "module " << id << ' ' << ToUnderlying(module->type())
+            << '\n';
     }
 
     // Objects.
@@ -31,11 +35,17 @@ std::string SerializeScene(const Scene& scene)
             << object.angle_radians() << '\n';
     }
 
-    // Connections.
+    // Connections. Hardlink connections are annotated explicitly so that
+    // tooling or future loaders can distinguish them from dynamic,
+    // geometry-based connections when inspecting a serialized scene.
     for (const auto& connection : scene.connections()) {
         out << "connection " << connection.from_module_id << ' '
             << connection.from_port_name << ' ' << connection.to_module_id
-            << ' ' << connection.to_port_name << '\n';
+            << ' ' << connection.to_port_name;
+        if (connection.is_hardlink) {
+            out << ' ' << "hardlink";
+        }
+        out << '\n';
     }
 
     return out.str();

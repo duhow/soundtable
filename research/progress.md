@@ -5,7 +5,7 @@
 ### Modelo y UI básica
 - Modelo de dominio inicial implementado en `rectai::Scene` (`Scene.h/.cpp`), con:
   - `ObjectInstance` (id de tracking, id lógico, posición normalizada, ángulo).
-  - `Module` + `ModuleKind` y descriptores de puertos.
+  - `AudioModule` + `ModuleType` y descriptores de puertos.
   - `Connection` y operaciones de alta coherencia sobre la escena.
 - Tests sencillos en `tests/scene_tests.cpp` que validan:
   - Inserción única de módulos.
@@ -40,7 +40,7 @@
 - Añadido `AudioEngine` en `core/src/AudioEngine.{h,cpp}`:
   - Envuelve un `juce::AudioDeviceManager` inicializado con las salidas por defecto (estéreo, sin entradas).
   - Implementa `juce::AudioIODeviceCallback` para generar un tono senoidal de prueba (A4, 440 Hz) a nivel bajo, validando la canalización de audio.
-  - Punto de partida para evolucionar hacia un grafo de módulos que mapee `rectai::ModuleKind` a nodos de procesamiento.
+  - Punto de partida para evolucionar hacia un grafo de módulos que mapee `rectai::ModuleType`/`AudioModule` a nodos de procesamiento.
 - `RectaiApplication` instancia un `AudioEngine` de larga vida para que el audio se active junto con la aplicación JUCE.
 
 ### Diseño de UI rítmica inicial
@@ -65,12 +65,28 @@
 
 ## 2025-12-10
 
+### AudioModules y metadata unificada
+- `rectai::Scene` ahora almacena instancias polimórficas de `AudioModule`, cada una con:
+  - `ModuleType` (SEQUENCER, AUDIO, GENERATOR, FILTER, SETTINGS) para clasificar familias lógicas.
+  - Capacidades de audio (`produces_audio`, `consumes_audio`) y políticas de conexión overrideables por módulo.
+  - Metadatos UI (`colour_argb`, `label`, `description`, `icon_id`) más flags para reutilizar los sliders de frecuencia y ganancia según convenga.
+- Nuevos módulos concretos:
+  - `OscillatorModule`: generador con salida audio, sliders de freq/gain activos, color azul y conexión permitida hacia módulos FILTER/AUDIO.
+  - `FilterModule`: módulo de paso con entrada/salida audio, sliders de cutoff/gain activos y política de conexión abierta.
+- `MainComponent` consume ahora esta metadata para:
+  - Pintar colores/aura basados en el color declarado por cada `AudioModule`.
+  - Mostrar u ocultar los sliders laterales en función de `uses_frequency_control` / `uses_gain_control`.
+  - Renderizar iconos mediante `icon_id` y etiquetar cada nodo con `label (logical_id)`.
+  - Consultar valores por defecto de parámetros (`freq`, `gain`, etc.) a través de `AudioModule::default_parameter_value`, de modo que los `0.5F` por defecto viven en `AudioModules.cpp` en lugar de estar duplicados en `MainComponent`.
+- `tests/scene_tests.cpp` se actualiza para instanciar módulos concretos (`OscillatorModule`, `FilterModule`) usando `std::unique_ptr`, reflejando la API `Scene::AddModule(std::unique_ptr<AudioModule>)`.
+- Nueva cabecera `core/src/core/AudioModules.{h,cpp}` centraliza las implementaciones concretas para que puedan reutilizarse tanto por la UI como por futuros motores de audio.
+
 ### Refinado de interfaz visual según `ui-interface.md`
 - Fondo y núcleo central:
   - Se mantiene el lienzo circular azul con gradiente y viñeta, actuando como superficie principal de la mesa reactiva.
   - El núcleo central incorpora ahora ondas expansivas más rítmicas y se usa como punto de convergencia visual de las conexiones.
 - Nodos/objetos tangibles:
-  - Cada `ObjectInstance` toma su color base a partir del `ModuleKind` asociado (`oscillator`, `filter`, `effect`, `sampler`, `controller`), con variantes azules, verdes, púrpuras y naranjas para diferenciar tipos.
+  - Cada `ObjectInstance` toma su color base del metadato `colour_argb()` expuesto por el `AudioModule` asociado (oscillator, filter, effect, sampler, controller), manteniendo la paleta de azules, verdes, púrpuras y naranjas para diferenciar tipos.
   - El aura bajo cada nodo está tintada con el color del módulo y se dibujan dos halos concéntricos suaves, aproximando el efecto de glow/bloom descrito en `ui-interface.md`.
   - Dentro del cuerpo del nodo se renderizan iconos estilizados según el tipo de módulo (onda sinusoidal para osciladores, curva tipo filtro, barras estilo sampler, anillos para controladores, etc.).
 - Anillos de parámetros:
@@ -117,8 +133,8 @@
   - Extender `rectai-tracker` para enviar mensajes OSC reales compatibles con el protocolo `/rectai/object` y `/rectai/remove` (más allá de los datos sintéticos actuales).
   - Evaluar si se quiere aproximar al formato TUIO estándar o mantener este canal OSC simplificado como modo de debug.
 - **Audio**:
-  - Evolucionar `AudioEngine` desde el tono único actual hacia varias voces/módulos (p.ej., una voz por `ObjectInstance` asociado a `ModuleKind::kOscillator`).
-  - A medio plazo, introducir un `AudioProcessorGraph` o equivalente que mapee `ModuleKind` a nodos de procesamiento reutilizables.
+  - Evolucionar `AudioEngine` desde el tono único actual hacia varias voces/módulos (p.ej., una voz por `ObjectInstance` asociado a un `OscillatorModule`).
+  - A medio plazo, introducir un `AudioProcessorGraph` o equivalente que mapee `AudioModuleType` a nodos de procesamiento reutilizables.
 - **UI/Escenas**:
   - Completar la deserialización (carga) de escenas usando el formato line-based `rectai_scene_v1` de `SceneSerialization` o migrar a un formato JSON cuando se introduzca una librería dedicada.
   - Añadir comandos básicos a la UI para guardar la `Scene` actual en disco y recargarla (presets simples).
@@ -143,3 +159,26 @@
   - Líneas rectas punteadas (sin pulso) cuando la conexión está silenciada, manteniendo la legibilidad topológica de la escena.
 - El click sobre la línea entre instrumentos ya no mutea el objeto de origen, sino que conmuta el estado de mute de la conexión correspondiente (por ahora especialmente útil en la cadena `osc1 → filter1`).
 - La lógica de audio en `timerCallback` tiene en cuenta el mute de conexión: si la conexión `osc1→filter1` está silenciada, la cadena completa osc→filtro→Master se considera muda (el oscilador no vuelve a alimentarse directamente al Master mientras exista esa conexión), respetando siempre los estados de mute por objeto.
+
+### Esquema del formato Reactable `.rtp`
+- Documentado el archivo `research/reactable_rtp_schema.md` describiendo la estructura XML de Reactable (`<reactablepatch>`, `<background>`, `<tangibles>/<tangible>`, `<author>`, `<patch>`), con detalle por tipo de tangible (`Output`, `Tonalizer`, `Volume`, `Tempo`, `Accelerometer`, `LFO`, `Sequencer`, `Filter`, `Delay`, `Modulator`, `WaveShaper`, `Input`, `Loop`, `Oscillator`, `Sampleplay`).
+- Se definen los subelementos compartidos (`<envelope>`, `<loop>`, `<hardlink>`, `<tone>`, `<sequence>`, `<instrument>`) y su significado, así como los atributos relevantes de cada uno.
+- El documento establece el mapeo conceptual entre cada `<tangible>` y el modelo actual de Rectai: cada tangible se descompone en un `ObjectInstance` (instancia física sobre la mesa) y un `AudioModule` concreto (módulo lógico de audio/control) con parámetros y estructuras auxiliares.
+- Se identifican los tipos de módulos y estructuras que faltan en el proyecto (por ejemplo, `TonalizerModule`, `SequencerModule`, `LoopModule`, `SampleplayModule`, estructuras `Envelope`, `SequenceTrack`, `LoopDefinition`, `ToneDefinition`, `SampleInstrument`, etc.) para que el futuro loader pueda reconstruir escenas completas a partir de archivos `.rtp` originales.
+ 
+### Nuevos módulos y estructuras derivadas del esquema `.rtp`
+- Añadidas estructuras de datos en `core/src/core/AudioModules.h` para representar elementos del formato Reactable: `Envelope`, `LoopDefinition`, `ToneDefinition`, `SequenceTrack` (incluyendo capas `tenori0..tenori12`) y `SampleInstrument`.
+- Extendidos los módulos existentes `OscillatorModule` y `FilterModule` con soporte interno para un `Envelope`, preparando el terreno para mapear directamente los `<envelope>` del `.rtp`.
+- Implementados nuevos módulos concretos alineados con los tipos de `<tangible>` de Reactable: `OutputModule`, `TonalizerModule`, `VolumeModule`, `TempoModule`, `AccelerometerModule`, `LfoModule`, `SequencerModule`, `DelayModule`, `ModulatorModule`, `WaveShaperModule`, `InputModule`, `LoopModule` y `SampleplayModule`, todos heredando de `AudioModule` y configurando metadatos de UI, puertos y parámetros por defecto inspirados en los atributos del `.rtp`.
+- Estos módulos todavía no se usan en la UI ni en los tests, pero proporcionan una capa de modelo coherente para implementar a continuación el loader de archivos `.rtp` y poblar `rectai::Scene` con instancias que reflejen fielmente los patches originales de Reactable.
+
+### Loader de patches Reactable `.rtp` y hardlinks
+- Añadido `core/src/core/ReactableRtpLoader.{h,cpp}` con una API `LoadReactablePatchFromString` / `LoadReactablePatchFromFile` que parsea directamente archivos `.rtp` XML (sin cambiar su estructura) y construye un `rectai::Scene` con módulos concretos (`OutputModule`, `DelayModule`, `OscillatorModule`, `SequencerModule`, `LoopModule`, etc.) y `ObjectInstance` para cada `<tangible>`.
+- El loader rellena también estructuras auxiliares (`Envelope`, `ToneDefinition`, `SequenceTrack`, `LoopDefinition`, `SampleInstrument`) a partir de los subelementos correspondientes (`<envelope>`, `<tone>`, `<sequence>`, `<loop>`, `<instrument>`), y extrae metadatos de `<author>`/`<patch>` en `ReactablePatchMetadata`.
+- Implementada la traducción de `<hardlink to="..." />` dentro de tangibles `Delay` a conexiones reales del modelo: para cada hardlink, se crea un `rectai::Connection` que une el puerto `out` del módulo delay con el puerto `in` del módulo destino (por ejemplo, `Output` con id `-1`). Estas conexiones se marcan ahora explícitamente en el modelo con `is_hardlink = true`.
+- Actualizado `tests/scene_tests.cpp` con pruebas de humo que validan tanto la carga básica de un Oscillator desde un `.rtp` mínimo como la creación de una conexión `Delay -> Output` derivada de un hardlink.
+
+### Módulo Sampleplay y soporte básico de SoundFont
+- Extendido `SampleplayModule` en `core/src/core/AudioModules.{h,cpp}` para asociar un único archivo SoundFont (.sf2) por módulo.
+- Añadido método `bool LoadSoundfont(const std::string& path, std::string* error_message)` que realiza una validación ligera del encabezado SF2 (RIFF + "sfbk") usando solo C++ estándar y, en caso de éxito, almacena el path en el módulo (`soundfont_path_`) y marca `has_soundfont()`.
+- Añadido un test en `tests/scene_tests.cpp` que genera un archivo SF2 sintético mínimo en disco, invoca `SampleplayModule::LoadSoundfont`, verifica que se marca como cargado y elimina el archivo temporal.

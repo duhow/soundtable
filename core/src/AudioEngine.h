@@ -12,7 +12,7 @@
 //   - Produce a simple sine tone so that the audio pipeline is live.
 //
 // Future extensions:
-//   - Map rectai::Scene / ModuleKind to an AudioProcessorGraph.
+//   - Map rectai::Scene / AudioModule metadata to an AudioProcessorGraph.
 //   - Control parameters from the UI and tracking state.
 class AudioEngine : public juce::AudioIODeviceCallback {
 public:

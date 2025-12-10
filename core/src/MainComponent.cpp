@@ -2,10 +2,24 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <memory>
 
 #include "AudioEngine.h"
+#include "core/AudioModules.h"
 
 namespace {
+
+juce::Colour colourFromArgb(const uint32_t argb)
+{
+    const auto alpha = static_cast<juce::uint8>((argb >> 24U) & 0xFFU);
+    const auto red = static_cast<juce::uint8>((argb >> 16U) & 0xFFU);
+    const auto green = static_cast<juce::uint8>((argb >> 8U) & 0xFFU);
+    const auto blue = static_cast<juce::uint8>(argb & 0xFFU);
+    // juce::Colour stores colours internally as ARGB; this constructor
+    // expects components in that order.
+    return juce::Colour(alpha, red, green, blue);
+}
 
 std::string makeConnectionKey(const rectai::Connection& c)
 {
@@ -85,15 +99,11 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
     setSize(1280, 720);
 
     // Example scene with a couple of modules and objects.
-    rectai::Module osc1("osc1", rectai::ModuleKind::kOscillator);
-    osc1.AddOutputPort("out", true);
+    auto osc1 = std::make_unique<rectai::OscillatorModule>("osc1");
+    auto filter1 = std::make_unique<rectai::FilterModule>("filter1");
 
-    rectai::Module filter1("filter1", rectai::ModuleKind::kFilter);
-    filter1.AddInputPort("in", true);
-    filter1.AddOutputPort("out", true);
-
-    (void)scene_.AddModule(osc1);
-    (void)scene_.AddModule(filter1);
+    (void)scene_.AddModule(std::move(osc1));
+    (void)scene_.AddModule(std::move(filter1));
 
     rectai::Connection connection{
         .from_module_id = "osc1",
@@ -142,7 +152,6 @@ void MainComponent::paint(juce::Graphics& g)
                   tableRadius * 2.0F, tableRadius * 2.0F, 20.0F);
 
     const auto& objects = scene_.objects();
-
     const auto& modules = scene_.modules();
 
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
@@ -172,7 +181,11 @@ void MainComponent::paint(juce::Graphics& g)
             continue;
         }
 
-        if (isConnectionGeometricallyActive(fromObj, toObj)) {
+        // Hardlink connections are considered logically active regardless
+        // of the usual geometric cone constraint between source and
+        // destination. Dynamic connections still depend on the cone.
+        if (conn.is_hardlink ||
+            isConnectionGeometricallyActive(fromObj, toObj)) {
             objectsWithOutgoingActiveConnection.insert(fromIdIt->second);
         }
     }
@@ -226,10 +239,11 @@ void MainComponent::paint(juce::Graphics& g)
 
             const auto modForConnectionIt =
                 modules.find(object.logical_id());
-            const bool isOscillator =
+            const bool isGenerator =
                 modForConnectionIt != modules.end() &&
-                modForConnectionIt->second.kind() ==
-                    rectai::ModuleKind::kOscillator;
+                modForConnectionIt->second != nullptr &&
+                modForConnectionIt->second->type() ==
+                    rectai::ModuleType::kGenerator;
 
             if (!isInsideMusicArea(object)) {
                 continue;
@@ -239,7 +253,10 @@ void MainComponent::paint(juce::Graphics& g)
             // active connection, it should not render a direct line to
             // the master centre; only the downstream module keeps the
             // visual link to the master bus.
-            if (isOscillator && hasActiveOutgoingConnection) {
+            // Generative modules feeding another one hide their
+            // direct visual link to the master; the downstream
+            // module becomes the visible path.
+            if (isGenerator && hasActiveOutgoingConnection) {
                 continue;
             }
 
@@ -279,8 +296,10 @@ void MainComponent::paint(juce::Graphics& g)
 
         // -----------------------------------------------------------------
         // Connections between modules (Scene::connections) as curved edges
-        // with a small animated pulse suggesting signal flow. Active only
-        // when the target lies inside the 120º cone of the source.
+        // with a small animated pulse suggesting signal flow. Dynamic
+        // connections are active only when the target lies inside the
+        // 120º cone of the source; hardlink connections remain active
+        // regardless of that angular constraint.
         // -----------------------------------------------------------------
         g.setColour(juce::Colours::white.withAlpha(0.7F));
         int connectionIndex = 0;
@@ -303,7 +322,8 @@ void MainComponent::paint(juce::Graphics& g)
             const auto& toObj = toIt->second;
 
             if (!isInsideMusicArea(fromObj) || !isInsideMusicArea(toObj) ||
-                !isConnectionGeometricallyActive(fromObj, toObj)) {
+                (!conn.is_hardlink &&
+                 !isConnectionGeometricallyActive(fromObj, toObj))) {
                 ++connectionIndex;
                 continue;
             }
@@ -379,26 +399,8 @@ void MainComponent::paint(juce::Graphics& g)
         juce::Colour activeBase = juce::Colour::fromRGB(0x20, 0x90, 0xFF);
 
         const auto it = modules.find(obj.logical_id());
-        if (it != modules.end()) {
-            switch (it->second.kind()) {
-            case rectai::ModuleKind::kOscillator:
-                activeBase = juce::Colour::fromRGB(0x20, 0x90, 0xFF);
-                break;
-            case rectai::ModuleKind::kFilter:
-                activeBase = juce::Colour::fromRGB(0x40, 0xE0, 0xA0);
-                break;
-            case rectai::ModuleKind::kEffect:
-                activeBase = juce::Colour::fromRGB(0xC0, 0x60, 0xFF);
-                break;
-            case rectai::ModuleKind::kSampler:
-                activeBase = juce::Colour::fromRGB(0xFF, 0xA0, 0x40);
-                break;
-            case rectai::ModuleKind::kController:
-                activeBase = juce::Colour::fromRGB(0x60, 0xF0, 0xFF);
-                break;
-            default:
-                break;
-            }
+        if (it != modules.end() && it->second != nullptr) {
+            activeBase = colourFromArgb(it->second->colour_argb());
         }
 
         if (isMuted) {
@@ -443,14 +445,24 @@ void MainComponent::paint(juce::Graphics& g)
         // left/right side of the node.
         const float ringRadius = nodeRadius + 10.0F;
 
-        const auto moduleItForParams = modules.find(object.logical_id());
+        const rectai::AudioModule* moduleForObject = nullptr;
+        if (const auto moduleEntryIt = modules.find(object.logical_id());
+            moduleEntryIt != modules.end()) {
+            moduleForObject = moduleEntryIt->second.get();
+        }
         float freqValue = 0.5F;
         float gainValue = 0.5F;
-        if (moduleItForParams != modules.end()) {
-            freqValue = moduleItForParams->second.GetParameterOrDefault(
-                "freq", 0.5F);
-            gainValue = moduleItForParams->second.GetParameterOrDefault(
-                "gain", 0.5F);
+        bool showFreqControl = false;
+        bool showGainControl = false;
+        if (moduleForObject != nullptr) {
+            freqValue = moduleForObject->GetParameterOrDefault(
+                "freq",
+                moduleForObject->default_parameter_value("freq"));
+            gainValue = moduleForObject->GetParameterOrDefault(
+                "gain",
+                moduleForObject->default_parameter_value("gain"));
+            showFreqControl = moduleForObject->uses_frequency_control();
+            showGainControl = moduleForObject->uses_gain_control();
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
         gainValue = juce::jlimit(0.0F, 1.0F, gainValue);
@@ -460,7 +472,7 @@ void MainComponent::paint(juce::Graphics& g)
         const float sliderBottom = cy + ringRadius - sliderMargin;
 
         // Left control (Freq): curved bar following the left semi-circle.
-        {
+        if (showFreqControl) {
             juce::Path freqArc;
             const int segments = 40;
             for (int i = 0; i <= segments; ++i) {
@@ -497,7 +509,7 @@ void MainComponent::paint(juce::Graphics& g)
         }
 
         // Right control (Gain): curved bar following the right semi-circle.
-        {
+        if (showGainControl) {
             juce::Path gainArc;
             const int segments = 40;
             for (int i = 0; i <= segments; ++i) {
@@ -533,91 +545,82 @@ void MainComponent::paint(juce::Graphics& g)
             }
         }
 
-        // Waveform / icon inside the node body depending on ModuleKind.
-        const auto moduleIt = modules.find(object.logical_id());
-        if (moduleIt != modules.end()) {
-            const auto kind = moduleIt->second.kind();
+        // Waveform / icon inside the node body depending on metadata.
+        std::string iconId;
+        if (moduleForObject != nullptr) {
+            iconId = moduleForObject->icon_id();
+        }
 
-            const float iconRadius = nodeRadius * 0.6F;
-            const float left = cx - iconRadius;
-            const float right = cx + iconRadius;
-            const float top = cy - iconRadius * 0.5F;
-            const float midY = cy;
-            const float bottom = cy + iconRadius * 0.5F;
+        const float iconRadius = nodeRadius * 0.6F;
+        const float left = cx - iconRadius;
+        const float right = cx + iconRadius;
+        const float top = cy - iconRadius * 0.5F;
+        const float midY = cy;
+        const float bottom = cy + iconRadius * 0.5F;
 
-            g.setColour(juce::Colours::white.withAlpha(0.9F));
+        g.setColour(juce::Colours::white.withAlpha(0.9F));
 
-            switch (kind) {
-            case rectai::ModuleKind::kOscillator: {
-                juce::Path wave;
-                const int segments = 24;
-                for (int i = 0; i <= segments; ++i) {
-                    const float t = static_cast<float>(i) /
-                                    static_cast<float>(segments);
-                    const float x = juce::jmap(t, 0.0F, 1.0F, left, right);
-                    const float s = std::sin(t * juce::MathConstants<float>::twoPi);
-                    const float y = midY - s * iconRadius * 0.4F;
-                    if (i == 0) {
-                        wave.startNewSubPath(x, y);
-                    } else {
-                        wave.lineTo(x, y);
-                    }
+        if (iconId == "oscillator") {
+            juce::Path wave;
+            const int segments = 24;
+            for (int i = 0; i <= segments; ++i) {
+                const float t = static_cast<float>(i) /
+                                static_cast<float>(segments);
+                const float x = juce::jmap(t, 0.0F, 1.0F, left, right);
+                const float s = std::sin(t * juce::MathConstants<float>::twoPi);
+                const float y = midY - s * iconRadius * 0.4F;
+                if (i == 0) {
+                    wave.startNewSubPath(x, y);
+                } else {
+                    wave.lineTo(x, y);
                 }
-                g.strokePath(wave, juce::PathStrokeType(1.6F));
-                break;
             }
-            case rectai::ModuleKind::kFilter: {
-                juce::Path curve;
-                curve.startNewSubPath(left, bottom);
-                curve.quadraticTo({cx, top}, {right, midY});
-                g.strokePath(curve, juce::PathStrokeType(1.6F));
-                break;
+            g.strokePath(wave, juce::PathStrokeType(1.6F));
+        } else if (iconId == "filter") {
+            juce::Path curve;
+            curve.startNewSubPath(left, bottom);
+            curve.quadraticTo({cx, top}, {right, midY});
+            g.strokePath(curve, juce::PathStrokeType(1.6F));
+        } else if (iconId == "sampler") {
+            const float barWidth = (right - left) / 6.0F;
+            for (int i = 0; i < 6; ++i) {
+                const float x = left + (static_cast<float>(i) + 0.5F) *
+                                         barWidth;
+                const float hFactor = 0.3F + 0.1F * static_cast<float>(i);
+                const float yTop = midY - iconRadius * hFactor;
+                const float yBottom = midY + iconRadius * 0.3F;
+                g.drawLine(x, yTop, x, yBottom, 1.5F);
             }
-            case rectai::ModuleKind::kSampler: {
-                const float barWidth = (right - left) / 6.0F;
-                for (int i = 0; i < 6; ++i) {
-                    const float x = left + (static_cast<float>(i) + 0.5F) *
-                                             barWidth;
-                    const float hFactor = 0.3F + 0.1F * static_cast<float>(i);
-                    const float yTop =
-                        midY - iconRadius * hFactor;
-                    const float yBottom = midY + iconRadius * 0.3F;
-                    g.drawLine(x, yTop, x, yBottom, 1.5F);
-                }
-                break;
+        } else if (iconId == "effect") {
+            const float r = iconRadius * 0.6F;
+            g.drawEllipse(cx - r, cy - r, r * 2.0F, r * 2.0F, 1.5F);
+            for (int i = 0; i < 3; ++i) {
+                const float a = juce::MathConstants<float>::twoPi *
+                                static_cast<float>(i) / 3.0F;
+                const float ex = cx + r * std::cos(a);
+                const float ey = cy + r * std::sin(a);
+                g.fillEllipse(ex - 2.0F, ey - 2.0F, 4.0F, 4.0F);
             }
-            case rectai::ModuleKind::kEffect: {
-                const float r = iconRadius * 0.6F;
-                g.drawEllipse(cx - r, cy - r, r * 2.0F, r * 2.0F, 1.5F);
-                for (int i = 0; i < 3; ++i) {
-                    const float a = juce::MathConstants<float>::twoPi *
-                                    static_cast<float>(i) / 3.0F;
-                                    juce::MathConstants<float>::twoPi *
-                                        static_cast<float>(i) / 3.0F;
-                    const float ex = cx + r * std::cos(a);
-                    const float ey = cy + r * std::sin(a);
-                    g.fillEllipse(ex - 2.0F, ey - 2.0F, 4.0F, 4.0F);
-                }
-                break;
-            }
-            case rectai::ModuleKind::kController: {
-                const float innerR = iconRadius * 0.4F;
-                const float outerR = iconRadius * 0.8F;
-                g.drawEllipse(cx - innerR, cy - innerR, innerR * 2.0F,
-                              innerR * 2.0F, 1.2F);
-                g.drawEllipse(cx - outerR, cy - outerR, outerR * 2.0F,
-                              outerR * 2.0F, 1.2F);
-                break;
-            }
-            default:
-                break;
-            }
+        } else if (iconId == "controller") {
+            const float innerR = iconRadius * 0.4F;
+            const float outerR = iconRadius * 0.8F;
+            g.drawEllipse(cx - innerR, cy - innerR, innerR * 2.0F,
+                          innerR * 2.0F, 1.2F);
+            g.drawEllipse(cx - outerR, cy - outerR, outerR * 2.0F,
+                          outerR * 2.0F, 1.2F);
         }
 
         // Label.
+        juce::String labelText(object.logical_id());
+        if (moduleForObject != nullptr) {
+            const auto& moduleLabel = moduleForObject->label();
+            if (!moduleLabel.empty()) {
+                labelText = moduleLabel + " (" + object.logical_id() + ")";
+            }
+        }
         g.setColour(juce::Colours::white);
         g.setFont(14.0F);
-        g.drawText(object.logical_id(),
+        g.drawText(labelText,
                    juce::Rectangle<float>(cx - nodeRadius, cy - nodeRadius,
                                           nodeRadius * 2.0F,
                                           nodeRadius * 2.0F),
@@ -687,6 +690,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     sideControlKind_ = SideControlKind::kNone;
 
     const auto& objects = scene_.objects();
+    const auto& modules = scene_.modules();
 
     // First, try to grab one of the per-instrument side controls
     // (left: Freq, right: Gain) by clicking near its handle.
@@ -698,13 +702,22 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
-        const auto& modules = scene_.modules();
         const auto modIt = modules.find(object.logical_id());
+        const rectai::AudioModule* moduleForObject =
+            (modIt != modules.end()) ? modIt->second.get() : nullptr;
+        bool freqEnabled = false;
+        bool gainEnabled = false;
         float freqValue = 0.5F;
         float gainValue = 0.5F;
-        if (modIt != modules.end()) {
-            freqValue = modIt->second.GetParameterOrDefault("freq", 0.5F);
-            gainValue = modIt->second.GetParameterOrDefault("gain", 0.5F);
+        if (moduleForObject != nullptr) {
+            freqEnabled = moduleForObject->uses_frequency_control();
+            gainEnabled = moduleForObject->uses_gain_control();
+            freqValue = moduleForObject->GetParameterOrDefault(
+                "freq",
+                moduleForObject->default_parameter_value("freq"));
+            gainValue = moduleForObject->GetParameterOrDefault(
+                "gain",
+                moduleForObject->default_parameter_value("gain"));
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
         gainValue = juce::jlimit(0.0F, 1.0F, gainValue);
@@ -740,12 +753,12 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             return (dx * dx + dy * dy) <= 14.0F * 14.0F;
         };
 
-        if (isNearHandle(freqHandleX, freqHandleY, click)) {
+        if (freqEnabled && isNearHandle(freqHandleX, freqHandleY, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kFreq;
             return;
         }
-        if (isNearHandle(gainHandleX, gainHandleY, click)) {
+        if (gainEnabled && isNearHandle(gainHandleX, gainHandleY, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kGain;
             return;
@@ -934,117 +947,127 @@ void MainComponent::mouseUp(const juce::MouseEvent&)
 
 void MainComponent::timerCallback()
 {
-    // Map scene state to audio parameters: sound flows either directly
-    // from the oscillator to the master or through the filter, depending
-    // on the active spatial connection. Instruments outside the musical
-    // area are considered silent.
+    // Map scene state to audio parameters using AudioModule metadata.
+    // Multiple generator modules can be active at once; we currently
+    // mix them into a single voice 0 for simplicity.
     const auto& objects = scene_.objects();
-    auto oscIt = std::find_if(objects.begin(), objects.end(),
-                              [](const auto& pair) {
-                                  return pair.second.logical_id() == "osc1";
-                              });
+    const auto& modules = scene_.modules();
 
-    float targetLevel = 0.0F;
+    double mixedFrequency = 0.0;
+    float mixedLevel = 0.0F;
+    bool hasAnyActive = false;
 
-    if (oscIt != objects.end()) {
-        const auto& oscObject = oscIt->second;
-        const std::int64_t oscObjectId = oscIt->first;
-
-        const bool oscInside = isInsideMusicArea(oscObject);
-        if (!oscInside) {
-            audioEngine_.setLevel(0.0F);
-            return;
-        }
-
-        // Look for a filter object that could be downstream from the
-        // oscillator according to the spatial connection rule and
-        // connection mute state.
-        auto filterIt = std::find_if(objects.begin(), objects.end(),
-                                     [](const auto& pair) {
-                                         return pair.second.logical_id() ==
-                                                "filter1";
-                                     });
-
-        bool hasActiveConnectionToFilter = false;
-        bool connectionMuted = false;
-        std::int64_t filterObjectId = 0;
-        bool filterInside = false;
-        if (filterIt != objects.end()) {
-            const auto& filterObject = filterIt->second;
-            filterObjectId = filterIt->first;
-            filterInside = isInsideMusicArea(filterObject);
-            hasActiveConnectionToFilter =
-                filterInside &&
-                isConnectionGeometricallyActive(oscObject, filterObject);
-
-            if (hasActiveConnectionToFilter) {
-                // Check whether the logical connection osc1→filter1 is
-                // currently muted; if so, the whole chain will be
-                // considered silent (oscillator does not feed the
-                // master directly while this connection exists).
-                rectai::Connection logicalConn{
-                    .from_module_id = "osc1",
-                    .from_port_name = "out",
-                    .to_module_id = "filter1",
-                    .to_port_name = "in",
-                };
-                connectionMuted =
-                    mutedConnections_.find(makeConnectionKey(logicalConn)) !=
-                    mutedConnections_.end();
-            }
-        }
-
-        // Each instrument has its own mute; when the filter is in the
-        // chain, muting either the oscillator or the filter silences the
-        // resulting sound, but los mutes son siempre independientes.
-        const bool oscMuted =
-            mutedObjects_.find(oscObjectId) != mutedObjects_.end();
-        const bool filterMuted =
-            (filterObjectId != 0) &&
-            (mutedObjects_.find(filterObjectId) != mutedObjects_.end());
-
-        bool chainMuted = false;
-        if (!hasActiveConnectionToFilter || filterObjectId == 0) {
-            // Oscillator is loose: only its own mute matters.
-            chainMuted = oscMuted;
-        } else {
-            // Oscillator feeds the filter: muting either one, having
-            // the filter outside the musical area or muting the
-            // connection itself silences the audible chain. The
-            // oscillator never falls back to a direct path to master
-            // while this connection exists.
-            chainMuted = oscMuted || filterMuted || !filterInside ||
-                         connectionMuted;
-        }
-
-        // Read UI parameters from the associated modules (radial menus).
-        const float oscFreqParam = scene_.GetModuleParameterOrDefault(
-            "osc1", "freq", 0.5F);
-
-        float gainParam = scene_.GetModuleParameterOrDefault(
-            "osc1", "gain", 0.5F);
-        if (hasActiveConnectionToFilter && filterObjectId != 0) {
-            // When the filter is in the chain, use its Gain parameter as
-            // the main loudness control.
-            gainParam = scene_.GetModuleParameterOrDefault(
-                "filter1", "gain", gainParam);
-        }
-
-        // Frequency is controlled only by the oscillator's "Freq" slider
-        // (module parameter), independent of the object's position on
-        // the table.
-        const double baseFreq = 200.0;
-        const double frequency =
-            baseFreq + 800.0 * static_cast<double>(oscFreqParam);
-        audioEngine_.setFrequency(frequency);
-
-        // Gain slider(s) control the output level envelope.
-        const float baseLevel = 0.02F;
-        const float extra = 0.18F * gainParam;
-        targetLevel = chainMuted ? 0.0F : (baseLevel + extra);
+    // Precompute a lookup from module id to object tracking id, so we can
+    // quickly test mute/position for downstream modules.
+    std::unordered_map<std::string, std::int64_t> moduleToObjectId;
+    for (const auto& [objId, obj] : objects) {
+        moduleToObjectId.emplace(obj.logical_id(), objId);
     }
 
-    audioEngine_.setLevel(targetLevel);
+    for (const auto& [objId, obj] : objects) {
+        const auto modIt = modules.find(obj.logical_id());
+        if (modIt == modules.end() || modIt->second == nullptr) {
+            continue;
+        }
+
+        const auto* module = modIt->second.get();
+        if (module->type() != rectai::ModuleType::kGenerator) {
+            continue;
+        }
+
+        if (!isInsideMusicArea(obj)) {
+            continue;
+        }
+
+        const bool srcMuted =
+            mutedObjects_.find(objId) != mutedObjects_.end();
+
+        // Try to find a downstream audio module that this generator feeds
+        // according to spatial rules and connection state.
+        const rectai::AudioModule* downstreamModule = nullptr;
+        std::int64_t downstreamObjId = 0;
+        bool downstreamInside = false;
+        bool connectionMuted = false;
+
+        for (const auto& conn : scene_.connections()) {
+            if (conn.from_module_id != module->id()) {
+                continue;
+            }
+
+            const auto toObjIdIt = moduleToObjectId.find(conn.to_module_id);
+            if (toObjIdIt == moduleToObjectId.end()) {
+                continue;
+            }
+
+            const auto objIt = objects.find(toObjIdIt->second);
+            if (objIt == objects.end()) {
+                continue;
+            }
+
+            const auto& toObj = objIt->second;
+            if (!isInsideMusicArea(toObj) ||
+                !isConnectionGeometricallyActive(obj, toObj)) {
+                continue;
+            }
+
+            const auto modDestIt = modules.find(conn.to_module_id);
+            if (modDestIt == modules.end() || modDestIt->second == nullptr) {
+                continue;
+            }
+
+            downstreamModule = modDestIt->second.get();
+            downstreamObjId = objIt->first;
+            downstreamInside = true;
+
+            const std::string key = makeConnectionKey(conn);
+            connectionMuted =
+                mutedConnections_.find(key) != mutedConnections_.end();
+            break;
+        }
+
+        bool chainMuted = srcMuted;
+        float gainParam = module->GetParameterOrDefault(
+            "gain", module->default_parameter_value("gain"));
+
+        if (downstreamModule != nullptr && downstreamInside) {
+            const bool dstMuted =
+                mutedObjects_.find(downstreamObjId) !=
+                mutedObjects_.end();
+            chainMuted = srcMuted || dstMuted || connectionMuted;
+            gainParam = downstreamModule->GetParameterOrDefault(
+                "gain", gainParam);
+        }
+
+        const float freqParam = module->GetParameterOrDefault(
+            "freq", module->default_parameter_value("freq"));
+        const double frequency =
+            module->base_frequency_hz() +
+            module->frequency_range_hz() * static_cast<double>(freqParam);
+
+        const float baseLevel = module->base_level();
+        const float extra = module->level_range() * gainParam;
+        const float level = chainMuted ? 0.0F : (baseLevel + extra);
+
+        if (level > 0.0F) {
+            if (!hasAnyActive) {
+                mixedFrequency = frequency;
+                mixedLevel = level;
+                hasAnyActive = true;
+            } else {
+                // Simple averaging when multiple generators are active.
+                mixedFrequency = 0.5 * (mixedFrequency + frequency);
+                mixedLevel = std::min(1.0F, mixedLevel + level);
+            }
+        }
+    }
+
+    if (!hasAnyActive) {
+        mixedFrequency = 0.0;
+        mixedLevel = 0.0F;
+    }
+
+    audioEngine_.setFrequency(mixedFrequency);
+    audioEngine_.setLevel(mixedLevel);
 
     // Update BPM pulse animation.
     const double fps = 60.0;  // Timer frequency.

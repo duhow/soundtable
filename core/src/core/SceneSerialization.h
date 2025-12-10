@@ -10,7 +10,7 @@ namespace rectai {
 //
 // Format (version 1):
 //   rectai_scene_v1
-//   module <id> <kind_int>
+//   module <id> <type_int>
 //   object <tracking_id> <logical_id> <x> <y> <angle_radians>
 //   connection <from_module_id> <from_port_name> <to_module_id> <to_port_name>
 //
