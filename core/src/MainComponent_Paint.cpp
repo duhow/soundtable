@@ -41,6 +41,22 @@ void MainComponent::paint(juce::Graphics& g)
     const auto bounds = getLocalBounds().toFloat();
     const auto centre = bounds.getCentre();
 
+    // Global BPM label visibility: show only shortly after the tempo
+    // has been updated, then fade out smoothly.
+    const double nowSeconds =
+        juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    double bpmLabelAlpha = 0.0;
+    if (bpmLastChangeSeconds_ > 0.0) {
+        const double elapsed = nowSeconds - bpmLastChangeSeconds_;
+        if (elapsed >= 0.0) {
+            if (elapsed <= 5.0) {
+                bpmLabelAlpha = 1.0;
+            } else if (elapsed <= 6.0) {
+                bpmLabelAlpha = 1.0 - (elapsed - 5.0);
+            }
+        }
+    }
+
     // ---------------------------------------------------------------------
     // Background: circular table with radial blue gradient and vignette.
     // ---------------------------------------------------------------------
@@ -802,9 +818,28 @@ void MainComponent::paint(juce::Graphics& g)
                 const int destW = juce::roundToInt(iconBounds.getWidth());
                 const int destH = juce::roundToInt(iconBounds.getHeight());
 
-                g.drawImage(atlasImage_, destX, destY, destW, destH,
-                            src.getX(), src.getY(), src.getWidth(),
-                            src.getHeight());
+                // For Tempo modules, rotate the metronome image with the
+                // tangible's own rotation so that visual feedback matches
+                // the physical gesture used to change BPM.
+                const bool isTempoIcon =
+                    (moduleForObject != nullptr &&
+                     dynamic_cast<const rectai::TempoModule*>(
+                         moduleForObject) != nullptr);
+                if (isTempoIcon) {
+                    juce::Graphics::ScopedSaveState tempoIconState(g);
+                    // Invert the visual rotation so that the
+                    // metronome image follows the physical gesture
+                    // direction perceived on the table.
+                    g.addTransform(juce::AffineTransform::rotation(
+                        -object.angle_radians(), cx, cy));
+                    g.drawImage(atlasImage_, destX, destY, destW, destH,
+                                src.getX(), src.getY(), src.getWidth(),
+                                src.getHeight());
+                } else {
+                    g.drawImage(atlasImage_, destX, destY, destW, destH,
+                                src.getX(), src.getY(), src.getWidth(),
+                                src.getHeight());
+                }
                 drewAtlasIcon = true;
             }
         }
@@ -888,6 +923,35 @@ void MainComponent::paint(juce::Graphics& g)
                                                   nodeRadius * 2.0F,
                                                   nodeRadius * 2.0F),
                            juce::Justification::centred, false);
+            }
+        }
+
+        // Tempo controller overlay: show the current global BPM as a
+        // small integer label positioned just outside the node circle,
+        // so it remains legible. The underlying value is kept as a
+        // double in `bpm_` but rendered without decimals, and only
+        // appears briefly after tempo changes.
+        if (moduleForObject != nullptr && bpmLabelAlpha > 0.0) {
+            const auto* tempoModule =
+                dynamic_cast<const rectai::TempoModule*>(
+                    moduleForObject);
+            if (tempoModule != nullptr) {
+                const int bpmInt = static_cast<int>(
+                    std::round(bpm_));
+                juce::String bpmText(bpmInt);
+
+                const float margin = 4.0F;
+                juce::Rectangle<float> bpmBounds(
+                    cx - nodeRadius,
+                    cy - nodeRadius - 18.0F - margin,
+                    nodeRadius * 2.0F, 18.0F);
+
+                const float alpha = static_cast<float>(bpmLabelAlpha);
+                g.setColour(
+                    juce::Colours::white.withAlpha(0.9F * alpha));
+                g.setFont(13.0F);
+                g.drawText(bpmText, bpmBounds,
+                           juce::Justification::topLeft, false);
             }
         }
     }
@@ -1075,9 +1139,24 @@ void MainComponent::paint(juce::Graphics& g)
                         const int destH =
                             juce::roundToInt(iconBounds.getHeight());
 
-                        g.drawImage(atlasImage_, destX, destY, destW, destH,
-                                    src.getX(), src.getY(), src.getWidth(),
-                                    src.getHeight());
+                        const bool isTempoIcon =
+                            (moduleForObject != nullptr &&
+                             dynamic_cast<const rectai::TempoModule*>(
+                                 moduleForObject) != nullptr);
+                        if (isTempoIcon) {
+                            juce::Graphics::ScopedSaveState tempoIconState(
+                                g);
+                            g.addTransform(
+                                juce::AffineTransform::rotation(
+                                    -obj->angle_radians(), cx, cy));
+                            g.drawImage(atlasImage_, destX, destY, destW,
+                                        destH, src.getX(), src.getY(),
+                                        src.getWidth(), src.getHeight());
+                        } else {
+                            g.drawImage(atlasImage_, destX, destY, destW,
+                                        destH, src.getX(), src.getY(),
+                                        src.getWidth(), src.getHeight());
+                        }
                         drewAtlasIcon = true;
                     }
                 }
@@ -1122,6 +1201,34 @@ void MainComponent::paint(juce::Graphics& g)
                         const float r = iconRadius * 0.6F;
                         g.drawEllipse(cx - r, cy - r, r * 2.0F, r * 2.0F,
                                       1.4F);
+                    }
+                }
+
+                // Tempo controller in dock: mirror the same BPM label
+                // used on the main surface so that rotating the docked
+                // Tempo tangible still reveals the current session tempo.
+                if (moduleForObject != nullptr && bpmLabelAlpha > 0.0) {
+                    const auto* tempoModule =
+                        dynamic_cast<const rectai::TempoModule*>(
+                            moduleForObject);
+                    if (tempoModule != nullptr) {
+                        const int bpmInt = static_cast<int>(
+                            std::round(bpm_));
+                        juce::String bpmText(bpmInt);
+
+                        const float margin = 3.0F;
+                        juce::Rectangle<float> bpmBounds(
+                            cx - nodeRadiusDock,
+                            cy - nodeRadiusDock - 14.0F - margin,
+                            nodeRadiusDock * 2.0F, 14.0F);
+
+                        const float alpha =
+                            static_cast<float>(bpmLabelAlpha);
+                        g.setColour(juce::Colours::white.withAlpha(
+                            0.9F * alpha));
+                        g.setFont(12.0F);
+                        g.drawText(bpmText, bpmBounds,
+                                   juce::Justification::topLeft, false);
                     }
                 }
             }

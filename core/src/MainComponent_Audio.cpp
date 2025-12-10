@@ -4,6 +4,7 @@
 
 #include "AudioEngine.h"
 #include "MainComponentHelpers.h"
+#include "core/AudioModules.h"
 
 using rectai::ui::isConnectionGeometricallyActive;
 using rectai::ui::makeConnectionKey;
@@ -120,17 +121,52 @@ void MainComponent::timerCallback()
     const auto& modules = scene_.modules();
 
     // ------------------------------------------------------------------
-    // Rotation → frequency mapping.
-    // For modules that expose frequency control and have a tangible
-    // object on the table, compute the per-frame rotation delta of the
-    // object and add a normalised contribution to the module's `freq`
-    // parameter. The incoming tracking angle is expressed in degrees
-    // [0, 360] (see TrackingOscReceiver) but stored internally in
-    // radians within ObjectInstance, so we convert back to degrees
-    // here for an intuitive delta in [-180, 180]. A full revolution
-    // corresponds to a Δfreq of ±1.0.
+    // Rotation tracking shared by frequency and tempo controllers.
+    // We keep a per-object map of the last known angle in degrees and
+    // derive a wrapped delta in [-180, 180] every frame so that
+    // crossing the 0/360 boundary does not create large jumps.
     const float radToDeg = 180.0F / juce::MathConstants<float>::pi;
 
+    std::unordered_map<std::int64_t, float> rotationDeltaDegrees;
+    rotationDeltaDegrees.reserve(objects.size());
+
+    for (const auto& [objId, obj] : objects) {
+        const float currentDeg = obj.angle_radians() * radToDeg;
+
+        float diff = 0.0F;
+        const auto lastIt = lastObjectAngleDegrees_.find(objId);
+        if (lastIt != lastObjectAngleDegrees_.end()) {
+            diff = currentDeg - lastIt->second;
+
+            while (diff > 180.0F) {
+                diff -= 360.0F;
+            }
+            while (diff < -180.0F) {
+                diff += 360.0F;
+            }
+        }
+
+        rotationDeltaDegrees.emplace(objId, diff);
+        lastObjectAngleDegrees_[objId] = currentDeg;
+    }
+
+    // Drop entries for objects that are no longer present in the
+    // scene to keep the tracking map bounded.
+    for (auto it = lastObjectAngleDegrees_.begin();
+         it != lastObjectAngleDegrees_.end();) {
+        if (objects.find(it->first) == objects.end()) {
+            it = lastObjectAngleDegrees_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Rotation 3 frequency mapping.
+    // For modules that expose frequency control and have a tangible
+    // object on the table, use their per-frame rotation delta to add a
+    // normalised contribution to the module's `freq` parameter. A full
+    // revolution corresponds to a ffreq of 71.0.
     for (const auto& [objId, obj] : objects) {
         const auto modIt = modules.find(obj.logical_id());
         if (modIt == modules.end() || modIt->second == nullptr) {
@@ -150,47 +186,85 @@ void MainComponent::timerCallback()
             continue;
         }
 
-        const float currentDeg = obj.angle_radians() * radToDeg;
-
-        const auto lastIt = lastObjectAngleDegrees_.find(objId);
-        if (lastIt != lastObjectAngleDegrees_.end()) {
-            float diff = currentDeg - lastIt->second;
-
-            // Wrap into [-180, 180] to get the shortest signed
-            // rotation delta, so crossing the 0/360 boundary yields
-            // small deltas instead of large jumps.
-            while (diff > 180.0F) {
-                diff -= 360.0F;
-            }
-            while (diff < -180.0F) {
-                diff += 360.0F;
-            }
-
-            // Invert sign so that counter-clockwise rotation reduces
-            // the frequency parameter and clockwise rotation
-            // increases it.
-            const float deltaFreq = -diff / 360.0F;  // [-0.5, 0.5]
-
-            const float currentFreq = module->GetParameterOrDefault(
-                "freq", module->default_parameter_value("freq"));
-            const float newFreq = juce::jlimit(0.0F, 1.0F,
-                                               currentFreq + deltaFreq);
-
-            scene_.SetModuleParameter(obj.logical_id(), "freq", newFreq);
+        const auto deltaIt = rotationDeltaDegrees.find(objId);
+        if (deltaIt == rotationDeltaDegrees.end()) {
+            continue;
         }
 
-        lastObjectAngleDegrees_[objId] = currentDeg;
+        const float diff = deltaIt->second;
+
+        // Invert sign so that counter-clockwise rotation reduces the
+        // frequency parameter and clockwise rotation increases it.
+        const float deltaFreq = -diff / 360.0F;  // [-0.5, 0.5]
+
+        if (deltaFreq == 0.0F) {
+            continue;
+        }
+
+        const float currentFreq = module->GetParameterOrDefault(
+            "freq", module->default_parameter_value("freq"));
+        const float newFreq = juce::jlimit(0.0F, 1.0F,
+                                           currentFreq + deltaFreq);
+
+        scene_.SetModuleParameter(obj.logical_id(), "freq", newFreq);
     }
 
-    // Drop entries for objects that are no longer present in the
-    // scene to keep the tracking map bounded.
-    for (auto it = lastObjectAngleDegrees_.begin();
-         it != lastObjectAngleDegrees_.end();) {
-        if (objects.find(it->first) == objects.end()) {
-            it = lastObjectAngleDegrees_.erase(it);
-        } else {
-            ++it;
+    // ------------------------------------------------------------------
+    // Rotation 3 tempo (global BPM) mapping.
+    // The Tempo module is treated as a global transport controller:
+    // every 5 b0 of rotation increase or decrease 1 BPM. The value is
+    // stored as a double in `bpm_` but rendered as an integer.
+    for (const auto& [objId, obj] : objects) {
+        const auto modIt = modules.find(obj.logical_id());
+        if (modIt == modules.end() || modIt->second == nullptr) {
+            continue;
         }
+
+        auto* module = modIt->second.get();
+        const auto* tempoModule =
+            dynamic_cast<const rectai::TempoModule*>(module);
+        if (tempoModule == nullptr) {
+            continue;
+        }
+
+        const auto deltaIt = rotationDeltaDegrees.find(objId);
+        if (deltaIt == rotationDeltaDegrees.end()) {
+            continue;
+        }
+
+        const float diff = deltaIt->second;
+        if (diff == 0.0F) {
+            continue;
+        }
+
+        // Match the control sense used for frequency: inverting the
+        // sign keeps clockwise/counter-clockwise behaviour consistent
+        // across controllers.
+        const double deltaBpm = static_cast<double>(-diff / 5.0F);
+        if (deltaBpm == 0.0) {
+            continue;
+        }
+
+        double newBpm = bpm_ + deltaBpm;
+        if (newBpm < 40.0) {
+            newBpm = 40.0;
+        } else if (newBpm > 400.0) {
+            newBpm = 400.0;
+        }
+
+        bpm_ = newBpm;
+
+        // Remember when the BPM was last modified so that the visual
+        // BPM label can be shown briefly and then faded out when there
+        // are no further tempo changes.
+        bpmLastChangeSeconds_ =
+            juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+        // Keep the logical Tempo module parameter in sync with the
+        // session BPM so that future serialisation and loaders can
+        // observe the updated tempo.
+        scene_.SetModuleParameter(module->id(), "tempo",
+                                  static_cast<float>(bpm_));
     }
 
     // ------------------------------------------------------------------

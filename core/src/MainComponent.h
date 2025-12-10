@@ -68,6 +68,12 @@ private:
     double beatPhase_{0.0};
     int beatIndex_{0};
 
+    // Timestamp (seconds, hi-res clock) of the last time the global
+    // BPM value changed in response to user interaction. Used by the
+    // paint code to show a transient BPM label that fades out after a
+    // short period of inactivity.
+    double bpmLastChangeSeconds_{0.0};
+
     // Last timer tick timestamp (seconds) used to derive dt for
     // animations, so visuals remain stable if the timer frequency
     // changes.

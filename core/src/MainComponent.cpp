@@ -43,6 +43,31 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
             masterColour_ =
                 rectai::ui::colourFromArgb(metadata.master_colour_argb);
             masterMuted_ = metadata.master_muted;
+
+            // If the loaded scene contains a Tempo module, initialise
+            // the global BPM from its `tempo` parameter so that visual
+            // pulses and transport widgets match the patch settings.
+            const auto& modules = scene_.modules();
+            for (const auto& [id, modulePtr] : modules) {
+                if (modulePtr == nullptr) {
+                    continue;
+                }
+
+                const auto* tempoModule =
+                    dynamic_cast<const rectai::TempoModule*>(
+                        modulePtr.get());
+                if (tempoModule == nullptr) {
+                    continue;
+                }
+
+                const float tempoValue = tempoModule->GetParameterOrDefault(
+                    "tempo", 120.0F);
+                const double clamped = juce::jlimit(40.0, 400.0,
+                                                    static_cast<double>(
+                                                        tempoValue));
+                bpm_ = clamped;
+                break;
+            }
             return true;
         }
 
