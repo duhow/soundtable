@@ -211,7 +211,7 @@ int main(int argc, char** argv)
 			for (const auto& obj : objects) {
 				const auto it = consecutiveDetectionsById.find(obj.id);
 				const int consecutiveFrames = (it != consecutiveDetectionsById.end()) ? it->second : 0;
-				if (consecutiveFrames >= 15) {
+				if (consecutiveFrames >= 0) { // NOTE: increase value if you need more stability or accuracy
 					stableObjects.push_back(obj);
 				}
 			}

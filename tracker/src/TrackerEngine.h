@@ -34,9 +34,6 @@ private:
     bool initialised_{};
     int frameWidth_{};
     int frameHeight_{};
-    // Simple stateful tracker to assign stable IDs to detected
-    // blobs when no amoeba fiducials are found.
-    int nextId_{1};
     TrackedObjectList lastObjects_;
 
     bool amoebaInitialised_{};
