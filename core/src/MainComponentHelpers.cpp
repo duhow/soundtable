@@ -127,4 +127,38 @@ juce::File loadFile(const juce::String& relativePath)
     return juce::File();
 }
 
+bool lineSegmentsIntersect(const juce::Point<float>& p1,
+                          const juce::Point<float>& p2,
+                          const juce::Point<float>& q1,
+                          const juce::Point<float>& q2,
+                          float threshold)
+{
+    // Check if segment p1->p2 is close to segment q1->q2 by computing
+    // the minimum distance between the two segments.
+    const auto segmentPointDistance = [](const juce::Point<float>& p,
+                                         const juce::Point<float>& a,
+                                         const juce::Point<float>& b) {
+        const auto ap = p - a;
+        const auto ab = b - a;
+        const float abLengthSq = ab.x * ab.x + ab.y * ab.y;
+        if (abLengthSq < 1e-6F) {
+            return ap.getDistanceFrom(juce::Point<float>(0.0F, 0.0F));
+        }
+        const float t = juce::jlimit(
+            0.0F, 1.0F,
+            (ap.x * ab.x + ap.y * ab.y) / abLengthSq);
+        const auto closest = a + ab * t;
+        return p.getDistanceFrom(closest);
+    };
+
+    // Check both endpoints of each segment against the other segment.
+    const float d1 = segmentPointDistance(p1, q1, q2);
+    const float d2 = segmentPointDistance(p2, q1, q2);
+    const float d3 = segmentPointDistance(q1, p1, p2);
+    const float d4 = segmentPointDistance(q2, p1, p2);
+
+    const float minDist = std::min({d1, d2, d3, d4});
+    return minDist <= threshold;
+}
+
 }  // namespace rectai::ui

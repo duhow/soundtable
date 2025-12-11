@@ -390,7 +390,11 @@ void MainComponent::paint(juce::Graphics& g)
             const float baseAlpha =
                 hasActiveOutgoingConnection ? 0.4F : 0.7F;
 
-            if (lineCarriesAudio && !isMuted) {
+            // Check if this line is marked for mute toggle (cut).
+            const bool isMarkedForCut =
+                touchCutObjects_.find(id) != touchCutObjects_.end();
+
+            if (lineCarriesAudio && !isMuted && !isMarkedForCut) {
                 const auto voiceIt =
                     moduleVoiceIndex_.find(object.logical_id());
                 const int voiceIndex =
@@ -412,6 +416,10 @@ void MainComponent::paint(juce::Graphics& g)
                         voiceNorm[voiceIndex], 72);
                     continue;
                 }
+            } else if (isMarkedForCut) {
+                // Draw line in yellow when marked for mute toggle.
+                g.setColour(juce::Colours::yellow.withAlpha(0.9F));
+                g.drawLine(line, 3.0F);
             } else {
                 g.setColour(juce::Colours::white.withAlpha(baseAlpha));
                 if (isMuted) {
@@ -502,10 +510,18 @@ void MainComponent::paint(juce::Graphics& g)
                  modulesWithActiveAudio_.find(conn.to_module_id) !=
                      modulesWithActiveAudio_.end());
 
+            // Check if this connection is marked for mute toggle.
+            const std::string connKey = makeConnectionKey(conn);
+            const bool isConnectionMarkedForCut =
+                touchCutConnections_.find(connKey) !=
+                touchCutConnections_.end();
+
             const juce::Colour activeColour =
-                conn.is_hardlink
-                    ? juce::Colours::red.withAlpha(0.8F)
-                    : juce::Colours::white.withAlpha(0.7F);
+                isConnectionMarkedForCut
+                    ? juce::Colours::yellow.withAlpha(0.9F)
+                    : (conn.is_hardlink
+                           ? juce::Colours::red.withAlpha(0.8F)
+                           : juce::Colours::white.withAlpha(0.7F));
 
             if (isMutedConnection) {
                 // Muted connection: render as a dashed straight line
@@ -550,7 +566,9 @@ void MainComponent::paint(juce::Graphics& g)
                 }
 
                 if (!drewWave) {
-                    g.drawLine(juce::Line<float>(p1, p2), 1.8F);
+                    const float thickness =
+                        isConnectionMarkedForCut ? 3.0F : 1.8F;
+                    g.drawLine(juce::Line<float>(p1, p2), thickness);
                 }
             } else {
                 bool useWaveformPath = false;
@@ -578,7 +596,9 @@ void MainComponent::paint(juce::Graphics& g)
                     path.quadraticTo(control, p2);
 
                     g.setColour(activeColour);
-                    g.strokePath(path, juce::PathStrokeType(1.5F));
+                    const float thickness =
+                        isConnectionMarkedForCut ? 3.0F : 1.5F;
+                    g.strokePath(path, juce::PathStrokeType(thickness));
                 }
 
                 // Animated pulse travelling along the curved

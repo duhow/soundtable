@@ -28,6 +28,14 @@ std::string makeModulePairKey(const std::string& fromId,
 bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
                                      const rectai::ObjectInstance& toObj);
 
+// Check if line segment (p1->p2) intersects with segment (q1->q2).
+// Uses a threshold distance to account for near-misses (touching).
+bool lineSegmentsIntersect(const juce::Point<float>& p1,
+                          const juce::Point<float>& p2,
+                          const juce::Point<float>& q1,
+                          const juce::Point<float>& q2,
+                          float threshold = 5.0F);
+
 // Try to locate a Reactable resource file given a relative path such as
 // "Resources/default.rtp". The helper will internally prefix the path
 // with "com.reactable/" so that callers only need to specify the

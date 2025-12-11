@@ -150,5 +150,17 @@ private:
     static constexpr bool kEnableTrailFade = true;
     static constexpr double kTrailFadeDurationSeconds = 0.4;
 
+    // Line cutting with touch: track connections and object-to-center
+    // lines that have been "cut" during the current touch drag and
+    // should toggle their mute state when the touch is released.
+    std::unordered_set<std::string> touchCutConnections_;
+    std::unordered_set<std::int64_t> touchCutObjects_;
+    
+    // Track which lines are currently being intersected (in the
+    // intersection zone) to detect when we enter/exit and toggle only
+    // on transitions.
+    std::unordered_set<std::string> touchCurrentlyIntersectingConnections_;
+    std::unordered_set<std::int64_t> touchCurrentlyIntersectingObjects_;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

@@ -485,3 +485,30 @@
   - El rastro se dibuja segmento por segmento (línea entre puntos consecutivos), calculando la transparencia de cada segmento según la edad del punto destino.
   - Luego se dibuja el círculo del cursor con `drawEllipse` usando el color correspondiente (#4C0000 o gris claro) y un grosor de 2px.
 - El estado `isTouchHeld_` queda almacenado para poder extenderlo en futuras features que requieran conocer si el usuario está manteniendo presionado el cursor.
+
+### Touch line cutting para alternar mute
+- Implementado sistema de "corte" de líneas de audio mediante gestos táctiles para alternar el estado de silencio (mute/unmute) de forma intuitiva:
+  - **Detección de intersección**: mientras el cursor está en hold (arrastre), el sistema detecta cuando el trail cruza líneas de audio:
+    - **Líneas objeto-a-centro** (blancas): representan el output de sonido de cada módulo hacia el master.
+    - **Hardlinks módulo-a-módulo** (rojas): conexiones fijas entre módulos.
+    - **Conexiones dinámicas** (blancas curvas): conexiones que dependen del cono geométrico de 120º.
+  - **Marcado visual con toggle**: cada vez que el cursor cruza una línea, ésta se marca o desmarca (toggle) y cambia a **color amarillo con grosor aumentado (3px)**, proporcionando feedback visual inmediato de que está marcada para alternar su mute.
+  - **Aplicación al soltar**: cuando se suelta el ratón (`mouseUp`), todas las líneas marcadas alternan su estado de mute:
+    - Líneas mutadas pasan a activas.
+    - Líneas activas pasan a mutadas.
+  - **Algoritmo de intersección**: nueva función helper `lineSegmentsIntersect` en `MainComponentHelpers` que calcula la distancia mínima entre dos segmentos de línea y detecta intersección con un threshold de 15px.
+  - **Sistema de transiciones enter/exit**: mantiene sets de intersección actual (`touchCurrentlyIntersectingConnections_`, `touchCurrentlyIntersectingObjects_`) que detectan cuando el cursor **entra** en la zona de intersección (intersects && !wasIntersecting) para hacer toggle, y cuando **sale** (!intersects && wasIntersecting) para actualizar el estado, permitiendo cruzar repetidamente la misma línea con toggle alternado en cada cruce:
+    - 1ª pasada: marca para mute (amarillo).
+    - 2ª pasada: desmarca (vuelve a color original).
+    - 3ª pasada: vuelve a marcar (amarillo), etc.
+  - **Exclusión de drag de módulos**: no detecta líneas cuando se está moviendo un módulo (`draggedObjectId_ != 0`), evitando marcados accidentales al reposicionar objetos en la mesa.
+  - **Estructuras de tracking**:
+    - `touchCutConnections_`: set de claves de conexión marcadas para toggle al soltar.
+    - `touchCutObjects_`: set de IDs de objetos cuyas líneas al centro están marcadas para toggle.
+    - `touchCurrentlyIntersectingConnections_`/`touchCurrentlyIntersectingObjects_`: sets temporales para tracking de transiciones.
+- El sistema respeta la lógica existente de visibilidad de líneas (área musical, conexiones activas, controladores globales).
+- Código actualizado:
+  - `MainComponent.h`: añadidos 4 sets de tracking (cut + currentlyIntersecting).
+  - `MainComponent_Input.cpp`: detección de transiciones en `mouseDrag` con condición `draggedObjectId_ == 0`, aplicación de toggle en `mouseUp`, limpieza en `mouseDown`.
+  - `MainComponent_Paint.cpp`: renderizado condicional de líneas en amarillo con grosor aumentado.
+  - `MainComponentHelpers.{h,cpp}`: función `lineSegmentsIntersect` para geometría de intersección.

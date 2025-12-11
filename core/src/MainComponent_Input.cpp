@@ -22,6 +22,10 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     isTouchHeld_ = false;
     currentTouchPosition_ = event.position;
     touchTrail_.clear();
+    touchCutConnections_.clear();
+    touchCutObjects_.clear();
+    touchCurrentlyIntersectingConnections_.clear();
+    touchCurrentlyIntersectingObjects_.clear();
 
     // Determine if touch started in dock area.
     const float dockWidth = calculateDockWidth(bounds.getWidth());
@@ -480,6 +484,166 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         if (touchTrail_.size() > static_cast<size_t>(kMaxTrailPoints)) {
             touchTrail_.erase(touchTrail_.begin());
         }
+
+        // Line cutting: detect when the touch trail crosses audio lines
+        // (connections or object-to-center lines) and toggle them for
+        // mute when the touch is released.
+        // Skip detection if we are currently dragging a module.
+        if (touchTrail_.size() >= 2 && draggedObjectId_ == 0) {
+            const auto centre = bounds.getCentre();
+            const auto& objects = scene_.objects();
+            const auto& modules = scene_.modules();
+
+            // Use only the most recent segment with increased threshold
+            // for better detection at varying speeds.
+            const auto& prevPoint = touchTrail_[touchTrail_.size() - 2];
+            const auto& currPoint = touchTrail_[touchTrail_.size() - 1];
+            const float detectionThreshold = 15.0F;
+
+            // Check intersections with object-to-center lines.
+            for (const auto& [id, object] : objects) {
+                if (object.logical_id() == "-1" || object.docked() ||
+                    !isInsideMusicArea(object)) {
+                    continue;
+                }
+
+                // Skip global controllers as they don't have audio lines.
+                const auto modIt = modules.find(object.logical_id());
+                const rectai::AudioModule* moduleForLine = nullptr;
+                if (modIt != modules.end() && modIt->second != nullptr) {
+                    moduleForLine = modIt->second.get();
+                }
+                if (moduleForLine != nullptr &&
+                    moduleForLine->is_global_controller()) {
+                    continue;
+                }
+
+                // Skip generators that are feeding another module.
+                const bool isGenerator =
+                    moduleForLine != nullptr &&
+                    moduleForLine->type() ==
+                        rectai::ModuleType::kGenerator;
+                
+                bool hasActiveOutgoingConnection = false;
+                for (const auto& conn : scene_.connections()) {
+                    if (conn.from_module_id == object.logical_id()) {
+                        const auto toIdIt = std::find_if(
+                            objects.begin(), objects.end(),
+                            [&conn](const auto& pair) {
+                                return pair.second.logical_id() ==
+                                       conn.to_module_id;
+                            });
+                        if (toIdIt != objects.end()) {
+                            const auto& toObj = toIdIt->second;
+                            if (isInsideMusicArea(toObj) &&
+                                (conn.is_hardlink ||
+                                 isConnectionGeometricallyActive(
+                                     object, toObj))) {
+                                hasActiveOutgoingConnection = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (isGenerator && hasActiveOutgoingConnection) {
+                    continue;
+                }
+
+                const auto cx = bounds.getX() +
+                                object.x() * bounds.getWidth();
+                const auto cy = bounds.getY() +
+                                object.y() * bounds.getHeight();
+
+                // Check intersection with the latest segment.
+                const bool intersects = rectai::ui::lineSegmentsIntersect(
+                    prevPoint.position, currPoint.position, {cx, cy},
+                    centre, detectionThreshold);
+
+                const bool wasIntersecting =
+                    touchCurrentlyIntersectingObjects_.find(id) !=
+                    touchCurrentlyIntersectingObjects_.end();
+
+                if (intersects && !wasIntersecting) {
+                    // Just entered intersection zone: toggle.
+                    touchCurrentlyIntersectingObjects_.insert(id);
+                    
+                    if (touchCutObjects_.find(id) !=
+                        touchCutObjects_.end()) {
+                        touchCutObjects_.erase(id);
+                    } else {
+                        touchCutObjects_.insert(id);
+                    }
+                } else if (!intersects && wasIntersecting) {
+                    // Just exited intersection zone: update state.
+                    touchCurrentlyIntersectingObjects_.erase(id);
+                }
+            }
+
+            // Check intersections with module-to-module connections.
+            for (const auto& conn : scene_.connections()) {
+                const auto fromIt = std::find_if(
+                    objects.begin(), objects.end(),
+                    [&conn](const auto& pair) {
+                        return pair.second.logical_id() ==
+                               conn.from_module_id;
+                    });
+                const auto toIt = std::find_if(
+                    objects.begin(), objects.end(),
+                    [&conn](const auto& pair) {
+                        return pair.second.logical_id() ==
+                               conn.to_module_id;
+                    });
+                if (fromIt == objects.end() || toIt == objects.end()) {
+                    continue;
+                }
+
+                const auto& fromObj = fromIt->second;
+                const auto& toObj = toIt->second;
+
+                if (!isInsideMusicArea(fromObj) ||
+                    !isInsideMusicArea(toObj) ||
+                    (!conn.is_hardlink &&
+                     !isConnectionGeometricallyActive(fromObj, toObj))) {
+                    continue;
+                }
+
+                const auto fx = bounds.getX() +
+                                fromObj.x() * bounds.getWidth();
+                const auto fy = bounds.getY() +
+                                fromObj.y() * bounds.getHeight();
+                const auto tx = bounds.getX() +
+                                toObj.x() * bounds.getWidth();
+                const auto ty = bounds.getY() +
+                                toObj.y() * bounds.getHeight();
+
+                const std::string key = makeConnectionKey(conn);
+
+                // Check intersection with the latest segment.
+                const bool intersects = rectai::ui::lineSegmentsIntersect(
+                    prevPoint.position, currPoint.position, {fx, fy},
+                    {tx, ty}, detectionThreshold);
+
+                const bool wasIntersecting =
+                    touchCurrentlyIntersectingConnections_.find(key) !=
+                    touchCurrentlyIntersectingConnections_.end();
+
+                if (intersects && !wasIntersecting) {
+                    // Just entered intersection zone: toggle.
+                    touchCurrentlyIntersectingConnections_.insert(key);
+                    
+                    if (touchCutConnections_.find(key) !=
+                        touchCutConnections_.end()) {
+                        touchCutConnections_.erase(key);
+                    } else {
+                        touchCutConnections_.insert(key);
+                    }
+                } else if (!intersects && wasIntersecting) {
+                    // Just exited intersection zone: update state.
+                    touchCurrentlyIntersectingConnections_.erase(key);
+                }
+            }
+        }
     }
 
     repaint();
@@ -669,11 +833,32 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
 
 void MainComponent::mouseUp(const juce::MouseEvent&)
 {
+    // Apply mute toggle to lines that were cut during touch drag.
+    for (const auto& objectId : touchCutObjects_) {
+        if (mutedObjects_.find(objectId) != mutedObjects_.end()) {
+            mutedObjects_.erase(objectId);
+        } else {
+            mutedObjects_.insert(objectId);
+        }
+    }
+
+    for (const auto& connKey : touchCutConnections_) {
+        if (mutedConnections_.find(connKey) != mutedConnections_.end()) {
+            mutedConnections_.erase(connKey);
+        } else {
+            mutedConnections_.insert(connKey);
+        }
+    }
+
     // Clear touch state.
     isTouchActive_ = false;
     isTouchHeld_ = false;
     touchStartedInDock_ = false;
     touchTrail_.clear();
+    touchCutConnections_.clear();
+    touchCutObjects_.clear();
+    touchCurrentlyIntersectingConnections_.clear();
+    touchCurrentlyIntersectingObjects_.clear();
 
     repaint();
 
