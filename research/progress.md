@@ -457,3 +457,31 @@
   - Que los parámetros pueden leerse correctamente mediante `GetParameterOrDefault`.
   - Que los setters actualizan tanto el envelope interno como los parámetros lógicos del módulo de forma coherente.
 - Esta implementación prepara el terreno para que el motor de audio utilice estos parámetros de envelope en el procesamiento del filtro y para que la UI pueda exponer controles que permitan al usuario ajustar el envelope de forma dinámica.
+
+### Touch interface visual feedback
+- `MainComponent` incorpora ahora un sistema de feedback visual para simular interacciones táctiles sobre la interfaz:
+  - **Cursor circular**: al hacer click/touch en la ventana, aparece un círculo con borde vacío (12px de radio, grosor de borde 8px) que representa la posición del dedo:
+    - **Color rojo** (#FF0000 con opacidad 0.298, equivalente visual a #4C0000 sobre negro) cuando el touch se inicia en el área principal de la ventana (excluida la barra dock).
+    - **Color gris claro** (0xFFCCCCCC) cuando el touch se inicia desde la barra dock.
+  - **Rastro de movimiento con fade-out**: mientras el cursor se mantiene presionado (hold) en el área de la ventana (excluyendo el dock), se dibuja un rastro rojo (#FF0000) fino (1.5px) que sigue la trayectoria del movimiento.
+    - El rastro implementa un sistema de desvanecimiento (fade-out) temporal: cada punto del rastro tiene un timestamp asociado y su opacidad disminuye linealmente durante 400ms hasta desaparecer completamente.
+    - Los puntos se dibujan segmento por segmento con transparencia calculada en función de su edad: `alpha = 1.0 - (edad / 0.4s)`.
+    - Los puntos que han superado los 400ms se eliminan automáticamente del vector durante `mouseDrag`, manteniendo el consumo de memoria bajo control.
+    - El sistema de fade-out está controlado por la constante `kEnableTrailFade` (por defecto `true`), permitiendo desactivarlo por código si fuera necesario sin cambios estructurales.
+  - **Limitación de memoria**: el rastro mantiene un máximo de 500 puntos (`kMaxTrailPoints`) como límite absoluto para prevenir consumo excesivo de memoria en movimientos largos.
+- Variables de estado añadidas a `MainComponent.h`:
+  - `isTouchActive_`: indica si hay un touch activo (mouseDown).
+  - `isTouchHeld_`: indica si el touch está siendo mantenido (mouseDrag).
+  - `touchStartedInDock_`: registra si el touch inicial fue dentro de la zona del dock, determinando el color del círculo.
+  - `currentTouchPosition_`: posición actual del cursor/toque.
+  - `touchTrail_`: vector de `TrailPoint` (estructura con `position` y `timestamp`) que acumula la trayectoria con información temporal para el fade-out.
+  - `kEnableTrailFade`: constante booleana (true) que controla el sistema de desvanecimiento del rastro.
+  - `kTrailFadeDurationSeconds`: constante que define la duración del fade-out (0.4 segundos).
+- Actualizaciones en `MainComponent_Input.cpp`:
+  - `mouseDown`: inicializa el estado del touch, determina si comenzó en el dock mediante el cálculo del área del dock con `calculateDockWidth`, limpia el trail previo y dispara `repaint()`.
+  - `mouseDrag`: marca `isTouchHeld_` como true, actualiza la posición del cursor, añade puntos al trail con timestamp actual (usando `juce::Time::getMillisecondCounterHiRes()`), elimina puntos obsoletos (edad > 400ms) si el fade está activo, y dispara `repaint()`.
+  - `mouseUp`: resetea todo el estado del touch (`isTouchActive_`, `isTouchHeld_`, `touchStartedInDock_`), limpia el trail y dispara `repaint()`.
+- Renderizado en `MainComponent_Paint.cpp`:
+  - El rastro se dibuja segmento por segmento (línea entre puntos consecutivos), calculando la transparencia de cada segmento según la edad del punto destino.
+  - Luego se dibuja el círculo del cursor con `drawEllipse` usando el color correspondiente (#4C0000 o gris claro) y un grosor de 2px.
+- El estado `isTouchHeld_` queda almacenado para poder extenderlo en futuras features que requieran conocer si el usuario está manteniendo presionado el cursor.

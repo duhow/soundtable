@@ -1297,6 +1297,52 @@ void MainComponent::paint(juce::Graphics& g)
             }
         }
     }
+
+    // Render touch interface visual feedback.
+    if (isTouchActive_) {
+        // Draw trail if cursor is held and started in window area.
+        if (isTouchHeld_ && !touchStartedInDock_ && touchTrail_.size() > 1) {
+            const double currentTime =
+                juce::Time::getMillisecondCounterHiRes() / 1000.0;
+            const juce::Colour trailColour = juce::Colour(0xFFFF0000);
+
+            // Draw trail with fade-out effect based on point age.
+            for (size_t i = 1; i < touchTrail_.size(); ++i) {
+                const auto& prevPoint = touchTrail_[i - 1];
+                const auto& currPoint = touchTrail_[i];
+
+                float alpha = 1.0F;
+                if (kEnableTrailFade) {
+                    const double age = currentTime - currPoint.timestamp;
+                    if (age > 0.0 && age < kTrailFadeDurationSeconds) {
+                        alpha = static_cast<float>(
+                            1.0 - (age / kTrailFadeDurationSeconds));
+                    } else if (age >= kTrailFadeDurationSeconds) {
+                        alpha = 0.0F;
+                    }
+                }
+
+                if (alpha > 0.0F) {
+                    g.setColour(trailColour.withAlpha(alpha));
+                    g.drawLine(prevPoint.position.x, prevPoint.position.y,
+                               currPoint.position.x, currPoint.position.y,
+                               1.5F);
+                }
+            }
+        }
+
+        // Draw touch cursor circle (finger representation).
+        const float touchRadius = 12.0F;
+        const juce::Colour circleColour =
+            touchStartedInDock_
+                ? juce::Colour(0xFFCCCCCC)
+                : juce::Colour(0xFFFF0000).withAlpha(0.298F);
+
+        g.setColour(circleColour);
+        g.drawEllipse(currentTouchPosition_.x - touchRadius,
+                      currentTouchPosition_.y - touchRadius,
+                      touchRadius * 2.0F, touchRadius * 2.0F, 8.0F);
+    }
 }
 
 void MainComponent::resized()

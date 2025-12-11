@@ -17,6 +17,20 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
     const bool isRightClick = event.mods.isRightButtonDown();
 
+    // Track touch interface state for visual feedback.
+    isTouchActive_ = true;
+    isTouchHeld_ = false;
+    currentTouchPosition_ = event.position;
+    touchTrail_.clear();
+
+    // Determine if touch started in dock area.
+    const float dockWidth = calculateDockWidth(bounds.getWidth());
+    auto boundsCopy = bounds;
+    juce::Rectangle<float> dockArea = boundsCopy.removeFromRight(dockWidth);
+    touchStartedInDock_ = dockArea.contains(event.position);
+
+    repaint();
+
     draggedObjectId_ = 0;
     sideControlObjectId_ = 0;
     sideControlKind_ = SideControlKind::kNone;
@@ -440,6 +454,36 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
 {
     const auto bounds = getLocalBounds().toFloat();
 
+    // Update touch state during drag.
+    isTouchHeld_ = true;
+    currentTouchPosition_ = event.position;
+
+    // Add point to trail only if touch started in window area (not dock).
+    if (!touchStartedInDock_) {
+        const double currentTime =
+            juce::Time::getMillisecondCounterHiRes() / 1000.0;
+        touchTrail_.push_back({event.position, currentTime});
+
+        // Remove old points that have fully faded out and limit trail size.
+        if (kEnableTrailFade) {
+            touchTrail_.erase(
+                std::remove_if(
+                    touchTrail_.begin(), touchTrail_.end(),
+                    [currentTime](const TrailPoint& point) {
+                        return (currentTime - point.timestamp) >=
+                               kTrailFadeDurationSeconds;
+                    }),
+                touchTrail_.end());
+        }
+
+        // Hard limit trail size to prevent memory growth.
+        if (touchTrail_.size() > static_cast<size_t>(kMaxTrailPoints)) {
+            touchTrail_.erase(touchTrail_.begin());
+        }
+    }
+
+    repaint();
+
     // Dragging the dock scroll area (vertical scroll / pagination).
     if (isDraggingDockScroll_) {
         auto dockBounds = bounds;
@@ -625,6 +669,14 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
 
 void MainComponent::mouseUp(const juce::MouseEvent&)
 {
+    // Clear touch state.
+    isTouchActive_ = false;
+    isTouchHeld_ = false;
+    touchStartedInDock_ = false;
+    touchTrail_.clear();
+
+    repaint();
+
     draggedObjectId_ = 0;
     sideControlObjectId_ = 0;
     sideControlKind_ = SideControlKind::kNone;

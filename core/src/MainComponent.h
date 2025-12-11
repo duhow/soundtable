@@ -135,5 +135,20 @@ private:
     void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
                                       std::int64_t objectIdB);
 
+    // Touch interface state.
+    bool isTouchActive_{false};
+    bool isTouchHeld_{false};
+    bool touchStartedInDock_{false};
+    juce::Point<float> currentTouchPosition_;
+
+    struct TrailPoint {
+        juce::Point<float> position;
+        double timestamp;  // High-resolution timestamp in seconds.
+    };
+    std::vector<TrailPoint> touchTrail_;
+    static constexpr int kMaxTrailPoints = 500;
+    static constexpr bool kEnableTrailFade = true;
+    static constexpr double kTrailFadeDurationSeconds = 0.4;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
