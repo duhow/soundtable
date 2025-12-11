@@ -26,6 +26,10 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     touchCutObjects_.clear();
     touchCurrentlyIntersectingConnections_.clear();
     touchCurrentlyIntersectingObjects_.clear();
+    // Reset cut mode; it will only be enabled explicitly at the end
+    // of this handler if the pointer started on empty musical space
+    // (no module, no line, no dock interaction).
+    isCutModeActive_ = false;
 
     // Determine if touch started in dock area.
     const float dockWidth = calculateDockWidth(bounds.getWidth());
@@ -94,7 +98,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     }
 
     // First, try to grab one of the per-instrument side controls
-    // (left: Freq, right: Gain) by clicking near its handle.
+    // (left: Freq, right: Gain). Clicking anywhere on the control
+    // bar (not solo en el handle) moves the value to that position
+    // and starts a drag gesture from there.
     const float nodeRadius = 26.0F;
     const float ringRadius = nodeRadius + 10.0F;
     const float sliderMargin = 6.0F;
@@ -181,20 +187,57 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 juce::AffineTransform::rotation(-rotationAngle, cx, cy));
         }
 
-        auto isNearHandle = [](float hx, float hy, juce::Point<float> p) {
-            const float dx = p.x - hx;
-            const float dy = p.y - hy;
-            return (dx * dx + dy * dy) <= 14.0F * 14.0F;
+        auto isOnControlBar = [sliderTop, sliderBottom](float hx,
+                                                        juce::Point<float> p) {
+            // Treat the side control as a vertical bar around the
+            // handle's x position, spanning the full slider height.
+            const float halfWidth = 14.0F;
+            const float dx = std::abs(p.x - hx);
+            const bool withinX = dx <= halfWidth;
+            const bool withinY = (p.y >= sliderTop && p.y <= sliderBottom);
+            return withinX && withinY;
         };
 
-        if (freqEnabled && isNearHandle(freqHandleX, freqHandleY, click)) {
+        // Clicking anywhere on the frequency bar.
+        if (freqEnabled && isOnControlBar(freqHandleX, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kFreq;
+
+            const float clampedY = juce::jlimit(sliderTop, sliderBottom, click.y);
+            const float value = juce::jmap(clampedY, sliderBottom, sliderTop,
+                                           0.0F, 1.0F);
+
+            scene_.SetModuleParameter(object.logical_id(), "freq", value);
+
+            repaint();
             return;
         }
-        if (gainEnabled && isNearHandle(gainHandleX, gainHandleY, click)) {
+
+        // Clicking anywhere on the gain bar.
+        if (gainEnabled && isOnControlBar(gainHandleX, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kGain;
+
+            const float clampedY = juce::jlimit(sliderTop, sliderBottom, click.y);
+            const float value = juce::jmap(clampedY, sliderBottom, sliderTop,
+                                           0.0F, 1.0F);
+
+            const auto& modulesForGain = scene_.modules();
+            const auto modItGain = modulesForGain.find(object.logical_id());
+            if (modItGain != modulesForGain.end() && modItGain->second != nullptr) {
+                auto* module = modItGain->second.get();
+                if (module->type() == rectai::ModuleType::kFilter) {
+                    scene_.SetModuleParameter(object.logical_id(), "q", value);
+                } else if (dynamic_cast<rectai::VolumeModule*>(module) != nullptr) {
+                    scene_.SetModuleParameter(object.logical_id(), "volume", value);
+                } else {
+                    scene_.SetModuleParameter(object.logical_id(), "gain", value);
+                }
+            } else {
+                scene_.SetModuleParameter(object.logical_id(), "gain", value);
+            }
+
+            repaint();
             return;
         }
     }
@@ -421,7 +464,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             }
         }
 
-        // Fallback: muting via the line centre  object. Only objects that
+        // Fallback: muting via the line centre -> object. Only objects that
         // actually render a visible line to the master in paint() should be
         // clickable here.
         for (const auto& [id, object] : objectsLocal) {
@@ -484,6 +527,32 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             }
         }
     }
+
+    // If we reach this point without having started a drag, dock
+    // scroll, side control adjustment or hold-mute on a line, and the
+    // pointer is inside the musical area (but not in the dock), treat
+    // this gesture as a "cut" gesture. This enables the red cursor +
+    // trail and line-cut logic during mouseDrag.
+    if (!touchStartedInDock_ &&
+        draggedObjectId_ == 0 &&
+        sideControlObjectId_ == 0 &&
+        sideControlKind_ == SideControlKind::kNone &&
+        !isDraggingDockScroll_ &&
+        !activeConnectionHold_.has_value()) {
+        const auto localBounds = getLocalBounds().toFloat();
+        const auto centre = localBounds.getCentre();
+        const float tableRadius =
+            0.45F * std::min(localBounds.getWidth(),
+                              localBounds.getHeight());
+
+        const float dx = static_cast<float>(event.position.x) - centre.x;
+        const float dy = static_cast<float>(event.position.y) - centre.y;
+        const float distSq = dx * dx + dy * dy;
+
+        if (distSq <= tableRadius * tableRadius) {
+            isCutModeActive_ = true;
+        }
+    }
 }
 
 void MainComponent::mouseDrag(const juce::MouseEvent& event)
@@ -520,9 +589,14 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         // Line cutting: detect when the touch trail crosses audio lines
         // (connections or object-to-center lines) and toggle them for
         // mute when the touch is released.
-        // Skip detection if we are currently dragging a module or if we are
-        // in hold-mute mode (white cursor - different interaction).
-        if (touchTrail_.size() >= 2 && draggedObjectId_ == 0 && !activeConnectionHold_.has_value()) {
+        // This is only enabled in explicit cut mode (red cursor) and is
+        // skipped while dragging modules, adjusting side controls or
+        // holding a line for temporary mute.
+        if (isCutModeActive_ &&
+            touchTrail_.size() >= 2 &&
+            draggedObjectId_ == 0 &&
+            sideControlKind_ == SideControlKind::kNone &&
+            !activeConnectionHold_.has_value()) {
             const auto centre = bounds.getCentre();
             const auto& objects = scene_.objects();
             const auto& modules = scene_.modules();
@@ -906,6 +980,10 @@ void MainComponent::mouseUp(const juce::MouseEvent&)
     touchCutObjects_.clear();
     touchCurrentlyIntersectingConnections_.clear();
     touchCurrentlyIntersectingObjects_.clear();
+
+    // Leaving any gesture ends cut mode; the next cut gesture must
+    // start explicitly on empty musical space.
+    isCutModeActive_ = false;
 
     repaint();
 

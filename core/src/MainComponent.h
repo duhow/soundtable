@@ -140,6 +140,13 @@ private:
     bool isTouchActive_{false};
     bool isTouchHeld_{false};
     bool touchStartedInDock_{false};
+
+    // Explicit interaction mode flag: when true, the current gesture
+    // is interpreted as a "cut" gesture (red cursor + trail) that
+    // can mute lines by crossing them. When false, the gesture is a
+    // regular interaction (drag modules, adjust side controls, click
+    // and hold on lines, etc.) rendered with a white cursor.
+    bool isCutModeActive_{false};
     juce::Point<float> currentTouchPosition_;
 
     struct TrailPoint {

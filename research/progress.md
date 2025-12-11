@@ -1,5 +1,14 @@
 # Progreso de implementación
 
+## 2025-12-12
+
+### Separación de gestos: sliders de módulo vs corte de líneas
+- Introducido un flag explícito `isCutModeActive_` en `MainComponent` que distingue entre el modo de **interacción** (cursor blanco) y el modo de **corte de sonido** (cursor rojo con trail).
+- `MainComponent::mouseDown` ahora solo activa `isCutModeActive_ = true` cuando el click comienza en espacio vacío del área musical (dentro del círculo de música, fuera del dock y sin haber capturado ni un módulo, ni un slider lateral, ni una línea para mute hold); en cualquier otra interacción el gesto permanece en modo blanco.
+- `MainComponent::mouseDrag` condiciona la detección de cortes de líneas (`touchCutObjects_` y `touchCutConnections_`) a que `isCutModeActive_` sea verdadero y, además, a que no se esté arrastrando un módulo (`draggedObjectId_ == 0`), ajustando sliders (`sideControlKind_ == kNone`) ni manteniendo una línea en mute temporal (`!activeConnectionHold_`).
+- `MainComponent::paint` usa ahora este flag para dibujar el cursor en blanco en todos los gestos de interacción (ajuste de frecuencia/ganancia, click-and-hold sobre líneas) y en rojo solo en gestos de corte iniciados en espacio vacío. Al arrastrar módulos sobre la mesa el cursor se oculta; en el caso de módulos sacados desde el dock, el cursor solo es visible mientras el puntero permanece dentro del propio dock.
+- El hit-test de las barras laterales de frecuencia/ganancia se ha ampliado: ahora un click en **cualquier punto de la barra** mueve inmediatamente el valor del parámetro hasta esa posición y comienza un gesto de drag desde ahí, en lugar de requerir que el usuario acierte específicamente sobre el handle.
+
 ## 2025-12-11
 
 ### Corrección de estiramiento de formas de onda según distancia

@@ -1514,9 +1514,39 @@ void MainComponent::paint(juce::Graphics& g)
 
     // Render touch interface visual feedback.
     if (isTouchActive_) {
-        // Draw trail if cursor is held and started in window area.
-        // Skip trail when holding a connection for mute (white cursor, no trail).
-        if (isTouchHeld_ && !touchStartedInDock_ && touchTrail_.size() > 1 && !activeConnectionHold_.has_value()) {
+        bool suppressCursor = false;
+
+        // Hide cursor while dragging modules on the table. For
+        // modules being dragged out from the dock, keep showing the
+        // cursor only while the pointer remains inside the dock area.
+        if (draggedObjectId_ != 0) {
+            auto dockBounds = bounds;
+            const float dockWidth = calculateDockWidth(dockBounds.getWidth());
+            juce::Rectangle<float> dockArea =
+                dockBounds.removeFromRight(dockWidth);
+
+            const bool pointerInDock = dockArea.contains(currentTouchPosition_);
+
+            if (!touchStartedInDock_) {
+                // Dragging an object that started on the table.
+                suppressCursor = true;
+            } else if (!pointerInDock) {
+                // Dragging a module that started in the dock but the
+                // pointer has already left the dock.
+                suppressCursor = true;
+            }
+        }
+
+        // Draw trail only for explicit cut gestures (red cursor) that
+        // started in the main window area. Skip trail when holding a
+        // connection for mute (white cursor, no trail) or when the
+        // cursor is suppressed while dragging modules.
+        if (!suppressCursor &&
+            isCutModeActive_ &&
+            isTouchHeld_ &&
+            !touchStartedInDock_ &&
+            touchTrail_.size() > 1 &&
+            !activeConnectionHold_.has_value()) {
             const double currentTime =
                 juce::Time::getMillisecondCounterHiRes() / 1000.0;
             const juce::Colour trailColour = juce::Colour(0xFFFF0000);
@@ -1546,20 +1576,32 @@ void MainComponent::paint(juce::Graphics& g)
             }
         }
 
-        // Draw touch cursor circle (finger representation).
-        // White cursor when holding a connection for mute.
-        const float touchRadius = 12.0F;
-        const juce::Colour circleColour =
-            activeConnectionHold_.has_value()
-                ? juce::Colours::white.withAlpha(0.8F)
-                : (touchStartedInDock_
-                      ? juce::Colour(0xFFCCCCCC)
-                      : juce::Colour(0xFFFF0000).withAlpha(0.298F));
+        if (!suppressCursor) {
+            // Draw touch cursor circle (finger representation).
+            // White cursor for general interaction (drag modules, sliders,
+            // hold-mute). Red cursor only for explicit cut gestures.
+            const float touchRadius = 12.0F;
+            juce::Colour circleColour;
 
-        g.setColour(circleColour);
-        g.drawEllipse(currentTouchPosition_.x - touchRadius,
-                      currentTouchPosition_.y - touchRadius,
-                      touchRadius * 2.0F, touchRadius * 2.0F, 8.0F);
+            if (activeConnectionHold_.has_value()) {
+                // Holding a line for temporary mute.
+                circleColour = juce::Colours::white.withAlpha(0.8F);
+            } else if (touchStartedInDock_) {
+                // Interacting with the dock (scroll or docked modules).
+                circleColour = juce::Colour(0xFFCCCCCC);
+            } else if (isCutModeActive_) {
+                // Cut mode inside the musical area.
+                circleColour = juce::Colour(0xFFFF0000).withAlpha(0.298F);
+            } else {
+                // Default interaction mode inside the musical area.
+                circleColour = juce::Colours::white.withAlpha(0.8F);
+            }
+
+            g.setColour(circleColour);
+            g.drawEllipse(currentTouchPosition_.x - touchRadius,
+                          currentTouchPosition_.y - touchRadius,
+                          touchRadius * 2.0F, touchRadius * 2.0F, 8.0F);
+        }
     }
 }
 
