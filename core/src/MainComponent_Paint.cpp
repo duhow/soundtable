@@ -85,9 +85,45 @@ void MainComponent::paint(juce::Graphics& g)
     // Fetch recent per-voice mono snapshots from the audio engine so
     // that audio-carrying lines can display waveforms that better
     // match the module or chain that is actually producing sound.
-    constexpr int kWaveformPoints = 128;
+    constexpr int kWaveformPoints = 512;
     float voiceWaveforms[AudioEngine::kMaxVoices][kWaveformPoints]{};
     float voiceNorm[AudioEngine::kMaxVoices]{};
+
+    // For visual consistency (especially with saw waves), we estimate
+    // an approximate period for each voice in the snapshot so that the
+    // UI can repeat a single cycle of the waveform along long lines
+    // instead of traversing an arbitrary window of history.
+    auto estimateWaveformPeriod = [](const float* samples,
+                                     const int numSamples) {
+        if (samples == nullptr || numSamples <= 1) {
+            return numSamples;
+        }
+
+        const int maxLag = std::max(1, numSamples / 2);
+        float bestCorr = 0.0F;
+        int bestLag = numSamples;
+
+        for (int lag = 1; lag <= maxLag; ++lag) {
+            float corr = 0.0F;
+            const int limit = numSamples - lag;
+            for (int i = 0; i < limit; ++i) {
+                corr += samples[i] * samples[i + lag];
+            }
+
+            if (corr > bestCorr) {
+                bestCorr = corr;
+                bestLag = lag;
+            }
+        }
+
+        if (bestLag <= 0 || bestLag >= numSamples) {
+            return numSamples;
+        }
+
+        return bestLag;
+    };
+
+    int voicePeriodSamples[AudioEngine::kMaxVoices]{};
 
     for (int v = 0; v < AudioEngine::kMaxVoices; ++v) {
         audioEngine_.getVoiceWaveformSnapshot(v, voiceWaveforms[v],
@@ -99,6 +135,14 @@ void MainComponent::paint(juce::Graphics& g)
         }
         voiceNorm[v] =
             maxAbs > 1.0e-4F ? 1.0F / maxAbs : 0.0F;
+
+        if (voiceNorm[v] > 0.0F) {
+            voicePeriodSamples[v] =
+                estimateWaveformPeriod(voiceWaveforms[v],
+                                       kWaveformPoints);
+        } else {
+            voicePeriodSamples[v] = 0;
+        }
     }
 
     auto isAudioConnection = [&modules](const rectai::Connection& conn) {
@@ -149,6 +193,15 @@ void MainComponent::paint(juce::Graphics& g)
                                           delta.y / length};
         const juce::Point<float> normal{-tangent.y, tangent.x};
 
+        // Use a distance-based mapping from screen-space (pixels along
+        // the line) to the waveform snapshot so that the visual pattern
+        // (e.g. a saw wave shape) remains consistent regardless of the
+        // physical length of the connection. A constant number of
+        // samples per pixel avoids the "stretching/compressing" effect
+        // observed when mapping the whole line [0,1] to the whole
+        // buffer [0,numSamples).
+        constexpr float kSamplesPerPixel = 0.8F;
+
         juce::Path path;
         for (int i = 0; i <= segments; ++i) {
             const float t = static_cast<float>(i) /
@@ -157,14 +210,11 @@ void MainComponent::paint(juce::Graphics& g)
             const float baseY = start.y + delta.y * t;
             int sampleIndex = 0;
             if (samples != nullptr && numSamples > 0) {
-                // Always map the full line (0→1) to the full buffer (0→numSamples).
-                // The visual frequency/density is controlled by the segment count,
-                // which is set based on physical line length.
-                const float sampleT = juce::jlimit(0.0F, 1.0F, t);
-                const float idx = sampleT * static_cast<float>(numSamples - 1);
-                sampleIndex = juce::jlimit(
-                    0, numSamples - 1,
-                    static_cast<int>(idx + 0.5F));
+                const float distanceAlongLine = t * length;
+                const float samplePos = distanceAlongLine * kSamplesPerPixel;
+                const int wrappedIndex =
+                    static_cast<int>(samplePos) % numSamples;
+                sampleIndex = wrappedIndex >= 0 ? wrappedIndex : wrappedIndex + numSamples;
             }
 
             float sampleValue =
@@ -199,6 +249,21 @@ void MainComponent::paint(juce::Graphics& g)
             const juce::Point<float> d1 = control - p1;
             const juce::Point<float> d2 = p2 - control;
 
+            // Approximate the curve length using the straight-line
+            // distance between endpoints. This is sufficient for
+            // mapping a monotonically increasing distance parameter to
+            // the waveform snapshot in a way that keeps the visual
+            // pattern stable as modules move further apart or closer
+            // together.
+            const float approxLength =
+                std::sqrt((p2.x - p1.x) * (p2.x - p1.x) +
+                          (p2.y - p1.y) * (p2.y - p1.y));
+            if (approxLength <= 0.0F) {
+                return;
+            }
+
+            constexpr float kSamplesPerPixel = 0.8F;
+
             juce::Path path;
             for (int i = 0; i <= segments; ++i) {
                 const float t = static_cast<float>(i) /
@@ -224,13 +289,13 @@ void MainComponent::paint(juce::Graphics& g)
 
                 int sampleIndex = 0;
                 if (samples != nullptr && numSamples > 0) {
-                    const float sampleT =
-                        juce::jlimit(0.0F, 1.0F, t);
-                    const float idx = sampleT *
-                                      static_cast<float>(numSamples - 1);
-                    sampleIndex = juce::jlimit(
-                        0, numSamples - 1,
-                        static_cast<int>(idx + 0.5F));
+                    const float distanceAlongCurve = t * approxLength;
+                    const float samplePos =
+                        distanceAlongCurve * kSamplesPerPixel;
+                    const int wrappedIndex =
+                        static_cast<int>(samplePos) % numSamples;
+                    sampleIndex =
+                        wrappedIndex >= 0 ? wrappedIndex : wrappedIndex + numSamples;
                 }
 
                 float sampleValue =
@@ -422,12 +487,22 @@ void MainComponent::paint(juce::Graphics& g)
                     const float waveformThickness = 1.4F;
                     // Calculate segments based on physical line length in pixels to maintain
                     // consistent waveform visual density (window effect: longer line shows more cycles).
-                    const juce::Point<float> delta = splitPoint - juce::Point<float>{cx, cy};
-                    const float lineLength = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-                    const int segmentsForWaveform = static_cast<int>(lineLength / 5.0F);
-                    drawWaveformOnLine({cx, cy}, splitPoint, waveformAmplitude, waveformThickness,
-                                      voiceWaveforms[voiceIndex], kWaveformPoints, voiceNorm[voiceIndex], 
-                                      juce::jmax(1, segmentsForWaveform));
+                    const juce::Point<float> delta =
+                        splitPoint - juce::Point<float>{cx, cy};
+                    const float lineLength =
+                        std::sqrt(delta.x * delta.x +
+                                  delta.y * delta.y);
+                    const int segmentsForWaveform =
+                        static_cast<int>(lineLength / 5.0F);
+                    const int periodSamples =
+                        voicePeriodSamples[voiceIndex] > 0
+                            ? voicePeriodSamples[voiceIndex]
+                            : kWaveformPoints;
+                    drawWaveformOnLine(
+                        {cx, cy}, splitPoint, waveformAmplitude,
+                        waveformThickness, voiceWaveforms[voiceIndex],
+                        periodSamples, voiceNorm[voiceIndex],
+                        juce::jmax(1, segmentsForWaveform));
                 } else {
                     g.setColour(juce::Colours::white.withAlpha(baseAlpha));
                     g.drawLine(juce::Line<float>({cx, cy}, splitPoint), 2.0F);
@@ -456,10 +531,14 @@ void MainComponent::paint(juce::Graphics& g)
                         juce::Colours::white.withAlpha(baseAlpha));
                     const float waveformAmplitude = 3.0F;
                     const float waveformThickness = 1.4F;
+                    const int periodSamples =
+                        voicePeriodSamples[voiceIndex] > 0
+                            ? voicePeriodSamples[voiceIndex]
+                            : kWaveformPoints;
                     drawWaveformOnLine(
                         line.getStart(), line.getEnd(),
                         waveformAmplitude, waveformThickness,
-                        voiceWaveforms[voiceIndex], kWaveformPoints,
+                        voiceWaveforms[voiceIndex], periodSamples,
                         voiceNorm[voiceIndex], 72);
                     continue;
                 }
@@ -603,11 +682,20 @@ void MainComponent::paint(juce::Graphics& g)
                     // Calculate segments based on physical line length in pixels to maintain
                     // consistent waveform visual density (window effect: longer line shows more cycles).
                     const juce::Point<float> delta = splitPoint - p1;
-                    const float lineLength = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-                    const int segmentsForWaveform = static_cast<int>(lineLength / 5.0F);
-                    drawWaveformOnLine(p1, splitPoint, waveformAmplitude, waveformThickness,
-                                      voiceWaveforms[voiceIndex], kWaveformPoints, voiceNorm[voiceIndex],
-                                      juce::jmax(1, segmentsForWaveform));
+                    const float lineLength = std::sqrt(
+                        delta.x * delta.x + delta.y * delta.y);
+                    const int segmentsForWaveform =
+                        static_cast<int>(lineLength / 5.0F);
+                    const int periodSamples =
+                        voicePeriodSamples[voiceIndex] > 0
+                            ? voicePeriodSamples[voiceIndex]
+                            : kWaveformPoints;
+                    drawWaveformOnLine(
+                        p1, splitPoint, waveformAmplitude,
+                        waveformThickness,
+                        voiceWaveforms[voiceIndex], periodSamples,
+                        voiceNorm[voiceIndex],
+                        juce::jmax(1, segmentsForWaveform));
                 } else {
                     g.setColour(activeColour);
                     g.drawLine(juce::Line<float>(p1, splitPoint), conn.is_hardlink ? 1.8F : 1.5F);
@@ -654,11 +742,15 @@ void MainComponent::paint(juce::Graphics& g)
                         voiceNorm[voiceIndex] > 0.0F) {
                         const float waveformAmplitude = 2.0F;
                         const float waveformThickness = 1.2F;
+                        const int periodSamples =
+                            voicePeriodSamples[voiceIndex] > 0
+                                ? voicePeriodSamples[voiceIndex]
+                                : kWaveformPoints;
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
                             waveformThickness,
                             voiceWaveforms[voiceIndex],
-                            kWaveformPoints, voiceNorm[voiceIndex], 64);
+                            periodSamples, voiceNorm[voiceIndex], 64);
                         drewWave = true;
                     }
                 }
@@ -720,11 +812,15 @@ void MainComponent::paint(juce::Graphics& g)
                     const float waveformAmplitude = 2.0F;
                     const float waveformThickness = 1.2F;
 
+                    const int periodSamples =
+                        voicePeriodSamples[voiceIndex] > 0
+                            ? voicePeriodSamples[voiceIndex]
+                            : kWaveformPoints;
                     g.setColour(juce::Colours::white.withAlpha(0.8F));
                     drawWaveformOnQuadratic(
                         p1, control, p2, waveformAmplitude,
                         waveformThickness,
-                        voiceWaveforms[voiceIndex], kWaveformPoints,
+                        voiceWaveforms[voiceIndex], periodSamples,
                         voiceNorm[voiceIndex], 72);
                 }
             }

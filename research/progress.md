@@ -1,5 +1,14 @@
 # Progreso de implementación
 
+## 2025-12-11
+
+### Corrección de estiramiento de formas de onda según distancia
+- Ajustado el render de formas de onda en `MainComponent_Paint.cpp` para que la muestra de audio utilizada en las líneas dependa de la **distancia en píxeles** y no de la longitud normalizada de la línea.
+- `drawWaveformOnLine` ahora mapea un desplazamiento a lo largo de la línea (en píxeles) a la ventana de samples usando un factor fijo de "muestras por píxel" (con wrapping en el buffer), manteniendo así un patrón visual consistente (por ejemplo, el diente de sierra) aunque cambie la distancia entre un módulo y el Master o entre dos módulos conectados.
+- `drawWaveformOnQuadratic` sigue el mismo principio utilizando una longitud aproximada de la curva (distancia entre extremos) para definir el avance por el buffer, de modo que las conexiones curvadas también conservan el mismo patrón de onda al mover los módulos.
+- Este cambio elimina el efecto observado de formas de onda "comprimidas" cerca del centro y "estiradas" cuando los nodos se alejan, ya que la frecuencia espacial de la onda en pantalla pasa a ser estable e independiente de la longitud de la conexión.
+ - Se ha incrementado la resolución del snapshot usado para visualización de cada voz de `128` a `512` samples (`kWaveformPoints`), mejorando la definición del patrón (especialmente en saw) a la vez que se sigue usando solo un ciclo estimado para repetir la forma a lo largo de líneas largas.
+
 ## 2025-12-09
 
 
