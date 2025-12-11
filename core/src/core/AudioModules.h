@@ -132,6 +132,12 @@ class FilterModule : public AudioModule {
          [[nodiscard]] const Envelope& envelope() const { return envelope_; }
          Envelope& mutable_envelope() { return envelope_; }
 
+         // Envelope configuration methods.
+         void set_envelope_attack(float attack_ms);
+         void set_envelope_decay(float decay_ms);
+         void set_envelope_duration(float duration_ms);
+         void set_envelope_release(float release_ms);
+
          [[nodiscard]] Mode mode() const { return mode_; }
 		 void set_mode(Mode mode);
 		 void cycle_mode();

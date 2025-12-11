@@ -434,4 +434,26 @@
 ### Evitar reseteos continuos del filtro por voz
 - `AudioEngine::setVoiceFilter` ya no resetea incondicionalmente el estado interno del filtro en cada tick del `timerCallback`; en su lugar, actualiza solo el tipo (`lowpass`, `bandpass`, `highpass`), la frecuencia de corte (clampada a < Nyquist) y la resonancia (`Q`) en el filtro JUCE sin borrar su memoria interna.
 - Si el modo de filtro es 0 (bypass) o la frecuencia de corte resulta ≤ 0 tras el clamping, el filtro se deja efectivamente en bypass (no se aplica procesamiento adicional), pero sin reseteos periódicos que pudieran introducir clicks.
-- Esta eliminación de reseteos innecesarios reduce los chasquidos y el ruido “crisp” que se apreciaban al escuchar un oscilador pasando por un filtro estático, manteniendo a la vez un flujo de audio continuo incluso cuando los parámetros del filtro se mantienen fijos.
+- Esta eliminación de reseteos innecesarios reduce los chasquidos y el ruido "crisp" que se apreciaban al escuchar un oscilador pasando por un filtro estático, manteniendo a la vez un flujo de audio continuo incluso cuando los parámetros del filtro se mantienen fijos.
+
+## 2025-12-11
+
+### Configuración de envelope ADSR en FilterModule
+- El módulo `FilterModule` incluye ahora valores por defecto para los parámetros de envelope ADSR (Attack, Decay, Duration, Release), inicializados en milisegundos:
+  - `attack = 500.0F` ms
+  - `decay = 500.0F` ms
+  - `duration = 1000.0F` ms
+  - `release = 500.0F` ms
+- Estos valores se almacenan tanto en la estructura `Envelope` interna del módulo (`envelope_`) como en los parámetros lógicos del `AudioModule` mediante `SetParameter`, garantizando que estén disponibles tanto para el procesamiento futuro como para la UI y serialización.
+- Se han añadido métodos públicos para configurar cada componente del envelope de forma independiente:
+  - `set_envelope_attack(float attack_ms)`
+  - `set_envelope_decay(float decay_ms)`
+  - `set_envelope_duration(float duration_ms)`
+  - `set_envelope_release(float release_ms)`
+- Cada uno de estos métodos actualiza tanto el miembro `envelope_` como el parámetro correspondiente en el mapa de parámetros del módulo, manteniendo ambos sincronizados.
+- El método `default_parameter_value` de `FilterModule` se ha extendido para devolver los valores configurados del envelope cuando se soliciten los parámetros `"attack"`, `"decay"`, `"duration"` o `"release"`, permitiendo que la UI y otros componentes lean estos valores mediante `GetParameterOrDefault`.
+- Se han añadido tests en `tests/scene_tests.cpp` que verifican:
+  - Los valores por defecto del envelope (500/500/1000/500 ms).
+  - Que los parámetros pueden leerse correctamente mediante `GetParameterOrDefault`.
+  - Que los setters actualizan tanto el envelope interno como los parámetros lógicos del módulo de forma coherente.
+- Esta implementación prepara el terreno para que el motor de audio utilice estos parámetros de envelope en el procesamiento del filtro y para que la UI pueda exponer controles que permitan al usuario ajustar el envelope de forma dinámica.

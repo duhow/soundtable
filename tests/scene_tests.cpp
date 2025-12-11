@@ -294,6 +294,41 @@ int main()
         assert(volumeParamFromRtp > 0.89F && volumeParamFromRtp < 0.91F);
     }
 
+    // FilterModule envelope initialization test.
+    {
+        FilterModule filter("filter_test");
+        const auto& env = filter.envelope();
+        
+        // Verify default envelope values (attack, decay, duration, release in ms).
+        assert(env.attack == 500.0F);
+        assert(env.decay == 500.0F);
+        assert(env.duration == 1000.0F);
+        assert(env.release == 500.0F);
+
+        // Verify that envelope parameters can be retrieved via GetParameterOrDefault.
+        assert(filter.GetParameterOrDefault("attack", 0.0F) == 500.0F);
+        assert(filter.GetParameterOrDefault("decay", 0.0F) == 500.0F);
+        assert(filter.GetParameterOrDefault("duration", 0.0F) == 1000.0F);
+        assert(filter.GetParameterOrDefault("release", 0.0F) == 500.0F);
+
+        // Test envelope setters: modify values and verify they're updated.
+        filter.set_envelope_attack(300.0F);
+        assert(filter.envelope().attack == 300.0F);
+        assert(filter.GetParameterOrDefault("attack", 0.0F) == 300.0F);
+
+        filter.set_envelope_decay(400.0F);
+        assert(filter.envelope().decay == 400.0F);
+        assert(filter.GetParameterOrDefault("decay", 0.0F) == 400.0F);
+
+        filter.set_envelope_duration(2000.0F);
+        assert(filter.envelope().duration == 2000.0F);
+        assert(filter.GetParameterOrDefault("duration", 0.0F) == 2000.0F);
+
+        filter.set_envelope_release(600.0F);
+        assert(filter.envelope().release == 600.0F);
+        assert(filter.GetParameterOrDefault("release", 0.0F) == 600.0F);
+    }
+
     std::cout << "rectai-core-tests: OK" << std::endl;
     return 0;
 }

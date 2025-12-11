@@ -833,6 +833,17 @@ void MainComponent::paint(juce::Graphics& g)
             if (spriteIt != atlasSprites_.end() && atlasImage_.isValid()) {
                 const auto& src = spriteIt->second.bounds;
 
+                // Dynamically tint the icon based on the background brightness.
+                // If the body is dark, use white; if bright, use a dark
+                // colour.
+                const float brightness =
+                    bodyColour.getBrightness();
+                const juce::Colour iconTint =
+                    brightness > 0.6F
+                        ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
+                        : juce::Colours::white;
+                g.setColour(iconTint.withAlpha(0.9F));
+
                 const int destX = juce::roundToInt(iconBounds.getX());
                 const int destY = juce::roundToInt(iconBounds.getY());
                 const int destW = juce::roundToInt(iconBounds.getWidth());
@@ -872,7 +883,12 @@ void MainComponent::paint(juce::Graphics& g)
             const float midY = cy;
             const float bottom = cy + iconRadius * 0.5F;
 
-            g.setColour(juce::Colours::white.withAlpha(0.9F));
+            // Dynamically tint the procedural icon/text based on brightness.
+            const float brightness = bodyColour.getBrightness();
+            const juce::Colour iconTint =
+                brightness > 0.6F ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
+                                  : juce::Colours::white;
+            g.setColour(iconTint.withAlpha(0.9F));
 
             const bool isOscillatorIcon =
                 (iconId == "oscillator" ||
@@ -939,7 +955,11 @@ void MainComponent::paint(juce::Graphics& g)
                                         object.logical_id() + ")";
                     }
                 }
-                g.setColour(juce::Colours::white);
+                const float brightness = bodyColour.getBrightness();
+                const juce::Colour textTint =
+                    brightness > 0.6F ? juce::Colours::black
+                                      : juce::Colours::white;
+                g.setColour(textTint);
                 g.setFont(14.0F);
                 g.drawText(fallbackLabel,
                            juce::Rectangle<float>(cx - nodeRadius,
@@ -1055,8 +1075,7 @@ void MainComponent::paint(juce::Graphics& g)
 
     if (!dockedObjects.empty()) {
         auto dockBounds = bounds;
-        const float dockWidth =
-            juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+        const float dockWidth = calculateDockWidth(dockBounds.getWidth());
         juce::Rectangle<float> dockArea =
             dockBounds.removeFromRight(dockWidth);
 
@@ -1154,6 +1173,16 @@ void MainComponent::paint(juce::Graphics& g)
                     if (spriteIt != atlasSprites_.end() &&
                         atlasImage_.isValid()) {
                         const auto& src = spriteIt->second.bounds;
+
+                        // Dynamically tint the icon based on the background
+                        // brightness.
+                        const float brightness = bodyColour.getBrightness();
+                        const juce::Colour iconTint =
+                            brightness > 0.6F
+                                ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
+                                : juce::Colours::white;
+                        g.setColour(iconTint.withAlpha(0.9F));
+
                         const int destX =
                             juce::roundToInt(iconBounds.getX());
                         const int destY =
@@ -1195,7 +1224,13 @@ void MainComponent::paint(juce::Graphics& g)
                     const float midY = cy;
                     const float bottom = cy + iconRadius * 0.5F;
 
-                    g.setColour(juce::Colours::white.withAlpha(0.9F));
+                    // Dynamically tint based on brightness.
+                    const float brightness = bodyColour.getBrightness();
+                    const juce::Colour iconTint =
+                        brightness > 0.6F
+                            ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
+                            : juce::Colours::white;
+                    g.setColour(iconTint.withAlpha(0.9F));
 
                     const bool isOscillatorIconDock =
                         (iconId == "oscillator" ||

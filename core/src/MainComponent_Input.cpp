@@ -218,8 +218,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                       });
 
             auto dockBounds = bounds;
-            const float dockWidth =
-                juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+            const float dockWidth = calculateDockWidth(dockBounds.getWidth());
             juce::Rectangle<float> dockArea =
                 dockBounds.removeFromRight(dockWidth);
 
@@ -264,8 +263,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         // If click is inside the dock but not on any module, start a
         // simple drag-based scroll gesture.
         auto dockBounds = bounds;
-        const float dockWidth =
-            juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+        const float dockWidth = calculateDockWidth(dockBounds.getWidth());
         juce::Rectangle<float> dockArea =
             dockBounds.removeFromRight(dockWidth);
         if (dockArea.contains(event.position)) {
@@ -445,8 +443,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     // Dragging the dock scroll area (vertical scroll / pagination).
     if (isDraggingDockScroll_) {
         auto dockBounds = bounds;
-        const float dockWidth =
-            juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+        const float dockWidth = calculateDockWidth(dockBounds.getWidth());
         juce::Rectangle<float> dockArea =
             dockBounds.removeFromRight(dockWidth);
 
@@ -603,8 +600,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         // drag leaves the dock area do we convert it into a regular
         // object on the table.
         auto dockBounds = bounds;
-        const float dockWidth =
-            juce::jmin(220.0F, dockBounds.getWidth() * 0.28F);
+        const float dockWidth = calculateDockWidth(dockBounds.getWidth());
         juce::Rectangle<float> dockArea =
             dockBounds.removeFromRight(dockWidth);
 

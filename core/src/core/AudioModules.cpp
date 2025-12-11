@@ -117,20 +117,44 @@ FilterModule::FilterModule(const std::string& id,
   set_mode(Mode::kBandPass);
   enable_frequency_control(true);
   enable_gain_control(true);
-  set_frequency_mapping(200.0, 800.0);
-  set_level_mapping(0.02F, 0.18F);
+  set_frequency_mapping(200.0, 1500.0);
+  set_level_mapping(0.02F, 0.90F);
   allow_any_connection_target();
 
   AddInputPort("in", true);
   AddOutputPort("out", true);
   SetParameter("freq", default_cutoff);
   SetParameter("q", default_q);
+
+  // Initialize envelope with default ADSR values (in milliseconds).
+  envelope_.attack = 500.0F;
+  envelope_.decay = 500.0F;
+  envelope_.duration = 1000.0F;
+  envelope_.release = 500.0F;
+
+  // Store envelope values as parameters for user configurability.
+  SetParameter("attack", envelope_.attack);
+  SetParameter("decay", envelope_.decay);
+  SetParameter("duration", envelope_.duration);
+  SetParameter("release", envelope_.release);
 }
 
 float FilterModule::default_parameter_value(const std::string& name) const
 {
   if (name == "freq" || name == "q") {
     return 0.5F;
+  }
+  if (name == "attack") {
+    return envelope_.attack;
+  }
+  if (name == "decay") {
+    return envelope_.decay;
+  }
+  if (name == "duration") {
+    return envelope_.duration;
+  }
+  if (name == "release") {
+    return envelope_.release;
   }
   return AudioModule::default_parameter_value(name);
 }
@@ -170,6 +194,30 @@ void FilterModule::set_mode_from_subtype(const std::string& subtype)
     // Keep default (band-pass) for unknown subtypes.
     set_mode(Mode::kBandPass);
   }
+}
+
+void FilterModule::set_envelope_attack(const float attack_ms)
+{
+  envelope_.attack = attack_ms;
+  SetParameter("attack", attack_ms);
+}
+
+void FilterModule::set_envelope_decay(const float decay_ms)
+{
+  envelope_.decay = decay_ms;
+  SetParameter("decay", decay_ms);
+}
+
+void FilterModule::set_envelope_duration(const float duration_ms)
+{
+  envelope_.duration = duration_ms;
+  SetParameter("duration", duration_ms);
+}
+
+void FilterModule::set_envelope_release(const float release_ms)
+{
+  envelope_.release = release_ms;
+  SetParameter("release", release_ms);
 }
 
 OutputModule::OutputModule(const std::string& id)

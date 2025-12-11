@@ -30,6 +30,17 @@ bool MainComponent::loadAtlasResources()
         return false;
     }
 
+    // Convert to alpha mask (SingleChannel) so that drawing it uses the
+    // current graphics colour (tinting). Without this, the original
+    // pixels (likely black or dark) would be drawn as-is.
+    if (image.getFormat() != juce::Image::SingleChannel) {
+        juce::Image alphaImage(juce::Image::SingleChannel, image.getWidth(),
+                               image.getHeight(), true);
+        juce::Graphics g(alphaImage);
+        g.drawImageAt(image, 0, 0);
+        image = alphaImage;
+    }
+
     juce::XmlDocument doc(xmlFile);
     std::unique_ptr<juce::XmlElement> root(doc.getDocumentElement());
     if (root == nullptr || !root->hasTagName("atlas")) {

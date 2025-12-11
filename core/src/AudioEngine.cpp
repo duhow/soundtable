@@ -289,8 +289,9 @@ void AudioEngine::setVoiceFilter(const int index, const int mode,
     const int clampedMode = juce::jlimit(0, 3, mode);
 
     // Resonance must be strictly > 0 for the JUCE filter; clamp
-    // gently to a musically useful range to avoid extreme peaks.
-    const float qClamped = juce::jlimit(0.1F, 8.0F, q);
+    // to a musically useful range to prevent extreme peaks and
+    // audio amplification when switching filter modes.
+    const float qClamped = juce::jlimit(0.1F, 15.0F, q);
 
     const double sr = sampleRate_ > 0.0 ? sampleRate_ : 44100.0;
     const double nyquist = 0.5 * sr;

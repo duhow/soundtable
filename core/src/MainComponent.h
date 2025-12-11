@@ -124,6 +124,14 @@ private:
     bool isDraggingDockScroll_{false};
     float dockLastDragY_{0.0F};
 
+    // Dock width calculation constants.
+    static constexpr float kDockMaxWidth = 100.0F;
+    static constexpr float kDockWidthRatio = 0.20F;
+
+    [[nodiscard]] float calculateDockWidth(float boundsWidth) const {
+        return juce::jmin(kDockMaxWidth, boundsWidth * kDockWidthRatio);
+    }
+
     void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
                                       std::int64_t objectIdB);
 
