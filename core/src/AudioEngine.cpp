@@ -112,7 +112,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     voices_[v].waveform.load(std::memory_order_relaxed);
 
                 float raw = 0.0F;
-                if (level > 0.0F && freq > 0.0) {
+                // Generate waveform if frequency is set, regardless of level.
+                // This allows waveform visualization even when output is muted (level=0).
+                if (freq > 0.0) {
                     phases_[v] += twoPiOverFs * freq;
 
                     const double phase = phases_[v];
@@ -129,12 +131,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             const float t = static_cast<float>(
                                 local * (1.0 / twoPi));  // [0,1)
                             const float saw = 2.0F * t - 1.0F;  // [-1,1]
-                            raw = saw * level;
+                            // Generate full-amplitude waveform, scale by level later for output.
+                            raw = saw;
                             break;
                         }
                         case 2: { // Square
                             const float sq = (s >= 0.0 ? 1.0F : -1.0F);
-                            raw = sq * level;
+                            raw = sq;
                             break;
                         }
                         case 3: { // Noise
@@ -148,12 +151,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                 static_cast<float>(
                                     static_cast<std::int32_t>(state)) /
                                 2147483647.0F;  // ~[-1,1]
-                            raw = n * level;
+                            raw = n;
                             break;
                         }
                         case 0:
                         default: { // Sine
-                            raw = static_cast<float>(s) * level;
+                            raw = static_cast<float>(s);
                             break;
                         }
                     }
@@ -168,8 +171,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     s = filters_[v].processSample(0, raw);
                 }
 
-                mixed += s;
+                // Store unscaled waveform for visualization.
                 voiceWaveformBuffer_[v][bufIndex] = s;
+                
+                // Apply level scaling for audio output.
+                const float scaledOutput = s * level;
+                mixed += scaledOutput;
             }
 
             // Prevent hard digital clipping when summing several

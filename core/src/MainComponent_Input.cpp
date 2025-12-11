@@ -392,12 +392,29 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
             if (isPointNearSegment(click, {fx, fy}, {tx, ty}, maxDistanceSq)) {
                 const std::string key = makeConnectionKey(conn);
-                const auto itMuted = mutedConnections_.find(key);
-                if (itMuted == mutedConnections_.end()) {
-                    mutedConnections_.insert(key);
-                } else {
-                    mutedConnections_.erase(itMuted);
+                
+                // Calculate normalized position along the line (0=from, 1=to).
+                const juce::Point<float> p1{fx, fy};
+                const juce::Point<float> p2{tx, ty};
+                const auto ab = p2 - p1;
+                const auto ap = click - p1;
+                const auto abLenSq = ab.x * ab.x + ab.y * ab.y;
+                float splitPoint = 0.5F; // Default to mid-point.
+                if (abLenSq > 0.0F) {
+                    splitPoint = (ap.x * ab.x + ap.y * ab.y) / abLenSq;
+                    splitPoint = juce::jlimit(0.0F, 1.0F, splitPoint);
                 }
+                
+                // Store hold state and apply temporary mute.
+                activeConnectionHold_ = ConnectionHoldState{
+                    key,
+                    0,  // Not an object-to-center line.
+                    false,
+                    splitPoint
+                };
+                
+                // Always mute while holding.
+                mutedConnections_.insert(key);
 
                 repaint();
                 return;
@@ -439,13 +456,28 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
             if (isPointNearSegment(click, centre, {cx, cy}, maxDistanceSq)) {
-                const auto itMuted = mutedObjects_.find(id);
-                const bool nowMuted = itMuted == mutedObjects_.end();
-                if (nowMuted) {
-                    mutedObjects_.insert(id);
-                } else {
-                    mutedObjects_.erase(itMuted);
+                // Calculate normalized position along the line (0=center, 1=object).
+                const juce::Point<float> p1 = centre;
+                const juce::Point<float> p2{cx, cy};
+                const auto ab = p2 - p1;
+                const auto ap = click - p1;
+                const auto abLenSq = ab.x * ab.x + ab.y * ab.y;
+                float splitPoint = 0.5F; // Default to mid-point.
+                if (abLenSq > 0.0F) {
+                    splitPoint = (ap.x * ab.x + ap.y * ab.y) / abLenSq;
+                    splitPoint = juce::jlimit(0.0F, 1.0F, splitPoint);
                 }
+                
+                // Store hold state and apply temporary mute.
+                activeConnectionHold_ = ConnectionHoldState{
+                    "",  // No connection key for object-to-center lines.
+                    id,
+                    true,
+                    splitPoint
+                };
+                
+                // Always mute while holding.
+                mutedObjects_.insert(id);
 
                 repaint();
                 break;
@@ -488,8 +520,9 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         // Line cutting: detect when the touch trail crosses audio lines
         // (connections or object-to-center lines) and toggle them for
         // mute when the touch is released.
-        // Skip detection if we are currently dragging a module.
-        if (touchTrail_.size() >= 2 && draggedObjectId_ == 0) {
+        // Skip detection if we are currently dragging a module or if we are
+        // in hold-mute mode (white cursor - different interaction).
+        if (touchTrail_.size() >= 2 && draggedObjectId_ == 0 && !activeConnectionHold_.has_value()) {
             const auto centre = bounds.getCentre();
             const auto& objects = scene_.objects();
             const auto& modules = scene_.modules();
@@ -833,6 +866,20 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
 
 void MainComponent::mouseUp(const juce::MouseEvent&)
 {
+    // Handle click-and-hold mute release.
+    // Always unmute when releasing, regardless of previous state.
+    if (activeConnectionHold_.has_value()) {
+        const auto& holdState = activeConnectionHold_.value();
+        
+        if (holdState.is_object_line) {
+            mutedObjects_.erase(holdState.object_id);
+        } else {
+            mutedConnections_.erase(holdState.connection_key);
+        }
+        
+        activeConnectionHold_.reset();
+    }
+    
     // Apply mute toggle to lines that were cut during touch drag.
     for (const auto& objectId : touchCutObjects_) {
         if (mutedObjects_.find(objectId) != mutedObjects_.end()) {

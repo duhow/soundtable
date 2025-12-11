@@ -513,6 +513,7 @@ void MainComponent::timerCallback()
         std::int64_t downstreamObjId = 0;
         bool downstreamInside = false;
         bool connectionMuted = false;
+        std::string downstreamConnectionKey;
 
         for (const auto& conn : scene_.connections()) {
             if (conn.from_module_id != module->id()) {
@@ -546,6 +547,7 @@ void MainComponent::timerCallback()
             downstreamInside = true;
 
             const std::string key = makeConnectionKey(conn);
+            downstreamConnectionKey = key;
             connectionMuted =
                 mutedConnections_.find(key) != mutedConnections_.end();
             break;
@@ -580,7 +582,17 @@ void MainComponent::timerCallback()
 
         const float baseLevel = module->base_level();
         const float extra = module->level_range() * gainParam;
-        const float level = chainMuted ? 0.0F : (baseLevel + extra);
+        const float calculatedLevel = baseLevel + extra;
+        
+        // Check if this chain is being held for temporary mute visualization.
+        // During hold, we still want to process audio (for waveform capture)
+        // but with zero output level.
+        const bool isBeingHeld = activeConnectionHold_.has_value() &&
+                                 ((activeConnectionHold_->is_object_line && 
+                                   activeConnectionHold_->object_id == objId) ||
+                                  (!activeConnectionHold_->is_object_line && 
+                                   downstreamModule != nullptr && downstreamInside &&
+                                   downstreamConnectionKey == activeConnectionHold_->connection_key));
 
         int waveformIndex = 0;  // 0 = sine by default.
         if (const auto* oscModule =
@@ -598,12 +610,14 @@ void MainComponent::timerCallback()
             }
         }
 
-        if (level > 0.0F && voiceIndex < AudioEngine::kMaxVoices) {
+        // Process voice if level would be > 0 OR if it's being held for visualization.
+        if ((calculatedLevel > 0.0F || isBeingHeld) && voiceIndex < AudioEngine::kMaxVoices) {
             voices[voiceIndex].frequency = frequency;
-            const float chainLevel = masterMuted_
-                                         ? 0.0F
-                                         : (level * globalVolumeGain);
-            voices[voiceIndex].level = chainLevel;
+            // Output level: 0 if muted/held/master-muted, otherwise normal level.
+            const float outputLevel = (chainMuted || isBeingHeld || masterMuted_) 
+                                         ? 0.0F 
+                                         : (calculatedLevel * globalVolumeGain);
+            voices[voiceIndex].level = outputLevel;
             voices[voiceIndex].waveform = waveformIndex;
             const int assignedVoice = voiceIndex;
             ++voiceIndex;

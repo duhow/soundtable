@@ -512,3 +512,80 @@
   - `MainComponent_Input.cpp`: detección de transiciones en `mouseDrag` con condición `draggedObjectId_ == 0`, aplicación de toggle en `mouseUp`, limpieza en `mouseDown`.
   - `MainComponent_Paint.cpp`: renderizado condicional de líneas en amarillo con grosor aumentado.
   - `MainComponentHelpers.{h,cpp}`: función `lineSegmentsIntersect` para geometría de intersección.
+
+### Click-and-hold temporary mute con split rendering en líneas de audio
+- Implementado nuevo comportamiento para la interacción con líneas de audio: al hacer click en una línea, el módulo se silencia temporalmente mientras se mantiene presionado el botón, con visualización parcial de la waveform:
+  - **Mute temporal durante hold**: al hacer click en una línea de audio (tanto object-to-center como module-to-module), el sistema:
+    - Calcula la posición normalizada (0-1) del punto de click a lo largo de la línea.
+    - Aplica mute inmediato al módulo/conexión correspondiente.
+    - Almacena el estado de mute previo: si la línea ya estaba silenciada antes del click, se recuerda para no desmutar al soltar.
+    - Al soltar el click (`mouseUp`), se desmutea automáticamente solo si la línea no estaba previamente muteada.
+  - **Split rendering visual**: durante el hold, la línea se renderiza en dos segmentos:
+    - **Segmento activo** (source → split point): muestra la waveform de audio normalmente si hay señal activa, demostrando que hasta ese punto la señal sigue siendo audible.
+    - **Segmento silenciado** (split point → destination): se dibuja con línea punteada (dashed) con transparencia reducida (0.6F), indicando visualmente que desde ese punto en adelante la señal está muted.
+  - **Cursor blanco sin trail**: mientras se mantiene el click en una línea de audio:
+    - El cursor cambia a **color blanco** (`juce::Colours::white.withAlpha(0.8F)`), diferenciándose del rojo normal para indicar modo de interacción especial.
+    - El **trail rojo desaparece** (no se dibuja), eliminando el rastro de movimiento y proporcionando feedback visual claro de que estamos en modo "hold mute" y no en modo "line cutting".
+  - **Estructuras de estado**:
+    - Nuevo `ConnectionHoldState` en `MainComponent.h` que almacena:
+      - `connection_key` o `object_id`: identifica la línea afectada.
+      - `is_object_line`: distingue entre línea object-to-center (true) o module-to-module (false).
+      - `split_point`: posición normalizada (0-1) donde se hizo click.
+      - `was_previously_muted`: estado de mute anterior al click para restauración correcta.
+    - Variable `std::optional<ConnectionHoldState> activeConnectionHold_` que marca si hay una línea siendo held.
+  - **Implementación**:
+    - `MainComponent_Input.cpp`:
+      - `mouseDown`: al detectar click en línea (segment hit-test), calcula el `splitPoint` mediante proyección vectorial del punto de click sobre el segmento (producto punto normalizado), almacena el estado previo de mute, activa el mute inmediato y guarda todo en `activeConnectionHold_`.
+      - `mouseUp`: si hay `activeConnectionHold_` activo, desmutea la línea solo si `!was_previously_muted`, luego resetea `activeConnectionHold_`.
+    - `MainComponent_Paint.cpp`:
+      - Render de líneas object-to-center: si `activeConnectionHold_` está activo y coincide con la línea, calcula `splitPoint` interpolado y renderiza:
+        - Primer segmento con waveform (si audio activo) desde center hasta split.
+        - Segundo segmento dashed desde split hasta object.
+      - Render de conexiones module-to-module: similar split rendering aplicado a hardlinks y dynamic connections, usando líneas rectas desde p1 a splitPoint con waveform, y dashed desde splitPoint a p2.
+      - Cursor: condición `activeConnectionHold_.has_value()` cambia color a blanco y desactiva el dibujado del trail rojo.
+  - **Compatibilidad con line cutting**: el sistema convive con el mecanismo de line cutting previo (drag con trail para toggle permanente de mute), diferenciándose por el cursor blanco vs rojo y la ausencia de trail durante hold.
+- Este comportamiento proporciona control temporal fino sobre el audio, permitiendo escuchar cómo suena la señal hasta un punto específico de la cadena, útil para debugging y performance en vivo.
+- Código actualizado:
+  - `MainComponent.h`: añadidos `#include <optional>`, estructura `ConnectionHoldState` y variable `activeConnectionHold_`.
+  - `MainComponent_Input.cpp`: cálculo de split point en hit-test de líneas, almacenamiento de estado hold, lógica de unmute condicional en `mouseUp`.
+  - `MainComponent_Paint.cpp`: render condicional de split en líneas object-to-center y module-to-module, cambio de cursor a blanco y supresión de trail durante hold.
+
+#### Correcciones de bugs en click-and-hold mute
+- **Separación de interacciones**: se ha corregido la lógica para prevenir que el sistema de "line cutting" (cursor rojo con trail) se active durante el modo "hold mute" (cursor blanco sin trail):
+  - Añadida condición `!activeConnectionHold_.has_value()` en la detección de intersecciones de líneas durante `mouseDrag`.
+  - Esto asegura que ambos modos de interacción sean mutuamente excluyentes y no interfieran entre sí.
+- **Corrección de dirección de split rendering**: se ha invertido la dirección de los segmentos visuales para reflejar correctamente el flujo de audio:
+  - **Segmento con waveform**: ahora va desde el **módulo (origen)** hasta el **punto de click**, mostrando que la señal de audio se genera en el módulo y viaja hasta donde el usuario presiona.
+  - **Segmento punteado/silenciado**: ahora va desde el **punto de click** hasta la **salida (centro/master o módulo destino)**, indicando que desde ese punto hacia adelante la señal está cortada/muteada.
+  - En líneas object-to-center: waveform de `{cx, cy}` (objeto) a `splitPoint`, dashed de `splitPoint` a `centre` (master).
+  - En líneas module-to-module: waveform de `p1` (from/source) a `splitPoint`, dashed de `splitPoint` a `p2` (to/destination).
+- **Visualización de waveform durante mute**: se ha corregido para que la waveform se muestre **siempre** en el segmento activo (origen → split) cuando hay señal de audio, **incluso si el módulo está temporalmente muteado** durante el hold:
+  - El código de render durante `isBeingHeld` ya no filtra por estado de mute para decidir si dibuja la waveform.
+  - Esto permite al usuario ver visualmente que el módulo está generando audio hasta el punto de corte, proporcionando feedback más intuitivo.
+- **Unmute incondicional al soltar**: se ha corregido la lógica de `mouseUp` para que **siempre desmutee** la línea al soltar el click, independientemente de si estaba muteada previamente o no:
+  - Eliminado el campo `was_previously_muted` de `ConnectionHoldState`.
+  - Eliminadas las condiciones que chequeaban el estado previo antes de desmutar.
+  - Ahora `mouseUp` simplemente llama a `erase()` en `mutedObjects_` o `mutedConnections_` sin condiciones, garantizando que al soltar el click la línea siempre quede activa (no muted).
+- Estas correcciones mejoran la coherencia visual y funcional del sistema de control temporal de mute, alineando el comportamiento con las expectativas del usuario sobre el flujo direccional de la señal de audio.
+- **Corrección crítica - generación de waveform en AudioEngine con level=0**: se ha corregido el problema fundamental donde la waveform no se mostraba durante el hold mute (mostrando solo línea blanca):
+  - **Problema raíz en tres capas**:
+    1. En `MainComponent_Audio.cpp`: cuando un módulo se muteaba, `level = 0` y no entraba en `if (level > 0)`, no asignando voice index.
+    2. Tras corregir eso para procesar con `isBeingHeld`, el voice se configuraba con `outputLevel = 0` en el AudioEngine.
+    3. **Problema final**: En `AudioEngine.cpp`, la condición `if (level > 0.0F && freq > 0.0)` impedía la generación del oscillador cuando `level = 0`, por lo que `voiceWaveformBuffer_` quedaba en 0 y no había datos que visualizar.
+  - **Solución implementada en tres capas**:
+    1. **AudioEngine** (`AudioEngine.cpp`): Modificada la lógica de generación de waveform para que funcione **independientemente del level**:
+       - Cambiada condición de `if (level > 0.0F && freq > 0.0)` a solo `if (freq > 0.0)`.
+       - Los oscilladores (sine, saw, square, noise) ahora generan waveform a **amplitud completa** (sin multiplicar por level).
+       - La waveform sin escalar se almacena en `voiceWaveformBuffer_[v][bufIndex]` para visualización.
+       - El `level` se aplica **después**, solo para el output mezclado: `scaledOutput = s * level`.
+       - Esto permite capturar la forma de onda real del oscillador incluso cuando `level = 0`.
+    2. **Motor de audio** (`MainComponent_Audio.cpp`): Lógica para procesar voices durante `isBeingHeld`:
+       - Añadida detección de `isBeingHeld` verificando si objeto/conexión está en hold.
+       - Cambiada condición a `if ((calculatedLevel > 0.0F || isBeingHeld))` para forzar procesamiento.
+       - El `outputLevel` es 0 durante hold, silenciando la salida pero permitiendo generación interna.
+    3. **Capa de renderizado** (`MainComponent_Paint.cpp`): Búsqueda directa de `voiceIndex` sin dependencias de flags de mute durante `isBeingHeld`.
+  - **Resultado**: La waveform ahora se visualiza correctamente en el segmento activo (módulo → split point) durante el hold mute, mostrando la forma de onda real del audio generado internamente aunque la salida esté completamente silenciada.
+  - **Corrección adicional - consistencia de waveform**: se ha corregido un problema donde la forma de onda mostrada cambiaba completamente al hacer click en diferentes posiciones de la línea:
+    - **Problema**: El número de segmentos usado para dibujar la waveform variaba según `splitT` (posición del click), causando diferente muestreo del buffer `voiceWaveforms[]` en cada click.
+    - **Solución**: Mantener siempre el mismo número de segmentos fijo (72 para object-to-center, 64 para module-to-module), independientemente de la longitud de la línea dibujada.
+    - Esto garantiza que se muestree siempre la misma porción del buffer de waveform, mostrando un patrón consistente de la forma de onda sin importar dónde se haga click en la línea.

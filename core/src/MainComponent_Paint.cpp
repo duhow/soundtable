@@ -157,10 +157,11 @@ void MainComponent::paint(juce::Graphics& g)
             const float baseY = start.y + delta.y * t;
             int sampleIndex = 0;
             if (samples != nullptr && numSamples > 0) {
-                const float sampleT =
-                    juce::jlimit(0.0F, 1.0F, t);
-                const float idx = sampleT *
-                                  static_cast<float>(numSamples - 1);
+                // Always map the full line (0→1) to the full buffer (0→numSamples).
+                // The visual frequency/density is controlled by the segment count,
+                // which is set based on physical line length.
+                const float sampleT = juce::jlimit(0.0F, 1.0F, t);
+                const float idx = sampleT * static_cast<float>(numSamples - 1);
                 sampleIndex = juce::jlimit(
                     0, numSamples - 1,
                     static_cast<int>(idx + 0.5F));
@@ -393,6 +394,52 @@ void MainComponent::paint(juce::Graphics& g)
             // Check if this line is marked for mute toggle (cut).
             const bool isMarkedForCut =
                 touchCutObjects_.find(id) != touchCutObjects_.end();
+            
+            // Check if this line is being held for temporary mute with split rendering.
+            const bool isBeingHeld = activeConnectionHold_.has_value() &&
+                                     activeConnectionHold_->is_object_line &&
+                                     activeConnectionHold_->object_id == id;
+            
+            if (isBeingHeld) {
+                // Split rendering: waveform from object (module) to split point,
+                // then dashed from split point to center (output/master).
+                // Line goes from center (0.0) to object (1.0), so splitT is along that direction.
+                const float splitT = activeConnectionHold_->split_point;
+                const juce::Point<float> splitPoint{
+                    juce::jmap(splitT, 0.0F, 1.0F, centre.x, cx),
+                    juce::jmap(splitT, 0.0F, 1.0F, centre.y, cy)
+                };
+                
+                // First segment: object to split (with waveform even if muted).
+                // Check for voice data directly, not relying on modulesWithActiveAudio_
+                // since the module is temporarily muted during hold.
+                const auto voiceIt = moduleVoiceIndex_.find(object.logical_id());
+                const int voiceIndex = (voiceIt != moduleVoiceIndex_.end()) ? voiceIt->second : -1;
+                
+                if (voiceIndex >= 0 && voiceIndex < AudioEngine::kMaxVoices && voiceNorm[voiceIndex] > 0.0F) {
+                    g.setColour(juce::Colours::white.withAlpha(baseAlpha));
+                    const float waveformAmplitude = 3.0F;
+                    const float waveformThickness = 1.4F;
+                    // Calculate segments based on physical line length in pixels to maintain
+                    // consistent waveform visual density (window effect: longer line shows more cycles).
+                    const juce::Point<float> delta = splitPoint - juce::Point<float>{cx, cy};
+                    const float lineLength = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+                    const int segmentsForWaveform = static_cast<int>(lineLength / 5.0F);
+                    drawWaveformOnLine({cx, cy}, splitPoint, waveformAmplitude, waveformThickness,
+                                      voiceWaveforms[voiceIndex], kWaveformPoints, voiceNorm[voiceIndex], 
+                                      juce::jmax(1, segmentsForWaveform));
+                } else {
+                    g.setColour(juce::Colours::white.withAlpha(baseAlpha));
+                    g.drawLine(juce::Line<float>({cx, cy}, splitPoint), 2.0F);
+                }
+                
+                // Second segment: split to center (dashed, muted/silenced output).
+                const float dashLengths[] = {6.0F, 4.0F};
+                g.setColour(juce::Colours::white.withAlpha(baseAlpha * 0.6F));
+                g.drawDashedLine(juce::Line<float>(splitPoint, centre), dashLengths,
+                                static_cast<int>(std::size(dashLengths)), 1.5F);
+                continue;
+            }
 
             if (lineCarriesAudio && !isMuted && !isMarkedForCut) {
                 const auto voiceIt =
@@ -522,6 +569,57 @@ void MainComponent::paint(juce::Graphics& g)
                     : (conn.is_hardlink
                            ? juce::Colours::red.withAlpha(0.8F)
                            : juce::Colours::white.withAlpha(0.7F));
+            
+            // Check if this connection is being held for temporary mute with split rendering.
+            const bool isBeingHeld = activeConnectionHold_.has_value() &&
+                                     !activeConnectionHold_->is_object_line &&
+                                     activeConnectionHold_->connection_key == connKey;
+
+            if (isBeingHeld) {
+                // Split rendering: waveform from source to split point,
+                // then dashed from split point to destination.
+                const float splitT = activeConnectionHold_->split_point;
+                const juce::Point<float> splitPoint{
+                    juce::jmap(splitT, 0.0F, 1.0F, p1.x, p2.x),
+                    juce::jmap(splitT, 0.0F, 1.0F, p1.y, p2.y)
+                };
+                
+                // First segment: source to split (with waveform even if muted).
+                // Check for voice data directly, not relying on audioConn or modulesWithActiveAudio_
+                // since the connection may be temporarily muted during hold.
+                int voiceIndex = -1;
+                if (const auto it = moduleVoiceIndex_.find(conn.from_module_id);
+                    it != moduleVoiceIndex_.end()) {
+                    voiceIndex = it->second;
+                } else if (const auto it2 = moduleVoiceIndex_.find(conn.to_module_id);
+                           it2 != moduleVoiceIndex_.end()) {
+                    voiceIndex = it2->second;
+                }
+                
+                if (voiceIndex >= 0 && voiceIndex < AudioEngine::kMaxVoices && voiceNorm[voiceIndex] > 0.0F) {
+                    g.setColour(activeColour);
+                    const float waveformAmplitude = conn.is_hardlink ? 2.0F : 2.0F;
+                    const float waveformThickness = conn.is_hardlink ? 1.2F : 1.2F;
+                    // Calculate segments based on physical line length in pixels to maintain
+                    // consistent waveform visual density (window effect: longer line shows more cycles).
+                    const juce::Point<float> delta = splitPoint - p1;
+                    const float lineLength = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+                    const int segmentsForWaveform = static_cast<int>(lineLength / 5.0F);
+                    drawWaveformOnLine(p1, splitPoint, waveformAmplitude, waveformThickness,
+                                      voiceWaveforms[voiceIndex], kWaveformPoints, voiceNorm[voiceIndex],
+                                      juce::jmax(1, segmentsForWaveform));
+                } else {
+                    g.setColour(activeColour);
+                    g.drawLine(juce::Line<float>(p1, splitPoint), conn.is_hardlink ? 1.8F : 1.5F);
+                }
+                
+                // Second segment: split to destination (dashed, muted).
+                const float dashLengths[] = {6.0F, 4.0F};
+                g.setColour(activeColour.withAlpha(0.6F));
+                g.drawDashedLine(juce::Line<float>(splitPoint, p2), dashLengths,
+                                static_cast<int>(std::size(dashLengths)), 1.5F);
+                continue;
+            }
 
             if (isMutedConnection) {
                 // Muted connection: render as a dashed straight line
@@ -1321,7 +1419,8 @@ void MainComponent::paint(juce::Graphics& g)
     // Render touch interface visual feedback.
     if (isTouchActive_) {
         // Draw trail if cursor is held and started in window area.
-        if (isTouchHeld_ && !touchStartedInDock_ && touchTrail_.size() > 1) {
+        // Skip trail when holding a connection for mute (white cursor, no trail).
+        if (isTouchHeld_ && !touchStartedInDock_ && touchTrail_.size() > 1 && !activeConnectionHold_.has_value()) {
             const double currentTime =
                 juce::Time::getMillisecondCounterHiRes() / 1000.0;
             const juce::Colour trailColour = juce::Colour(0xFFFF0000);
@@ -1352,11 +1451,14 @@ void MainComponent::paint(juce::Graphics& g)
         }
 
         // Draw touch cursor circle (finger representation).
+        // White cursor when holding a connection for mute.
         const float touchRadius = 12.0F;
         const juce::Colour circleColour =
-            touchStartedInDock_
-                ? juce::Colour(0xFFCCCCCC)
-                : juce::Colour(0xFFFF0000).withAlpha(0.298F);
+            activeConnectionHold_.has_value()
+                ? juce::Colours::white.withAlpha(0.8F)
+                : (touchStartedInDock_
+                      ? juce::Colour(0xFFCCCCCC)
+                      : juce::Colour(0xFFFF0000).withAlpha(0.298F));
 
         g.setColour(circleColour);
         g.drawEllipse(currentTouchPosition_.x - touchRadius,

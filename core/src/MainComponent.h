@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -161,6 +162,18 @@ private:
     // on transitions.
     std::unordered_set<std::string> touchCurrentlyIntersectingConnections_;
     std::unordered_set<std::int64_t> touchCurrentlyIntersectingObjects_;
+
+    // Click-and-hold mute state: when the user clicks on a sound line,
+    // the module is muted while the button is held down. The split point
+    // (normalized 0-1) along the connection determines where the waveform
+    // visibility transitions to dashed line.
+    struct ConnectionHoldState {
+        std::string connection_key;
+        std::int64_t object_id{0};   // For object-to-center lines.
+        bool is_object_line{false};  // True if object-to-center, false if module-to-module.
+        float split_point{0.0F};     // Normalized position along the line (0=source, 1=destination).
+    };
+    std::optional<ConnectionHoldState> activeConnectionHold_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
