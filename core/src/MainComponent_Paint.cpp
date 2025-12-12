@@ -58,26 +58,54 @@ void MainComponent::paint(juce::Graphics& g)
     }
 
     // ---------------------------------------------------------------------
-    // Background: circular table with radial blue gradient and vignette.
+    // Background: solid table colour (#001a80) with a soft outer
+    // border that fades to black so the edge blends into the
+    // surrounding black background.
     // ---------------------------------------------------------------------
     const float tableRadius =
         0.45F * std::min(bounds.getWidth(), bounds.getHeight());
 
-    juce::Colour centreColour = juce::Colour::fromRGB(0x00, 0x40, 0x80);
-    juce::Colour edgeColour = juce::Colour::fromRGB(0x00, 0x10, 0x30);
+    const juce::Colour tableColour =
+        juce::Colour::fromRGB(0x00, 0x1a, 0x80);  // #001a80
 
-    juce::ColourGradient gradient(centreColour, centre.x, centre.y, edgeColour,
-                                  centre.x, centre.y + tableRadius, true);
-    gradient.addColour(0.8, edgeColour.darker(1.2F));
+    // Draw a subtle outer ring that transitions from the table
+    // colour to black, creating a smooth fade with the background.
+    const float borderThickness = 40.0F;
+    const float outerRadius = tableRadius + borderThickness;
 
-    g.setGradientFill(gradient);
+    {
+        juce::Graphics::ScopedSaveState borderState(g);
+
+        juce::Path borderRing;
+        borderRing.addEllipse(centre.x - outerRadius,
+                              centre.y - outerRadius,
+                              outerRadius * 2.0F,
+                              outerRadius * 2.0F);
+        borderRing.addEllipse(centre.x - tableRadius,
+                              centre.y - tableRadius,
+                              tableRadius * 2.0F,
+                              tableRadius * 2.0F);
+        borderRing.setUsingNonZeroWinding(false);  // even-odd: ring only.
+
+        juce::ColourGradient borderGradient(tableColour, centre.x, centre.y,
+                                            juce::Colours::black, centre.x,
+                                            centre.y + outerRadius, true);
+
+        // Ensure the colour at the table edge remains the solid
+        // table colour while the outermost edge fades to black.
+        const double innerStop =
+            static_cast<double>(tableRadius / outerRadius);
+        borderGradient.addColour(innerStop, tableColour);
+        borderGradient.addColour(1.0, juce::Colours::black);
+
+        g.setGradientFill(borderGradient);
+        g.fillPath(borderRing);
+    }
+
+    // Solid table disc without any internal gradient.
+    g.setColour(tableColour);
     g.fillEllipse(centre.x - tableRadius, centre.y - tableRadius,
                   tableRadius * 2.0F, tableRadius * 2.0F);
-
-    // Soft vignette around the table.
-    g.setColour(juce::Colours::black.withAlpha(0.4F));
-    g.drawEllipse(centre.x - tableRadius, centre.y - tableRadius,
-                  tableRadius * 2.0F, tableRadius * 2.0F, 20.0F);
 
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();

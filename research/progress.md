@@ -2,6 +2,11 @@
 
 ## 2025-12-12
 
+### Fondo de mesa sólido y borde difuminado
+- Actualizado el fondo de la mesa en `MainComponent_Paint.cpp` para que el disco principal se pinte con un color sólido `#001a80` (sin gradiente interno), alineado con la paleta azul oscura descrita para la superficie de la mesa.
+- Introducido un anillo exterior alrededor de la mesa que se renderiza como una elipse con gradiente radial desde `#001a80` en el borde de la mesa hasta negro en el radio exterior, creando un difuminado suave entre la superficie y el fondo negro general.
+- Eliminada la viñeta anterior basada en un simple trazo negro grueso alrededor del círculo y sustituida por este borde degradado, que integra mejor la mesa con el lienzo negro sin añadir contornos duros.
+
 ### Separación de gestos: sliders de módulo vs corte de líneas
 - Introducido un flag explícito `isCutModeActive_` en `MainComponent` que distingue entre el modo de **interacción** (cursor blanco) y el modo de **corte de sonido** (cursor rojo con trail).
 - `MainComponent::mouseDown` ahora solo activa `isCutModeActive_ = true` cuando el click comienza en espacio vacío del área musical (dentro del círculo de música, fuera del dock y sin haber capturado ni un módulo, ni un slider lateral, ni una línea para mute hold); en cualquier otra interacción el gesto permanece en modo blanco.
