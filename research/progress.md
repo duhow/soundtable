@@ -2,6 +2,11 @@
 
 ## 2025-12-12
 
+### Opacidad diferenciada para pulsos de tempo
+- Ajustado el render de los anillos de pulso en `MainComponent_Paint.cpp` para que los pulsos secundarios de tempo (beats intermedios) se dibujen con menor opacidad que el pulso que marca el beat principal del compás.
+- La estructura `Pulse` sigue marcando los beats fuertes con `strong = true` cada 4 golpes (`beatIndex_`), pero ahora el cálculo de alpha distingue entre ambos: el pulso principal mantiene la opacidad base dependiente de la edad del pulso y del estado de mute del master, mientras que los pulsos secundarios escalan esa opacidad por un factor adicional (≈40%).
+- Este cambio hace que el ritmo siga siendo claramente visible, pero refuerza visualmente el beat fuerte del compás como referencia rítmica principal, alineando la jerarquía de brillo con el diseño descrito para la UI rítmica de la mesa.
+
 ### Fondo de mesa sólido y borde difuminado
 - Actualizado el fondo de la mesa en `MainComponent_Paint.cpp` para que el disco principal se pinte con un color sólido `#001a80` (sin gradiente interno), alineado con la paleta azul oscura descrita para la superficie de la mesa.
 - Introducido un anillo exterior alrededor de la mesa que se renderiza como una elipse con gradiente radial desde `#001a80` en el borde de la mesa hasta negro en el radio exterior, creando un difuminado suave entre la superficie y el fondo negro general.

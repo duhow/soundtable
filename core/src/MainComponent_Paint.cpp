@@ -343,10 +343,15 @@ void MainComponent::paint(juce::Graphics& g)
 
         for (const auto& pulse : pulses_) {
             const float t = juce::jlimit(0.0F, 1.0F, pulse.age);
-            const float maxRadius = pulse.strong ? 90.0F : 50.0F;
+            const float maxRadius = pulse.strong ? 50.0F : 50.0F;
             const float radius = baseRadius + t * maxRadius;
-            const float alpha = (1.0F - t) * (masterMuted_ ? 0.4F : 1.0F);
-            const float thickness = pulse.strong ? 5.0F : 2.0F;
+
+            const float baseAlpha =
+                (1.0F - t) * (masterMuted_ ? 0.4F : 1.0F);
+            const float alpha =
+                pulse.strong ? baseAlpha * 0.7F : baseAlpha * 0.2F;
+
+            const float thickness = pulse.strong ? 4.0F : 2.0F;
 
             g.setColour(masterColour_.withAlpha(alpha));
             g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2.0F,
