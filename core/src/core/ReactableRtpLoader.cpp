@@ -713,7 +713,8 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
       for (const auto& [key, value] : attrs) {
         if (key == "type" || key == "id" || key == "x" || key == "y" ||
             key == "angle" || key == "color" || key == "docked" ||
-            key == "muted" || key == "point" || key == "subtype") {
+            key == "muted" || key == "point" || key == "subtype" ||
+            key == "filename") {
           continue;
         }
         try {
@@ -721,6 +722,16 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         } catch (...) {
         }
       }
+
+      // Remember the raw SoundFont filename declared in the patch so
+      // the UI can later resolve it against the com.reactable/
+      // content tree and call SampleplayModule::LoadSoundfont() with
+      // a fully qualified path.
+      const auto it_filename = attrs.find("filename");
+      if (it_filename != attrs.end() && !it_filename->second.empty()) {
+        sp->set_raw_soundfont_name(it_filename->second);
+      }
+
       // Instruments.
       std::size_t inst_pos = FindTag(xml, "instrument", inner_start, inner_end);
       while (inst_pos != std::string::npos) {
@@ -735,6 +746,14 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         }
         inst_pos = FindTag(xml, "instrument", inst_end, inner_end);
       }
+
+      // Default to the first instrument when available so that the UI
+      // has a deterministic starting point for the active instrument
+      // title and right-click cycling.
+      if (!sp->instruments().empty()) {
+        sp->set_active_instrument_index(0);
+      }
+
       module = std::move(sp);
     } else {
       // Unknown or unsupported type for now: skip.

@@ -80,6 +80,25 @@ Si se necesita una versión concreta de OpenCV, puede compilarse manualmente des
 
 (Para la mayoría de casos, el paquete del sistema es suficiente.)
 
+## 4. Soporte de SoundFont2 (FluidSynth)
+
+El módulo `Sampleplay` de la aplicación core utiliza **FluidSynth** para
+cargar archivos SoundFont2 (`.sf2`) y enumerar los instrumentos/presets
+disponibles en ellos. Esta integración se usa por ahora para construir la
+lista de instrumentos mostrada en la UI a partir del propio archivo
+SoundFont, en lugar de depender exclusivamente de la lista declarada en el
+patch `.rtp`.
+
+En Ubuntu/Debian, instala los headers y librerías de desarrollo con:
+
+```bash
+sudo apt-get install -y libfluidsynth-dev
+```
+
+El `CMakeLists.txt` de `core/` detecta FluidSynth vía `pkg-config`
+(`pkg_check_modules(FLUIDSYNTH REQUIRED fluidsynth)`) y enlaza la
+aplicación contra la librería del sistema.
+
 ## 4. Docker
 
 El repositorio incluye un `Dockerfile` que instala todas las dependencias necesarias para compilar el proyecto dentro de un contenedor basado en Ubuntu 22.04.
@@ -112,7 +131,7 @@ sudo apt-get install -y \
   libxinerama-dev libxrandr-dev libxrender-dev \
   libfreetype6-dev libgl1-mesa-dev \
   libssl-dev libcurl4-openssl-dev libgtk-3-dev \
-  libopencv-dev
+  libopencv-dev libfluidsynth-dev
 
 # Obtener JUCE como submódulo (si no se ha hecho)
 git submodule add https://github.com/juce-framework/JUCE.git JUCE

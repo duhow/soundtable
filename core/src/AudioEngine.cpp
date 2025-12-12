@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/SampleplaySynth.h"
+
 AudioEngine::AudioEngine()
 {
     // Initialise with no inputs and stereo outputs.
@@ -16,6 +18,11 @@ AudioEngine::AudioEngine()
         deviceManager_.addAudioCallback(this);
         juce::Logger::writeToLog("[rectai-core] Audio engine initialised.");
     }
+
+    // Prepare SampleplaySynth instance; the actual SoundFont and
+    // sample rate will be configured later from MainComponent and
+    // audioDeviceAboutToStart respectively.
+    sampleplaySynth_ = std::make_unique<rectai::SampleplaySynth>();
 }
 
 AudioEngine::~AudioEngine()
@@ -50,6 +57,16 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
         voices_[v].waveform.store(0, std::memory_order_relaxed);
         noiseState_[v] = 0x1234567u + static_cast<std::uint32_t>(v) *
                                          0x01010101u;
+    }
+
+    // Resize Sampleplay scratch buffers to fit the maximum expected
+    // block size and inform the internal synth about the current
+    // sample rate.
+    sampleplayLeft_.assign(static_cast<std::size_t>(maxBlockSize), 0.0F);
+    sampleplayRight_.assign(static_cast<std::size_t>(maxBlockSize), 0.0F);
+
+    if (sampleplaySynth_ != nullptr) {
+        sampleplaySynth_->setSampleRate(sampleRate_);
     }
 }
 
@@ -94,8 +111,28 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     const int baseWriteIndex =
         waveformWriteIndex_.fetch_add(numSamples, std::memory_order_relaxed);
 
+    // Pull any active Sampleplay voices from the FluidSynth-backed
+    // synthesiser into scratch buffers. If the buffers are smaller
+    // than the current block, grow them on the fly.
+    if (static_cast<int>(sampleplayLeft_.size()) < numSamples) {
+        sampleplayLeft_.resize(static_cast<std::size_t>(numSamples), 0.0F);
+    }
+    if (static_cast<int>(sampleplayRight_.size()) < numSamples) {
+        sampleplayRight_.resize(static_cast<std::size_t>(numSamples), 0.0F);
+    }
+
+    std::fill(sampleplayLeft_.begin(),
+              sampleplayLeft_.begin() + numSamples, 0.0F);
+    std::fill(sampleplayRight_.begin(),
+              sampleplayRight_.begin() + numSamples, 0.0F);
+
+    if (sampleplaySynth_ != nullptr) {
+        sampleplaySynth_->render(sampleplayLeft_.data(),
+                                 sampleplayRight_.data(), numSamples);
+    }
+
     for (int sample = 0; sample < numSamples; ++sample) {
-        float mixed = 0.0F;
+        float oscMixed = 0.0F;
 
         const int writeIndex = baseWriteIndex + sample;
         const int bufIndex =
@@ -176,23 +213,48 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 
                 // Apply level scaling for audio output.
                 const float scaledOutput = s * level;
-                mixed += scaledOutput;
+                oscMixed += scaledOutput;
             }
 
             // Prevent hard digital clipping when summing several
-            // voices or using high-Q filter settings.
-            mixed = juce::jlimit(-0.9F, 0.9F, mixed);
-            waveformBuffer_[bufIndex] = mixed;
+            // voices or using high-Q filter settings on the
+            // oscillator side. FluidSynth output is assumed to be
+            // already well behaved; we clip after mixing both.
+            oscMixed = juce::jlimit(-0.9F, 0.9F, oscMixed);
+
+            const float leftOut =
+                juce::jlimit(-0.9F, 0.9F,
+                             sampleplayLeft_[sample] + oscMixed);
+            const float rightOut =
+                juce::jlimit(-0.9F, 0.9F,
+                             sampleplayRight_[sample] + oscMixed);
+
+            // Store the mixed mono signal (left channel) for
+            // waveform visualisation.
+            waveformBuffer_[bufIndex] = leftOut;
+
+            for (int channel = 0; channel < numOutputChannels; ++channel) {
+                if (auto* buffer = outputChannelData[channel]) {
+                    if (channel == 0) {
+                        buffer[sample] = leftOut;
+                    } else if (channel == 1) {
+                        buffer[sample] = rightOut;
+                    } else {
+                        // Duplicate left channel into any extra
+                        // outputs.
+                        buffer[sample] = leftOut;
+                    }
+                }
+            }
         } else {
             waveformBuffer_[bufIndex] = 0.0F;
             for (int v = 0; v < kMaxVoices; ++v) {
                 voiceWaveformBuffer_[v][bufIndex] = 0.0F;
             }
-        }
-
-        for (int channel = 0; channel < numOutputChannels; ++channel) {
-            if (auto* buffer = outputChannelData[channel]) {
-                buffer[sample] = mixed;
+            for (int channel = 0; channel < numOutputChannels; ++channel) {
+                if (auto* buffer = outputChannelData[channel]) {
+                    buffer[sample] = 0.0F;
+                }
             }
         }
     }
@@ -235,6 +297,32 @@ void AudioEngine::setVoiceWaveform(const int index,
 
     const int clamped = juce::jlimit(0, 3, waveformIndex);
     voices_[index].waveform.store(clamped, std::memory_order_relaxed);
+}
+
+void AudioEngine::setSampleplaySoundfont(const std::string& path)
+{
+    if (sampleplaySynth_ == nullptr) {
+        return;
+    }
+
+    std::string error;
+    if (!sampleplaySynth_->loadSoundfont(path, &error)) {
+        juce::Logger::writeToLog(
+            juce::String("[rectai-core] Sampleplay: failed to load "
+                         "soundfont in AudioEngine: ") +
+            path + " (" + error + ")");
+    }
+}
+
+void AudioEngine::triggerSampleplayNote(const int bank, const int program,
+                                        const int midiKey,
+                                        const float velocity01)
+{
+    if (sampleplaySynth_ == nullptr) {
+        return;
+    }
+
+    sampleplaySynth_->noteOn(bank, program, midiKey, velocity01);
 }
 
 void AudioEngine::getWaveformSnapshot(float* dst, const int numPoints,

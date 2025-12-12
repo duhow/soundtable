@@ -138,6 +138,12 @@ private:
     void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
                                       std::int64_t objectIdB);
 
+    // Trigger Sampleplay notes (via FluidSynth in AudioEngine) on
+    // every beat of the global tempo. `strongBeat` is true on the
+    // downbeat of each 4-beat bar and can be used to slightly accent
+    // the velocity.
+    void triggerSampleplayNotesOnBeat(bool strongBeat);
+
     // Touch interface state.
     bool isTouchActive_{false};
     bool isTouchHeld_{false};

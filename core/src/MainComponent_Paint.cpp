@@ -1132,6 +1132,42 @@ void MainComponent::paint(juce::Graphics& g)
             }
         }
 
+        // Sampleplay instrument title: when a Sampleplay module has
+        // one or more instruments declared, render the active
+        // instrument name to the right of the node body so that the
+        // currently selected sound is visible on the table. The text
+        // follows the same rotation as the module when inside the
+        // musical area, so "right" is interpreted in the module's
+        // local space.
+        if (const auto* sampleModule =
+                dynamic_cast<const rectai::SampleplayModule*>(
+                    moduleForObject)) {
+            const auto* activeInstrument =
+                sampleModule->active_instrument();
+            if (activeInstrument != nullptr &&
+                !activeInstrument->name.empty()) {
+                const juce::String instrumentName(
+                    activeInstrument->name);
+                const float labelMargin = 10.0F;
+                const float labelHeight = 18.0F;
+                const float labelWidth = 140.0F;
+                juce::Rectangle<float> labelBounds(
+                    cx + nodeRadius + labelMargin,
+                    cy - labelHeight * 0.5F,
+                    labelWidth,
+                    labelHeight);
+
+                const float brightness = bodyColour.getBrightness();
+                const juce::Colour textColour =
+                    brightness > 0.6F ? juce::Colours::white
+                                      : juce::Colours::white;
+                g.setColour(textColour.withAlpha(0.9F));
+                g.setFont(13.0F);
+                g.drawText(instrumentName, labelBounds,
+                           juce::Justification::centredLeft, false);
+            }
+        }
+
 #if !defined(NDEBUG)
         // Debug overlay: show the object/module id to the right of the
         // node so that we can quickly match dock entries and table

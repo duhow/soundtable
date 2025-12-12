@@ -50,7 +50,10 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     // (sine -> saw -> square -> noise -> ...), updating the icon
     // to match the selected subtype. Right-click on a Filter tangible
     // cycles its mode (low-pass -> band-pass -> high-pass) and updates
-    // the icon accordingly.
+    // the icon accordingly. Right-click on a Sampleplay tangible
+    // cycles through the available instruments declared in the
+    // Reactable patch, updating the title rendered next to the
+    // module.
     if (isRightClick) {
         for (const auto& [id, object] : objects) {
             if (object.logical_id() == "-1" || object.docked()) {
@@ -88,6 +91,14 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 dynamic_cast<rectai::FilterModule*>(modIt->second.get());
             if (filterModule != nullptr) {
                 filterModule->cycle_mode();
+                repaint();
+                return;
+            }
+
+            if (auto* sampleModule =
+                    dynamic_cast<rectai::SampleplayModule*>(
+                        modIt->second.get())) {
+                sampleModule->CycleInstrument();
                 repaint();
                 return;
             }

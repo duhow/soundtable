@@ -112,6 +112,106 @@ void MainComponent::toggleHardlinkBetweenObjects(
     (void)scene_.AddConnection(upgraded);
 }
 
+void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
+{
+    const auto& objects = scene_.objects();
+    const auto& modules = scene_.modules();
+
+    // Global master volume derived from the Volume module, if present.
+    float globalVolumeParam = 1.0F;
+    for (const auto& [id, modulePtr] : modules) {
+        if (modulePtr == nullptr) {
+            continue;
+        }
+
+        const auto* volumeModule =
+            dynamic_cast<const rectai::VolumeModule*>(modulePtr.get());
+        if (volumeModule != nullptr) {
+            globalVolumeParam =
+                volumeModule->GetParameterOrDefault("volume", 0.9F);
+            break;
+        }
+    }
+
+    float globalVolumeGain = 1.0F;
+    if (globalVolumeParam <= 0.0F) {
+        globalVolumeGain = 0.0F;
+    } else if (globalVolumeParam < 1.0F) {
+        const float db = -40.0F * (1.0F - globalVolumeParam);
+        const float linear = std::pow(10.0F, db / 20.0F);
+        globalVolumeGain = linear;
+    }
+
+    for (const auto& [objId, obj] : objects) {
+        const auto modIt = modules.find(obj.logical_id());
+        if (modIt == modules.end() || modIt->second == nullptr) {
+            continue;
+        }
+
+        const auto* module = modIt->second.get();
+        const auto* sampleModule =
+            dynamic_cast<const rectai::SampleplayModule*>(module);
+        if (sampleModule == nullptr) {
+            continue;
+        }
+
+        if (!isInsideMusicArea(obj)) {
+            continue;
+        }
+
+        const bool muted =
+            mutedObjects_.find(objId) != mutedObjects_.end();
+        if (muted) {
+            continue;
+        }
+
+        const auto* activeInst = sampleModule->active_instrument();
+        if (activeInst == nullptr) {
+            continue;
+        }
+
+        // Derive MIDI note from the `midifreq` parameter as before.
+        const float midiNote = sampleModule->GetParameterOrDefault(
+            "midifreq", 87.0F);
+        const int midiKey = juce::jlimit(
+            0, 127,
+            static_cast<int>(std::lround(static_cast<double>(midiNote))));
+
+        const float ampParam = sampleModule->GetParameterOrDefault(
+            "amp", 1.0F);
+        if (ampParam <= 0.0F) {
+            continue;
+        }
+
+        const float baseLevel = sampleModule->base_level();
+        const float extra = sampleModule->level_range() * ampParam;
+        float chainLevel =
+            (ampParam <= 0.0F) ? 0.0F : (baseLevel + extra);
+
+        // Apply master volume and a small accent on strong beats.
+        float velocity01 = chainLevel * globalVolumeGain;
+        if (strongBeat) {
+            velocity01 *= 1.1F;
+        }
+
+        if (velocity01 <= 0.0F) {
+            continue;
+        }
+
+        velocity01 = juce::jlimit(0.0F, 1.0F, velocity01);
+
+        audioEngine_.triggerSampleplayNote(activeInst->bank,
+                                           activeInst->program,
+                                           midiKey, velocity01);
+
+        // Mark the module as carrying audio for visual purposes so
+        // its connections can be highlighted, even though the
+        // underlying waveform comes from FluidSynth rather than the
+        // internal oscillators.
+        modulesWithActiveAudio_.insert(sampleModule->id());
+    }
+}
+
 void MainComponent::timerCallback()
 {
     // Map scene state to audio parameters using AudioModule metadata.
@@ -827,17 +927,21 @@ void MainComponent::timerCallback()
     // Spawn a new pulse on every beat; every 4th beat is stronger.
     const double bps = bpm_ / 60.0;  // beats per second
     beatPhase_ += bps * dt;
-    if (beatPhase_ >= 1.0) {
-        beatPhase_ -= 1.0;
+        if (beatPhase_ >= 1.0) {
+            beatPhase_ -= 1.0;
 
-        const bool strong = (beatIndex_ % 4 == 0);
-        pulses_.push_back(Pulse{0.0F, strong});
+            const bool strong = (beatIndex_ % 4 == 0);
+            pulses_.push_back(Pulse{0.0F, strong});
 
-        ++beatIndex_;
-        if (beatIndex_ >= 4) {
-            beatIndex_ = 0;
+            // Trigger Sampleplay notes in sync with the global
+            // transport using FluidSynth.
+            triggerSampleplayNotesOnBeat(strong);
+
+            ++beatIndex_;
+            if (beatIndex_ >= 4) {
+                beatIndex_ = 0;
+            }
         }
-    }
 
     // Advance connection flow phase (used for pulses along edges).
     connectionFlowPhase_ += dt;

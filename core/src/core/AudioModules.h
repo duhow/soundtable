@@ -51,6 +51,8 @@ struct SequenceTrack {
 // Instrument entry for Sampleplay tangibles.
 struct SampleInstrument {
         std::string name;
+        int bank{0};
+        int program{0};
 };
 
 // --- Concrete audio module implementations that leverage AudioModule ---
@@ -295,6 +297,24 @@ class SampleplayModule : public AudioModule {
                 return instruments_;
         }
 
+        // Returns the index of the currently active instrument, or
+        // -1 when there are no instruments defined.
+        [[nodiscard]] int active_instrument_index() const;
+
+        // Sets the active instrument index, clamping it to the valid
+        // range [0, instruments().size()). If there are no
+        // instruments, the index is set to -1.
+        void set_active_instrument_index(int index);
+
+        // Convenience helper used by the UI: advances the active
+        // instrument index to the next available entry, wrapping
+        // around at the end of the list.
+        void CycleInstrument();
+
+        // Returns a pointer to the currently active instrument, or
+        // nullptr if there is none.
+        [[nodiscard]] const SampleInstrument* active_instrument() const;
+
         // Soundfont handling -------------------------------------------------
         //
         // The Sampleplay module can be associated with a single SoundFont
@@ -312,6 +332,22 @@ class SampleplayModule : public AudioModule {
                 return soundfont_path_;
         }
 
+        // Raw filename as declared in the Reactable patch (e.g.
+        // "default.sf2"). This is kept separate from `soundfont_path_`,
+        // which stores the fully resolved path validated by
+        // LoadSoundfont(). UI code can use this value together with
+        // rectai::ui::loadFile to locate the asset within the
+        // com.reactable/ tree.
+        [[nodiscard]] const std::string& raw_soundfont_name() const
+        {
+                return raw_soundfont_name_;
+        }
+
+        void set_raw_soundfont_name(std::string name)
+        {
+                raw_soundfont_name_ = std::move(name);
+        }
+
         // Attempts to associate this module with a SoundFont file.
         // On success, returns true and clears `error_message` (if non-null).
         // On failure, returns false and writes a short description of the
@@ -321,8 +357,10 @@ class SampleplayModule : public AudioModule {
 
  private:
         std::vector<SampleInstrument> instruments_;
+        std::string raw_soundfont_name_;
         std::string soundfont_path_;
         bool soundfont_loaded_{false};
+        int active_instrument_index_{-1};
 };
 
 }  // namespace rectai

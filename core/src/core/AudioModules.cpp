@@ -427,6 +427,7 @@ SampleplayModule::SampleplayModule(const std::string& id)
   SetParameter("midifreq", 57.0F);
   // The actual filename and instruments are kept in the
   // SampleplayModule-specific data structures.
+  active_instrument_index_ = -1;
 }
 
 bool SampleplayModule::LoadSoundfont(const std::string& path,
@@ -471,6 +472,75 @@ bool SampleplayModule::LoadSoundfont(const std::string& path,
   soundfont_path_ = path;
   soundfont_loaded_ = true;
   return true;
+}
+
+int SampleplayModule::active_instrument_index() const
+{
+  if (instruments_.empty()) {
+    return -1;
+  }
+
+  if (active_instrument_index_ < 0) {
+    return 0;
+  }
+
+  const int maxIndex =
+      static_cast<int>(instruments_.size()) - 1;
+  if (active_instrument_index_ > maxIndex) {
+    return maxIndex;
+  }
+
+  return active_instrument_index_;
+}
+
+void SampleplayModule::set_active_instrument_index(const int index)
+{
+  if (instruments_.empty()) {
+    active_instrument_index_ = -1;
+    return;
+  }
+
+  const int maxIndex =
+      static_cast<int>(instruments_.size()) - 1;
+  if (index < 0) {
+    active_instrument_index_ = 0;
+  } else if (index > maxIndex) {
+    active_instrument_index_ = maxIndex;
+  } else {
+    active_instrument_index_ = index;
+  }
+}
+
+void SampleplayModule::CycleInstrument()
+{
+  if (instruments_.empty()) {
+    active_instrument_index_ = -1;
+    return;
+  }
+
+  const int count = static_cast<int>(instruments_.size());
+  int index = active_instrument_index_;
+  if (index < 0 || index >= count) {
+    index = 0;
+  }
+
+  index = (index + 1) % count;
+  active_instrument_index_ = index;
+}
+
+const SampleInstrument* SampleplayModule::active_instrument() const
+{
+  if (instruments_.empty()) {
+    return nullptr;
+  }
+
+  const int index = active_instrument_index();
+  if (index < 0 ||
+      index >= static_cast<int>(instruments_.size())) {
+    return nullptr;
+  }
+
+  return &instruments_[static_cast<std::size_t>(index)];
 }
 
 }  // namespace rectai

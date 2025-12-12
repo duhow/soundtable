@@ -2,10 +2,16 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+
+namespace rectai {
+class SampleplaySynth;
+}  // namespace rectai
 
 // Minimal audio engine for the RectaiTable core.
 //
@@ -70,6 +76,21 @@ public:
     // updated coefficients on the next callback.
     void setVoiceFilter(int index, int mode, double cutoffHz, float q);
 
+    // SoundFont / Sampleplay integration ---------------------------------
+
+    // Associates a SoundFont2 file path with the internal
+    // SampleplaySynth instance. If FluidSynth is not available or the
+    // soundfont cannot be loaded, the call is ignored and Sampleplay
+    // notes will remain silent.
+    void setSampleplaySoundfont(const std::string& path);
+
+    // Triggers a single Sampleplay note using the given bank/program
+    // preset, MIDI key (0-127) and normalised velocity in [0,1]. The
+    // note is rendered by FluidSynth and mixed with the procedural
+    // oscillators.
+    void triggerSampleplayNote(int bank, int program, int midiKey,
+                               float velocity01);
+
 private:
     juce::AudioDeviceManager deviceManager_;
 
@@ -111,4 +132,14 @@ private:
 
     // Simple per-voice RNG state used for noise waveforms.
     std::uint32_t noiseState_[kMaxVoices]{};
+
+    // Optional FluidSynth-based synthesiser used by Sampleplay
+    // modules. Owned by the audio engine and rendered alongside the
+    // procedural oscillators.
+    std::unique_ptr<rectai::SampleplaySynth> sampleplaySynth_;
+
+    // Scratch buffers used to pull stereo audio from SampleplaySynth
+    // before mixing it with the oscillator voices.
+    std::vector<float> sampleplayLeft_;
+    std::vector<float> sampleplayRight_;
 };

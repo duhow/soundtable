@@ -12,6 +12,7 @@
 #include "AudioEngine.h"
 #include "core/AudioModules.h"
 #include "core/ReactableRtpLoader.h"
+#include "core/SoundfontUtils.h"
 #include "MainComponentHelpers.h"
 
 MainComponent::MainComponent(AudioEngine& audioEngine)
@@ -74,6 +75,122 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
         return false;
     };
 
+    const auto loadSampleplaySoundfonts = [this]() {
+        const auto& modules = scene_.modules();
+
+        // Track whether we have already configured a SoundFont path
+        // in the audio engine so that multiple Sampleplay modules
+        // sharing el mismo archivo no causen recargas redundantes.
+        bool audioEngineSoundfontSet = false;
+
+        for (const auto& [id, modulePtr] : modules) {
+            juce::ignoreUnused(id);
+            if (modulePtr == nullptr) {
+                continue;
+            }
+
+            auto* sampleModule =
+                dynamic_cast<rectai::SampleplayModule*>(
+                    modulePtr.get());
+            if (sampleModule == nullptr) {
+                continue;
+            }
+
+            // Remember the first instrument name defined in the
+            // .rtp file (if any) so we can use it as a preferred
+            // default when rebuilding the instrument list from the
+            // SoundFont itself.
+            std::string preferredInstrumentName;
+            const auto& rtpInstruments = sampleModule->instruments();
+            if (!rtpInstruments.empty()) {
+                preferredInstrumentName = rtpInstruments.front().name;
+            }
+
+            std::string rawName = sampleModule->raw_soundfont_name();
+            if (rawName.empty()) {
+                // Fallback to the default Reactable soundfont name
+                // used by the bundled patches.
+                rawName = "default.sf2";
+            }
+
+            const juce::String relativePath =
+                juce::String("Soundfonts/") + rawName;
+            const juce::File sf2File =
+                rectai::ui::loadFile(relativePath);
+            if (!sf2File.existsAsFile()) {
+                juce::Logger::writeToLog(
+                    juce::String("[rectai-core] Sampleplay: soundfont not "
+                                 "found: ") +
+                    sf2File.getFullPathName());
+                continue;
+            }
+
+            std::string error;
+            const bool ok = sampleModule->LoadSoundfont(
+                sf2File.getFullPathName().toStdString(), &error);
+            if (!ok) {
+                juce::Logger::writeToLog(
+                    juce::String("[rectai-core] Sampleplay: failed to load "
+                                 "soundfont: ") +
+                    sf2File.getFullPathName() + " (" + error + ")");
+                continue;
+            }
+
+            // Inform the AudioEngine about the SoundFont path so it
+            // can initialise its internal FluidSynth-backed synth.
+            if (!audioEngineSoundfontSet) {
+                audioEngine_.setSampleplaySoundfont(
+                    sampleModule->soundfont_path());
+                audioEngineSoundfontSet = true;
+            }
+
+            // Once the SoundFont is loaded and validated, enumerate
+            // all presets using FluidSynth and rebuild the
+            // SampleplayModule instrument list from the actual
+            // contents of the .sf2 file, ignoring the list in the
+            // .rtp (except for the preferred default name).
+            std::vector<rectai::SoundfontPreset> presets;
+            std::string enumError;
+            if (!rectai::EnumerateSoundfontPresets(
+                    sampleModule->soundfont_path(), presets,
+                    &enumError)) {
+                juce::Logger::writeToLog(
+                    juce::String("[rectai-core] Sampleplay: failed to "
+                                 "enumerate presets: ") +
+                    sf2File.getFullPathName() + " (" + enumError + ")");
+                continue;
+            }
+
+            auto& instruments = sampleModule->mutable_instruments();
+            instruments.clear();
+            instruments.reserve(presets.size());
+
+            for (const auto& p : presets) {
+                rectai::SampleInstrument inst;
+                inst.name = p.name;
+                inst.bank = p.bank;
+                inst.program = p.program;
+                instruments.push_back(std::move(inst));
+            }
+
+            // If the .rtp file declared a preferred instrument name
+            // and it exists in the SoundFont presets, select it as
+            // the active instrument. Otherwise default to the first
+            // preset in the list.
+            int defaultIndex = 0;
+            if (!preferredInstrumentName.empty()) {
+                for (std::size_t i = 0; i < instruments.size(); ++i) {
+                    if (instruments[i].name == preferredInstrumentName) {
+                        defaultIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+
+            sampleModule->set_active_instrument_index(defaultIndex);
+        }
+    };
+
     if (!loadDefaultPatch()) {
         // Fallback: example scene with a couple of modules and objects.
         auto osc1 = std::make_unique<rectai::OscillatorModule>("osc1");
@@ -97,6 +214,13 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
         scene_.UpsertObject(rectai::ObjectInstance(
             2, "filter1", 0.7F, 0.5F, 0.0F));
     }
+
+    // After the scene has been populated, attempt to resolve and load
+    // SoundFont2 files for any Sampleplay modules present in the
+    // patch. The loader stores the raw filename from the .rtp file;
+    // here we look it up under com.reactable/Soundfonts/ and validate
+    // it via SampleplayModule::LoadSoundfont.
+    loadSampleplaySoundfonts();
 
     // Load Reactable icon atlas (atlas_2048.png + atlas_2048.xml) so that
     // modules can be rendered with their original icons instead of only

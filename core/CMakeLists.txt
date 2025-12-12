@@ -44,6 +44,9 @@ if(UNIX AND NOT APPLE)
         # Fallback for older distros as per JUCE docs
         pkg_check_modules(WEBKIT2GTK_40 REQUIRED webkit2gtk-4.0)
     endif()
+
+    # FluidSynth for SoundFont2 support in Sampleplay modules.
+    pkg_check_modules(FLUIDSYNTH REQUIRED fluidsynth)
 endif()
 
 # Librería de dominio (modelo de escena, módulos, etc.)
@@ -60,12 +63,20 @@ add_library(rectai-core-lib STATIC
 target_include_directories(rectai-core-lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        $<$<AND:$<BOOL:${FLUIDSYNTH_FOUND}>,$<PLATFORM_ID:Linux>>:${FLUIDSYNTH_INCLUDE_DIRS}>
 )
 
 if (MSVC)
     target_compile_options(rectai-core-lib PRIVATE /W4 /permissive-)
 else()
     target_compile_options(rectai-core-lib PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+endif()
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(rectai-core-lib
+        PUBLIC
+            ${FLUIDSYNTH_LIBRARIES}
+    )
 endif()
 
 
