@@ -31,6 +31,8 @@ private:
     [[nodiscard]] bool isInsideMusicArea(
         const rectai::ObjectInstance& obj) const;
 
+    void applyControlDropMuteIfNeeded(const juce::MouseEvent& event);
+
     bool loadAtlasResources();
 
     AudioEngine& audioEngine_;

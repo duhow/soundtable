@@ -31,6 +31,15 @@
 - `MainComponent::paint` usa ahora este flag para dibujar el cursor en blanco en todos los gestos de interacción (ajuste de frecuencia/ganancia, click-and-hold sobre líneas) y en rojo solo en gestos de corte iniciados en espacio vacío. Al arrastrar módulos sobre la mesa el cursor se oculta; en el caso de módulos sacados desde el dock, el cursor solo es visible mientras el puntero permanece dentro del propio dock.
 - El hit-test de las barras laterales de frecuencia/ganancia se ha ampliado: ahora un click en **cualquier punto de la barra** mueve inmediatamente el valor del parámetro hasta esa posición y comienza un gesto de drag desde ahí, en lugar de requerir que el usuario acierte específicamente sobre el handle.
 
+### Drop seguro con CONTROL para Loop/Oscillator/Sampleplay
+- En `MainComponent_Input.cpp` se ha añadido la función auxiliar privada `applyControlDropMuteIfNeeded`, ahora invocada desde `mouseDrag` justo después de actualizar la posición del objeto arrastrado.
+- Cuando, durante un drag con la tecla CONTROL pulsada, el objeto está sobre la mesa (posición actual en el área musical) y el módulo asociado es de tipo `OscillatorModule`, `LoopModule` o `SampleplayModule`, la función fuerza el parámetro de nivel correspondiente a 0: `gain = 0.0` para osciladores y `amp = 0.0` para loops y sampleplays.
+- De este modo, el silencio se aplica en cuanto el módulo entra o se mueve dentro del área musical mientras se mantiene CONTROL, sin esperar al `mouseUp`, proporcionando una forma rápida de “colocar en silencio” estos módulos al situarlos en la mesa y permitiendo luego subir el nivel desde los controles laterales de ganancia.
+
+### Mapeo de ganancia con verdadero 0% de volumen
+- En `MainComponent_Audio.cpp` se ha ajustado el cálculo de `calculatedLevel` para que un parámetro de ganancia normalizado igual a `0.0` produzca un nivel efectivo de `0.0` (silencio real), en lugar de mantener siempre un mínimo basado en `base_level_`.
+- El mapeo pasa de `calculatedLevel = base_level + level_range * gainParam` a una versión que devuelve 0 cuando `gainParam <= 0.0` y solo aplica el offset `base_level` para valores de ganancia mayores que 0, de forma que poner el slider de ganancia al mínimo realmente apaga el oscilador en audio (aunque se siga generando la forma de onda interna para visualización).
+
 ## 2025-12-11
 
 ### Corrección de estiramiento de formas de onda según distancia

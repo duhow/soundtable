@@ -678,7 +678,10 @@ void MainComponent::timerCallback()
 
         const float baseLevel = module->base_level();
         const float extra = module->level_range() * gainParam;
-        const float calculatedLevel = baseLevel + extra;
+        // Ensure that a gain parameter of 0.0 corresponds to true
+        // silence, rather than the minimum base level.
+        const float calculatedLevel =
+            (gainParam <= 0.0F) ? 0.0F : (baseLevel + extra);
         
         // Check if this chain is being held for temporary mute visualization.
         // During hold, we still want to process audio (for waveform capture)

@@ -935,10 +935,15 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     }
     scene_.UpsertObject(updated);
 
+    // If CONTROL is held while dragging a module inside the musical
+    // area, apply a safety mute by setting its volume to 0 as soon as
+    // it is on the table.
+    applyControlDropMuteIfNeeded(event);
+
     repaint();
 }
 
-void MainComponent::mouseUp(const juce::MouseEvent&)
+void MainComponent::mouseUp(const juce::MouseEvent& event)
 {
     // Handle click-and-hold mute release.
     // Always unmute when releasing, regardless of previous state.
@@ -991,4 +996,44 @@ void MainComponent::mouseUp(const juce::MouseEvent&)
     sideControlObjectId_ = 0;
     sideControlKind_ = SideControlKind::kNone;
     isDraggingDockScroll_ = false;
+}
+
+void MainComponent::applyControlDropMuteIfNeeded(
+    const juce::MouseEvent& event)
+{
+    if (!event.mods.isCtrlDown()) {
+        return;
+    }
+
+    if (draggedObjectId_ == 0) {
+        return;
+    }
+
+    const auto& objects = scene_.objects();
+    const auto it = objects.find(draggedObjectId_);
+    if (it == objects.end()) {
+        return;
+    }
+
+    const auto& obj = it->second;
+    if (!isInsideMusicArea(obj)) {
+        return;
+    }
+
+    const auto& modules = scene_.modules();
+    const auto modIt = modules.find(obj.logical_id());
+    if (modIt == modules.end() || modIt->second == nullptr) {
+        return;
+    }
+
+    auto* module = modIt->second.get();
+
+    // Only apply this behaviour to Loop, Oscillator and Sampleplay
+    // modules, mapping to their respective gain/amp parameters.
+    if (dynamic_cast<rectai::OscillatorModule*>(module) != nullptr) {
+        scene_.SetModuleParameter(obj.logical_id(), "gain", 0.0F);
+    } else if (dynamic_cast<rectai::LoopModule*>(module) != nullptr ||
+               dynamic_cast<rectai::SampleplayModule*>(module) != nullptr) {
+        scene_.SetModuleParameter(obj.logical_id(), "amp", 0.0F);
+    }
 }
