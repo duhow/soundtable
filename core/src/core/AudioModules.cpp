@@ -23,7 +23,7 @@ OscillatorModule::OscillatorModule(const std::string& id,
     : AudioModule(id, ModuleType::kGenerator,
                   /*produces_audio=*/true, /*consumes_audio=*/false)
 {
-  set_colour(MakeColour(0x20, 0x90, 0xFF));
+  set_colour(MakeColour(0x23, 0x66, 0xE1));
   set_label("Oscillator");
   set_description(
       "Tone generator feeding the master bus or downstream modules.");

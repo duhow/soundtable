@@ -777,6 +777,20 @@ void MainComponent::paint(juce::Graphics& g)
             activeBase = colourFromArgb(it->second->colour_argb());
         }
 
+        // Force a fully opaque fill for the node body so that the
+        // circular base is always visible even if the underlying ARGB
+        // colour coming from the patch carries a low alpha.
+        activeBase = activeBase.withAlpha(1.0F);
+
+        // Ensure very dark modules (e.g. black LFO/FX blocks) remain
+        // distinguishable against the mostly black background and dock
+        // panel by enforcing a minimum brightness for the rendered node
+        // body, while preserving hue as much as possible.
+        const float brightness = activeBase.getBrightness();
+        if (brightness < 0.12F) {
+            activeBase = activeBase.brighter(0.5F);
+        }
+
         if (isMuted) {
             return activeBase.darker(1.5F).withMultipliedAlpha(0.8F);
         }
@@ -796,9 +810,6 @@ void MainComponent::paint(juce::Graphics& g)
             mutedObjects_.find(entry.first) != mutedObjects_.end();
 
         const auto bodyColour = getBodyColourForObject(object, isMuted);
-
-        const juce::Colour auraColour =
-            bodyColour.withMultipliedAlpha(0.22F).brighter(0.2F);
 
         // Compute the orientation of the module when it lives in the
         // musical area. Modules outside the table (or docked) keep a
@@ -826,22 +837,25 @@ void MainComponent::paint(juce::Graphics& g)
                                                            cx, cy));
         }
 
-        // Aura: soft glow under the object.
-        const float glowRadiusOuter = nodeRadius + 22.0F;
-        const float glowRadiusInner = nodeRadius + 10.0F;
-
-        g.setColour(auraColour.withMultipliedAlpha(0.5F));
-        g.fillEllipse(cx - glowRadiusOuter, cy - glowRadiusOuter,
-                      glowRadiusOuter * 2.0F, glowRadiusOuter * 2.0F);
-
-        g.setColour(auraColour);
-        g.fillEllipse(cx - glowRadiusInner, cy - glowRadiusInner,
-                      glowRadiusInner * 2.0F, glowRadiusInner * 2.0F);
-
         // Node body.
         g.setColour(bodyColour);
         g.fillEllipse(cx - nodeRadius, cy - nodeRadius, nodeRadius * 2.0F,
                       nodeRadius * 2.0F);
+
+        // Explicit outline so the circular base is always visible,
+        // even when the fill colour is close to the background.
+        const float outlineThickness = 2.0F;
+        const float outlineInset = outlineThickness * 0.5F;
+        const juce::Colour outlineColour =
+            (bodyColour.getBrightness() > 0.6F
+                 ? juce::Colours::black.withAlpha(0.9F)
+                 : juce::Colours::white.withAlpha(0.9F));
+        g.setColour(outlineColour);
+        g.drawEllipse(cx - nodeRadius + outlineInset,
+                      cy - nodeRadius + outlineInset,
+                      nodeRadius * 2.0F - outlineThickness,
+                      nodeRadius * 2.0F - outlineThickness,
+                      outlineThickness);
 
         // Side controls: left = curved bar (semi-arc) for Freq,
         // right = curved bar (semi-arc) for Gain, both hugging the
@@ -1118,6 +1132,29 @@ void MainComponent::paint(juce::Graphics& g)
             }
         }
 
+#if !defined(NDEBUG)
+        // Debug overlay: show the object/module id to the right of the
+        // node so that we can quickly match dock entries and table
+        // objects with their underlying ids when inspecting colours or
+        // routing issues.
+        {
+            const juce::String debugId(object.logical_id());
+            const float debugMargin = 6.0F;
+            const float debugWidth = 60.0F;
+            const float debugHeight = 16.0F;
+            juce::Rectangle<float> debugBounds(
+                cx + nodeRadius + debugMargin,
+                cy - debugHeight * 0.5F,
+                debugWidth,
+                debugHeight);
+
+            g.setColour(juce::Colours::white.withAlpha(0.8F));
+            g.setFont(11.0F);
+            g.drawText(debugId, debugBounds,
+                       juce::Justification::centredLeft, false);
+        }
+#endif
+
         // Tempo controller overlay: show the current global BPM as a
         // small integer label positioned just outside the node circle,
         // so it remains legible. The underlying value is kept as a
@@ -1228,7 +1265,7 @@ void MainComponent::paint(juce::Graphics& g)
             dockBounds.removeFromRight(dockWidth);
 
         // Background panel.
-        g.setColour(juce::Colours::black.withAlpha(0.75F));
+        g.setColour(juce::Colour::fromRGB(0x40, 0x40, 0x40));  // #404040
         g.fillRoundedRectangle(dockArea, 10.0F);
         g.setColour(juce::Colours::white.withAlpha(0.25F));
         g.drawRoundedRectangle(dockArea, 10.0F, 1.5F);
@@ -1285,18 +1322,26 @@ void MainComponent::paint(juce::Graphics& g)
                     mutedObjects_.find(id) != mutedObjects_.end();
                 const auto bodyColour =
                     getBodyColourForObject(*obj, isMuted);
-                const auto auraColour =
-                    bodyColour.withMultipliedAlpha(0.22F).brighter(0.15F);
-
-                const float glowRadius = nodeRadiusDock + 14.0F;
-                g.setColour(auraColour.withMultipliedAlpha(0.6F));
-                g.fillEllipse(cx - glowRadius, cy - glowRadius,
-                              glowRadius * 2.0F, glowRadius * 2.0F);
 
                 g.setColour(bodyColour);
                 g.fillEllipse(cx - nodeRadiusDock, cy - nodeRadiusDock,
                               nodeRadiusDock * 2.0F,
                               nodeRadiusDock * 2.0F);
+
+                // Outline in the dock to make the circular capsule
+                // clear against the dock background.
+                const float outlineThickness = 2.0F;
+                const float outlineInset = outlineThickness * 0.5F;
+                const juce::Colour outlineColour =
+                    (bodyColour.getBrightness() > 0.6F
+                         ? juce::Colours::black.withAlpha(0.9F)
+                         : juce::Colours::white.withAlpha(0.9F));
+                g.setColour(outlineColour);
+                g.drawEllipse(cx - nodeRadiusDock + outlineInset,
+                              cy - nodeRadiusDock + outlineInset,
+                              nodeRadiusDock * 2.0F - outlineThickness,
+                              nodeRadiusDock * 2.0F - outlineThickness,
+                              outlineThickness);
 
                 const rectai::AudioModule* moduleForObject = nullptr;
                 if (const auto moduleEntryIt = modules.find(
@@ -1400,6 +1445,28 @@ void MainComponent::paint(juce::Graphics& g)
                                       1.4F);
                     }
                 }
+
+#if !defined(NDEBUG)
+                // Debug overlay in dock: show the module id to the
+                // right of the dock bubble to help visual inspection
+                // of colours and mapping respecto a los ids del .rtp.
+                {
+                    const juce::String debugId(obj->logical_id());
+                    const float debugMargin = 6.0F;
+                    const float debugWidth = 60.0F;
+                    const float debugHeight = 14.0F;
+                    juce::Rectangle<float> debugBounds(
+                        cx + nodeRadiusDock + debugMargin,
+                        cy - debugHeight * 0.5F,
+                        debugWidth,
+                        debugHeight);
+
+                    g.setColour(juce::Colours::white.withAlpha(0.8F));
+                    g.setFont(10.0F);
+                    g.drawText(debugId, debugBounds,
+                               juce::Justification::centredLeft, false);
+                }
+#endif
 
                 // Tempo controller in dock: mirror the same BPM label
                 // used on the main surface so that rotating the docked

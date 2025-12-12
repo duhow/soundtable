@@ -7,13 +7,10 @@ namespace rectai::ui {
 
 juce::Colour colourFromArgb(const std::uint32_t argb)
 {
-    const auto alpha = static_cast<juce::uint8>((argb >> 24U) & 0xFFU);
-    const auto red = static_cast<juce::uint8>((argb >> 16U) & 0xFFU);
-    const auto green = static_cast<juce::uint8>((argb >> 8U) & 0xFFU);
-    const auto blue = static_cast<juce::uint8>(argb & 0xFFU);
-    // juce::Colour stores colours internally as ARGB; this constructor
-    // expects components in that order.
-    return juce::Colour(alpha, red, green, blue);
+    // JUCE almacena internamente los colores como ARGB en un `uint32`,
+    // por lo que podemos pasar directamente nuestro valor `0xAARRGGBB`
+    // al constructor que acepta un entero en ese formato.
+    return juce::Colour(static_cast<juce::uint32>(argb));
 }
 
 std::string makeConnectionKey(const rectai::Connection& c)

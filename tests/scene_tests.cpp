@@ -168,6 +168,53 @@ int main()
         (void)std::remove(kSf2Path);
     }
 
+    // Colours parsed from .rtp (RGB y RGB+alpha).
+    {
+        const char* kRtpColours =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
+            "<reactablepatch>\n"
+            "  <tangibles>\n"
+            // Loop modules with 6-digit RGB colours.
+            "    <tangible id=\"24\" type=\"Loop\" color=\"d4cd06\" x=\"0\" y=\"0\" angle=\"0\" docked=\"1\" />\n"
+            "    <tangible id=\"29\" type=\"Loop\" color=\"e76200\" x=\"0\" y=\"0\" angle=\"0\" docked=\"1\" />\n"
+            "    <tangible id=\"34\" type=\"Loop\" color=\"2366e1\" x=\"0\" y=\"0\" angle=\"0\" docked=\"1\" />\n"
+            "    <tangible id=\"39\" type=\"Loop\" color=\"23cb43\" x=\"0\" y=\"0\" angle=\"0\" docked=\"1\" />\n"
+            // Delay with 8-digit RGB+alpha colour (black, fully opaque).
+            "    <tangible id=\"10\" type=\"Delay\" color=\"000000ff\" x=\"0\" y=\"0\" angle=\"0\" docked=\"0\" />\n"
+            "  </tangibles>\n"
+            "</reactablepatch>\n";
+
+        Scene loaded_scene;
+        ReactablePatchMetadata metadata;
+        std::string error;
+        const bool ok = rectai::LoadReactablePatchFromString(
+            kRtpColours, loaded_scene, &metadata, &error);
+        assert(ok);
+        assert(error.empty());
+
+        const auto& modules = loaded_scene.modules();
+        assert(modules.size() == 5U);
+
+        auto expectColour = [&modules](const char* id,
+                                       std::uint32_t expected) {
+            const auto it = modules.find(id);
+            assert(it != modules.end());
+            const auto* m = it->second.get();
+            assert(m != nullptr);
+            assert(m->colour_argb() == expected);
+        };
+
+        // 6-digit RGB should become 0xFFRRGGBB.
+        expectColour("24", 0xFFD4CD06U);
+        expectColour("29", 0xFFE76200U);
+        expectColour("34", 0xFF2366E1U);
+        expectColour("39", 0xFF23CB43U);
+
+        // 8-digit RRGGBBAA should be interpreted as RGB+alpha
+        // and converted to ARGB internally. 000000ff => opaque black.
+        expectColour("10", 0xFF000000U);
+    }
+
     // Hardlink-based connection creation.
     {
         const char* kRtpWithHardlink =

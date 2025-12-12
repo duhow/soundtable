@@ -129,8 +129,9 @@ bool ParseBool(const AttributeMap& attrs, const std::string& key,
 }
 
 // Parses a colour attribute encoded as a hexadecimal string. Reactable
-// patches typically use 8-digit ARGB (e.g. d5d5d5ff), but some files may
-// provide 6-digit RGB. In that case we assume an opaque alpha of 0xFF.
+// patches typically use 8-digit RGB + alpha (e.g. d5d5d5ff, where the
+// last byte is the alpha channel), but some files may provide 6-digit
+// RGB. In that case we assume an opaque alpha of 0xFF.
 std::uint32_t ParseColourArgb(const AttributeMap& attrs,
                               const std::string& key,
                               const std::uint32_t default_value)
@@ -150,12 +151,15 @@ std::uint32_t ParseColourArgb(const AttributeMap& attrs,
         static_cast<std::uint32_t>(std::stoul(s, nullptr, 16));
 
     if (s.size() == 8U) {
-      // Treat as ARGB directly.
-      return value;
+      // Interpret as RRGGBBAA (RGB + alpha) and convert to the
+      // internal ARGB layout expected by the rest of the code.
+      const std::uint32_t rgb = value >> 8U;
+      const std::uint32_t alpha = value & 0xFFU;
+      return (alpha << 24U) | (rgb & 0x00FFFFFFU);
     }
     if (s.size() == 6U) {
       // Treat as RGB and prepend opaque alpha.
-      return (0xFFU << 24U) | value;
+      return (0xFFU << 24U) | (value & 0x00FFFFFFU);
     }
   } catch (...) {
     // Fall through to default.
@@ -383,8 +387,6 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
       module = std::make_unique<OutputModule>(module_id);
 
       if (metadata != nullptr) {
-        metadata->master_colour_argb =
-            ParseColourArgb(attrs, "color", metadata->master_colour_argb);
         metadata->master_muted =
             ParseBool(attrs, "muted", metadata->master_muted);
       }
@@ -739,6 +741,28 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
     }
 
     if (module != nullptr) {
+      // If the tangible declares a colour attribute, use it to override
+      // the module's visual colour so that the UI matches the original
+      // Reactable patch (e.g. coloured loops, sample players, oscillators
+      // with subtype-specific colours, etc.). When the attribute is not
+      // present, fall back to a dark neutral default (#111111) so that
+      // all modules tienen al menos un color visible y uniforme.
+      std::uint32_t colour = module->colour_argb();
+      const auto itColor = attrs.find("color");
+      if (itColor != attrs.end() && !itColor->second.empty()) {
+        colour = ParseColourArgb(attrs, "color", module->colour_argb());
+      } else {
+        colour = 0xFF111111U;
+      }
+      module->OverrideColour(colour);
+
+      // For the Output (master) tangible we also mirror this colour into
+      // the metadata used by the UI to tint the central node and its
+      // pulses.
+      if (metadata != nullptr && type == "Output") {
+        metadata->master_colour_argb = colour;
+      }
+
       (void)scene.AddModule(std::move(module));
     }
 

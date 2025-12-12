@@ -2,6 +2,18 @@
 
 ## 2025-12-12
 
+### Mejora de visibilidad de la base circular de los módulos
+- En `MainComponent_Paint.cpp` se ha añadido un contorno explícito de alto contraste alrededor del cuerpo circular de cada módulo, tanto en la mesa como en el dock, de forma que la “redonda” bajo cada módulo sea claramente visible incluso cuando el color de relleno está muy próximo al fondo.
+- El color del contorno se elige dinámicamente en función del brillo del módulo (blanco sobre módulos oscuros, negro sobre módulos claros), manteniendo la legibilidad de la silueta sin interferir con la paleta de colores cargada desde los patches `.rtp`.
+ - Además, el color de relleno del nodo se fuerza a ser completamente opaco (`alpha = 1.0`) en la función `getBodyColourForObject`, de modo que aunque algún color ARGB procedente del `.rtp` lleve un canal alpha bajo, la base circular siempre se renderiza como un disco sólido y coloreado.
+
+### Color por defecto unificado y simplificación de nodos
+- En `ReactableRtpLoader.cpp`, cuando un `<tangible>` no declara explícitamente un atributo `color`, el loader ya no conserva el color por defecto definido en el constructor del módulo, sino que sobrescribe el color visual con un valor unificado oscuro `#111111` (`0xFF111111`). Esto garantiza que todos los módulos sin color definido en el `.rtp` comparten una base visual coherente y claramente diferenciable de los módulos coloreados (loops, sampleplays, oscillators, etc.).
+- En `MainComponent_Paint.cpp` se han eliminado los dos círculos adicionales de “aura” bajo cada módulo, tanto en la mesa como en el dock; ahora solo se dibuja el círculo principal del módulo (más su contorno), simplificando la lectura visual y acercando el diseño a la representación más plana que estamos buscando para depurar la paleta de colores.
+
+### Corrección de conversión ARGB → `juce::Colour`
+- Corregida la función `colourFromArgb` en `MainComponentHelpers.cpp`: antes construía `juce::Colour` pasando los cuatro componentes como si el constructor fuera `(alpha, red, green, blue)`, cuando en realidad el constructor de 4 parámetros espera `(red, green, blue, alpha)`. Esto provocaba un corrimiento de canales y que muchos colores se vieran rojizos/blanquecinos.
+- La función ahora extrae los componentes ARGB y usa explícitamente `juce::Colour::fromARGB(alpha, red, green, blue)`, de forma que los colores procedentes de `colour_argb()` (incluidos los `color="..."` del `.rtp`) se respetan exactamente en la UI.
 ### Opacidad diferenciada para pulsos de tempo
 - Ajustado el render de los anillos de pulso en `MainComponent_Paint.cpp` para que los pulsos secundarios de tempo (beats intermedios) se dibujen con menor opacidad que el pulso que marca el beat principal del compás.
 - La estructura `Pulse` sigue marcando los beats fuertes con `strong = true` cada 4 golpes (`beatIndex_`), pero ahora el cálculo de alpha distingue entre ambos: el pulso principal mantiene la opacidad base dependiente de la edad del pulso y del estado de mute del master, mientras que los pulsos secundarios escalan esa opacidad por un factor adicional (≈40%).
@@ -398,6 +410,20 @@
 ### Retorno automático al dock cuando desaparece el fiducial
 - El manejador `/rectai/remove` en `TrackingOscReceiver` deja de llamar directamente a `Scene::RemoveObject` y, en su lugar, busca el `ObjectInstance` asociado al `trackingId` que llega por OSC.
 - Si existe, se crea una nueva instancia con los mismos `tracking_id`, `logical_id`, posición y ángulo, pero con el flag `docked=true`, y se reinyecta en la escena mediante `Scene::UpsertObject`.
+
+### Colores base de módulos desde `default.rtp`
+- Alineado el color base de `OscillatorModule` en `AudioModules.cpp` con el valor definido en el patch Reactable por defecto `com.reactable/Resources/default.rtp`, usando el color azul `#2366e1` especificado para los tangibles `type="Oscillator"` de subtipo `sine`.
+- Revisados los colores de otros módulos (`Output`, `Input`, `Loop`, `Sampleplay`, controladores globales) para confirmar que ya coincidían con los valores de `default.rtp` o, cuando no había color explícito en el XML, mantenían la paleta gris definida previamente.
+ - Añadido un setter público `AudioModule::OverrideColour(uint32_t)` que permite a loaders externos sobreescribir el color visual de un módulo a partir de datos de escena sin exponer directamente `set_colour`.
+ - Actualizado `ReactableRtpLoader.cpp` para que, al crear cada módulo desde un `<tangible>`, lea el atributo `color` (cuando existe) y llame a `OverrideColour`, de modo que los colores de `Output`, `Input`, `Loop`, `Sampleplay` y los distintos `Oscillator` (por ejemplo `sine` azul y `saw` rojo) reflejen exactamente los valores del `default.rtp` y de cualquier otro patch Reactable cargado.
+ - El color del tangible `type="Output"` se sincroniza además con `ReactablePatchMetadata::master_colour_argb`, garantizando que el nodo central y sus pulsos compartan el mismo color definido en el archivo `.rtp`.
+
+### Overlay de IDs de módulo en modo debug
+- Añadido un overlay de texto en `MainComponent_Paint.cpp` que, solo en compilaciones de depuración (`#if !defined(NDEBUG)`), dibuja a la derecha de cada nodo (tanto en la mesa como en el dock) el `logical_id` asociado al `ObjectInstance`/`AudioModule`.
+- Este overlay facilita depurar problemas de mapeo de colores y rutas (por ejemplo, distinguir rápidamente los cuatro `Loop` sampler `24/29/34/39` y su color de `default.rtp`) sin contaminar la apariencia de los builds de Release.
+
+### Color de fondo del dock
+- Actualizado el color de fondo del panel de dock en `MainComponent_Paint.cpp` para que use un gris sólido `#404040` en lugar de un negro semitransparente, mejorando el contraste visual de los módulos dockeados (especialmente los que tienen colores oscuros o negros por defecto) frente al fondo general.
 - Dado que `isInsideMusicArea` considera automáticamente que cualquier objeto `docked` está fuera del área musical, el módulo desaparece de la mesa central y vuelve a aparecer en la barra de dock de la UI, manteniendo intacto su módulo lógico en la escena.
 - Combinado con la unicidad por `logical_id`, esto asegura que cada módulo tiene siempre **una sola** representación espacial: mientras el fiducial está presente, la controla el tracking OSC; cuando desaparece, la representación vuelve al dock sin duplicados.
 

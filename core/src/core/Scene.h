@@ -117,6 +117,12 @@ class AudioModule {
 
   [[nodiscard]] bool CanConnectTo(const AudioModule& other) const;
 
+  // Allows loaders or UI code to override the visual colour of a
+  // module based on external data (e.g. colours stored in a Reactable
+  // .rtp patch). Concrete modules still configure a sensible default
+  // in their constructors; this is an optional override on top.
+  void OverrideColour(const uint32_t argb) { set_colour(argb); }
+
  protected:
   void set_colour(uint32_t argb) { colour_argb_ = argb; }
   void set_label(std::string label) { label_ = std::move(label); }
