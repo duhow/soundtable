@@ -63,6 +63,8 @@ bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
     const float toDx = toObj.x() - centreX;
     const float toDy = toObj.y() - centreY;
 
+    // Ignore degenerate cases extremely close to the table centre to
+    // avoid noisy angle estimates.
     if (std::abs(fromDx) < 1.0e-4F && std::abs(fromDy) < 1.0e-4F) {
         return false;
     }
@@ -83,7 +85,10 @@ bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
         diff += twoPi;
     }
 
-    const float halfCone = juce::MathConstants<float>::pi / 3.0F;  // 120º cone
+    // Use a 120º cone (60º half-angle) around the centre so that
+    // modules only form a dynamic connection when they are reasonably
+    // aligned in direction, not across the whole quadrant.
+    const float halfCone = juce::degreesToRadians(60.0F);
     return std::abs(diff) <= halfCone;
 }
 

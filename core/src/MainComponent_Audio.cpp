@@ -438,6 +438,102 @@ void MainComponent::timerCallback()
         }
     }
 
+    // ------------------------------------------------------------------
+    // Dynamic connection creation based on spatial layout.
+    // ------------------------------------------------------------------
+    {
+        // Consider only objects that are currently inside the musical
+        // area; docked modules and objects outside the circle are
+        // ignored for dynamic connections.
+        std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+            inside;
+        inside.reserve(objects.size());
+        for (const auto& [objId, obj] : objects) {
+            if (isInsideMusicArea(obj)) {
+                inside.emplace_back(objId, &obj);
+            }
+        }
+
+        const auto& existingConnections = scene_.connections();
+
+        // For each unordered pair of objects inside the musical area,
+        // check whether a valid audio connection should exist according
+        // to module policies and the geometric cone. If so, ensure that
+        // a non-hardlink connection (standard out->in) is present.
+        for (std::size_t i = 0; i < inside.size(); ++i) {
+            const auto* objA = inside[i].second;
+
+            const auto modItA = modules.find(objA->logical_id());
+            if (modItA == modules.end() || modItA->second == nullptr) {
+                continue;
+            }
+            auto* moduleA = modItA->second.get();
+
+            for (std::size_t j = i + 1; j < inside.size(); ++j) {
+                const auto* objB = inside[j].second;
+
+                const auto modItB = modules.find(objB->logical_id());
+                if (modItB == modules.end() || modItB->second == nullptr) {
+                    continue;
+                }
+                auto* moduleB = modItB->second.get();
+
+                // Decide connection direction based on existing
+                // connection policies.
+                std::string fromId;
+                std::string toId;
+                const rectai::ObjectInstance* fromObj = nullptr;
+                const rectai::ObjectInstance* toObj = nullptr;
+
+                if (moduleA->CanConnectTo(*moduleB)) {
+                    fromId = moduleA->id();
+                    toId = moduleB->id();
+                    fromObj = objA;
+                    toObj = objB;
+                } else if (moduleB->CanConnectTo(*moduleA)) {
+                    fromId = moduleB->id();
+                    toId = moduleA->id();
+                    fromObj = objB;
+                    toObj = objA;
+                } else {
+                    // No valid audio routing between these modules.
+                    continue;
+                }
+
+                // Respect the geometric cone for dynamic (non-hardlink)
+                // connections. Hardlinks remain always active regardless
+                // of this predicate.
+                if (!isConnectionGeometricallyActive(*fromObj, *toObj)) {
+                    continue;
+                }
+
+                // Skip if a connection already exists between these
+                // modules using the standard audio ports.
+                bool alreadyConnected = false;
+                for (const auto& conn : existingConnections) {
+                    if (conn.from_module_id == fromId &&
+                        conn.to_module_id == toId &&
+                        conn.from_port_name == "out" &&
+                        conn.to_port_name == "in") {
+                        alreadyConnected = true;
+                        break;
+                    }
+                }
+
+                if (alreadyConnected) {
+                    continue;
+                }
+
+                rectai::Connection connection{.from_module_id = fromId,
+                                              .from_port_name = "out",
+                                              .to_module_id = toId,
+                                              .to_port_name = "in",
+                                              .is_hardlink = false};
+                (void)scene_.AddConnection(connection);
+            }
+        }
+    }
+
     // Precompute a lookup from module id to object tracking id, so we can
     // quickly test mute/position for downstream modules.
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;

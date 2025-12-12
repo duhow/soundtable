@@ -241,85 +241,18 @@ void MainComponent::paint(juce::Graphics& g)
     };
 
     auto drawWaveformOnQuadratic =
-        [&g](const juce::Point<float>& p1,
-             const juce::Point<float>& control,
-             const juce::Point<float>& p2, float amplitude,
-             float thickness, const float* samples, int numSamples,
-             float normalisation, int segments) {
-            const juce::Point<float> d1 = control - p1;
-            const juce::Point<float> d2 = p2 - control;
-
-            // Approximate the curve length using the straight-line
-            // distance between endpoints. This is sufficient for
-            // mapping a monotonically increasing distance parameter to
-            // the waveform snapshot in a way that keeps the visual
-            // pattern stable as modules move further apart or closer
-            // together.
-            const float approxLength =
-                std::sqrt((p2.x - p1.x) * (p2.x - p1.x) +
-                          (p2.y - p1.y) * (p2.y - p1.y));
-            if (approxLength <= 0.0F) {
-                return;
-            }
-
-            constexpr float kSamplesPerPixel = 0.8F;
-
-            juce::Path path;
-            for (int i = 0; i <= segments; ++i) {
-                const float t = static_cast<float>(i) /
-                                static_cast<float>(segments);
-                const float oneMinusT = 1.0F - t;
-
-                const juce::Point<float> basePoint =
-                    oneMinusT * oneMinusT * p1 +
-                    2.0F * oneMinusT * t * control + t * t * p2;
-
-                juce::Point<float> tangent =
-                    juce::Point<float>{2.0F * ((1.0F - t) * d1.x + t * d2.x),
-                                       2.0F * ((1.0F - t) * d1.y + t * d2.y)};
-                const float len = std::sqrt(tangent.x * tangent.x +
-                                             tangent.y * tangent.y);
-                if (len <= 0.0F) {
-                    continue;
-                }
-
-                tangent =
-                    juce::Point<float>{tangent.x / len, tangent.y / len};
-                const juce::Point<float> normal{-tangent.y, tangent.x};
-
-                int sampleIndex = 0;
-                if (samples != nullptr && numSamples > 0) {
-                    const float distanceAlongCurve = t * approxLength;
-                    const float samplePos =
-                        distanceAlongCurve * kSamplesPerPixel;
-                    const int wrappedIndex =
-                        static_cast<int>(samplePos) % numSamples;
-                    sampleIndex =
-                        wrappedIndex >= 0 ? wrappedIndex : wrappedIndex + numSamples;
-                }
-
-                float sampleValue =
-                    (samples != nullptr && numSamples > 0)
-                        ? samples[sampleIndex]
-                        : 0.0F;
-                if (normalisation > 0.0F) {
-                    sampleValue *= normalisation;
-                }
-
-                const float displacement = amplitude * sampleValue;
-                const juce::Point<float> offset{
-                    normal.x * displacement, normal.y * displacement};
-                const float x = basePoint.x + offset.x;
-                const float y = basePoint.y + offset.y;
-
-                if (i == 0) {
-                    path.startNewSubPath(x, y);
-                } else {
-                    path.lineTo(x, y);
-                }
-            }
-
-            g.strokePath(path, juce::PathStrokeType(thickness));
+        [&g, &drawWaveformOnLine](const juce::Point<float>& p1,
+                                  const juce::Point<float>& control,
+                                  const juce::Point<float>& p2,
+                                  float amplitude, float thickness,
+                                  const float* samples, int numSamples,
+                                  float normalisation, int segments) {
+            juce::ignoreUnused(control);
+            // For conexiones dinámicas que ya se dibujan como líneas
+            // rectas, reutilizamos drawWaveformOnLine para la
+            // visualización de waveform.
+            drawWaveformOnLine(p1, p2, amplitude, thickness, samples,
+                               numSamples, normalisation, segments);
         };
 
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
@@ -570,12 +503,13 @@ void MainComponent::paint(juce::Graphics& g)
 
         // -----------------------------------------------------------------
         // Connections between modules (Scene::connections) as edges with a
-        // small animated pulse suggesting signal flow. Dynamic connections
-        // are drawn as curved Bézier paths, while hardlink connections use
-        // straight segments. Dynamic connections are active only when the
-        // target lies inside the 120º cone of the source; hardlink
-        // connections remain active regardless of that angular constraint
-        // and are drawn in red instead of white.
+        // small animated pulse suggesting signal flow. Both dynamic and
+        // hardlink connections are rendered as straight segments between
+        // modules; dynamic connections are considered active only when the
+        // target lies inside the geometric cone of the source (see
+        // isConnectionGeometricallyActive), while hardlink connections
+        // remain active regardless of that angular constraint and are drawn
+        // in red instead of white.
         // -----------------------------------------------------------------
         int connectionIndex = 0;
         for (const auto& conn : scene_.connections()) {
@@ -610,21 +544,6 @@ void MainComponent::paint(juce::Graphics& g)
 
             const juce::Point<float> p1{fx, fy};
             const juce::Point<float> p2{tx, ty};
-            const juce::Point<float> mid = (p1 + p2) * 0.5F;
-
-            // Control point slightly offset to provide curvature for
-            // dynamic connections. Hardlinks are drawn as simple
-            // straight segments between nodes.
-            const juce::Point<float> delta = p2 - p1;
-            const float length =
-                std::sqrt(delta.x * delta.x + delta.y * delta.y);
-            juce::Point<float> perpDir{0.0F, 0.0F};
-            if (length > 0.0F) {
-                // Perpendicular vector (rotate 90 degrees CCW)
-                perpDir = juce::Point<float>{-delta.y / length * 20.0F,
-                                             delta.x / length * 20.0F};
-            }
-            const juce::Point<float> control = mid + perpDir;
             const bool isMutedConnection =
                 mutedConnections_.find(makeConnectionKey(conn)) !=
                 mutedConnections_.end();
@@ -780,33 +699,6 @@ void MainComponent::paint(juce::Graphics& g)
                         voiceNorm[voiceIndex] > 0.0F;
                 }
 
-                if (!useWaveformPath) {
-                    juce::Path path;
-                    path.startNewSubPath(p1);
-                    path.quadraticTo(control, p2);
-
-                    g.setColour(activeColour);
-                    const float thickness =
-                        isConnectionMarkedForCut ? 3.0F : 1.5F;
-                    g.strokePath(path, juce::PathStrokeType(thickness));
-                }
-
-                // Animated pulse travelling along the curved
-                // connection.
-                const double phaseOffset =
-                    0.25 * static_cast<double>(connectionIndex);
-                const float t = static_cast<float>(
-                    std::fmod(connectionFlowPhase_ + phaseOffset, 1.0));
-                const float oneMinusT = 1.0F - t;
-
-                const juce::Point<float> flowPoint =
-                    oneMinusT * oneMinusT * p1 +
-                    2.0F * oneMinusT * t * control + t * t * p2;
-
-                g.setColour(juce::Colours::white.withAlpha(0.85F));
-                g.fillEllipse(flowPoint.x - 2.5F, flowPoint.y - 2.5F, 5.0F,
-                              5.0F);
-
                 if (useWaveformPath && voiceIndex >= 0 &&
                     voiceIndex < AudioEngine::kMaxVoices) {
                     const float waveformAmplitude = 2.0F;
@@ -817,11 +709,20 @@ void MainComponent::paint(juce::Graphics& g)
                             ? voicePeriodSamples[voiceIndex]
                             : kWaveformPoints;
                     g.setColour(juce::Colours::white.withAlpha(0.8F));
-                    drawWaveformOnQuadratic(
-                        p1, control, p2, waveformAmplitude,
+                    drawWaveformOnLine(
+                        p1, p2, waveformAmplitude,
                         waveformThickness,
                         voiceWaveforms[voiceIndex], periodSamples,
                         voiceNorm[voiceIndex], 72);
+                }
+
+                // Dynamic, non-hardlink connection without pulse: draw
+                // a straight segment (with or without waveform).
+                if (!useWaveformPath) {
+                    g.setColour(activeColour);
+                    const float thickness =
+                        isConnectionMarkedForCut ? 3.0F : 1.5F;
+                    g.drawLine(juce::Line<float>(p1, p2), thickness);
                 }
             }
 
@@ -1406,24 +1307,10 @@ void MainComponent::paint(juce::Graphics& g)
                         const int destH =
                             juce::roundToInt(iconBounds.getHeight());
 
-                        const bool isTempoIcon =
-                            (moduleForObject != nullptr &&
-                             dynamic_cast<const rectai::TempoModule*>(
-                                 moduleForObject) != nullptr);
-                        if (isTempoIcon) {
-                            juce::Graphics::ScopedSaveState tempoIconState(
-                                g);
-                            g.addTransform(
-                                juce::AffineTransform::rotation(
-                                    -obj->angle_radians(), cx, cy));
-                            g.drawImage(atlasImage_, destX, destY, destW,
-                                        destH, src.getX(), src.getY(),
-                                        src.getWidth(), src.getHeight());
-                        } else {
-                            g.drawImage(atlasImage_, destX, destY, destW,
-                                        destH, src.getX(), src.getY(),
-                                        src.getWidth(), src.getHeight());
-                        }
+                        // Draw the atlas icon within the computed bounds.
+                        g.drawImage(atlasImage_, destX, destY, destW, destH,
+                                    src.getX(), src.getY(), src.getWidth(),
+                                    src.getHeight());
                         drewAtlasIcon = true;
                     }
                 }

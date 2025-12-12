@@ -144,7 +144,14 @@
 - El hit-test para mutear conexiones entre instrumentos también respeta esta regla: solo se puede mutear una conexión clicando sobre ella si ambos instrumentos están dentro del área de música.
 
 ### Ajuste del ángulo del cono de conexión
-- Se ha ampliado el cono geométrico de conexión entre instrumentos de 90º a 120º alrededor del origen, de modo que `isConnectionGeometricallyActive` considera ahora activas más configuraciones espaciales entre módulos `from` y `to`, manteniendo la misma lógica de sectorización pero con mayor tolerancia angular.
+- Se ha reajustado el cono geométrico de conexión entre instrumentos para que `isConnectionGeometricallyActive` utilice ahora un ángulo total de 120º alrededor del origen (60º de semicono). Esto mantiene la idea de sectores angulares alrededor del centro y ofrece una tolerancia algo más amplia, de modo que cuando dos módulos están razonablemente alineados dentro de ese cono se considera que la conexión dinámica está activa.
+
+### Forma de las conexiones dinámicas en la UI
+- Las conexiones entre módulos (`Scene::connections`) que no son hardlink (conexiones dinámicas) se renderizan ahora como segmentos rectos en lugar de curvas de Bézier. El pulso animado que recorre la conexión se mueve linealmente desde el módulo de origen al de destino, y la visualización de waveform también se dibuja sobre la línea recta (`drawWaveformOnLine`), lo que hace que la geometría de las conexiones dinámicas coincida mejor con la expectativa visual de "línea directa" entre módulos cercanos.
+
+### Creación automática de conexiones dinámicas por disposición espacial
+- En `MainComponent::timerCallback` se ha añadido una pasada de mantenimiento que recorre los pares de objetos dentro del área musical y, para cada par de módulos compatibles según `AudioModule::CanConnectTo`, crea automáticamente una conexión dinámica (`Connection` con `is_hardlink = false`) desde el módulo origen al destino cuando el objeto destino cae dentro del cono geométrico de 105º definido por `isConnectionGeometricallyActive`.
+- Estas conexiones automáticas utilizan siempre los puertos estándar `out → in` y solo se crean cuando no existe ya ninguna conexión entre ese par de módulos, de modo que no interfieren con hardlinks existentes ni con conexiones explícitas que se puedan definir en el futuro.
 
 ### Alineación del área de música con la UI
 - La función de utilidad `isInsideMusicArea` se ha movido a `MainComponent` y ahora calcula el área musical en coordenadas de píxel usando exactamente el mismo centro y radio que el círculo de la mesa renderizado en `paint`.

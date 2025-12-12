@@ -23,7 +23,7 @@ std::string makeObjectPairKey(std::int64_t a, std::int64_t b);
 std::string makeModulePairKey(const std::string& fromId,
                               const std::string& toId);
 
-// Returns true if `toObj` lies inside a 120º cone whose vertex is at
+// Returns true if `toObj` lies inside a ~120º cone whose vertex is at
 // the centre of the table and whose axis points towards `fromObj`.
 bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
                                      const rectai::ObjectInstance& toObj);
