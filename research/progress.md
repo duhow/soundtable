@@ -2,6 +2,9 @@
 
 ## 2025-12-13
 
+### Scroll con rueda en el dock de módulos
+- `MainComponent` implementa ahora `mouseWheelMove` para permitir hacer scroll vertical en el dock derecho usando la rueda del ratón siempre que el cursor esté dentro del área del dock. El manejo de la rueda reutiliza el mismo cálculo de límites que el drag vertical del dock (`minOffset` basado en `contentHeight` y `availableHeight`), actualizando `dockScrollOffset_` mediante un pequeño desplazamiento en píxeles proporcional a `wheel.deltaY` y forzando un `repaint()`. De este modo, cuando hay más módulos dockeados de los que caben en pantalla, el usuario puede navegar por la lista tanto arrastrando con el ratón como empleando la rueda, sin afectar al resto de la superficie musical.
+
 ### Enumeración de presets SF2 con FluidSynth y Sampleplay integrado
 - Se ha completado la integración de FluidSynth para el módulo `Sampleplay`, de forma que el audio ya no depende de tonos senoidales de prueba sino de los instrumentos reales del archivo SoundFont2 (`.sf2`). La clase `SampleplaySynth` en `core/src/core/SampleplaySynth.{h,cpp}` encapsula `fluid_settings_t` y `fluid_synth_t` y expone métodos para cargar un soundfont, ajustar el sample rate y renderizar audio estéreo hacia buffers `float*`, además de lanzar notas (`noteOn`) y liberarlas (`noteOff`) según banco/programa y nota MIDI.
 - `AudioEngine` (`core/src/AudioEngine.{h,cpp}`) utiliza ahora `SampleplaySynth` como fuente de audio para todos los módulos de tipo `Sampleplay`. En el callback de audio mezcla el resultado de FluidSynth (buffers izquierdo/derecho) con las voces procedurales existentes (osciladores, etc.), aplicando limitación suave por canal y manteniendo el buffer circular de muestras para la visualización de formas de onda en las líneas.

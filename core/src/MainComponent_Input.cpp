@@ -10,6 +10,65 @@
 using rectai::ui::isConnectionGeometricallyActive;
 using rectai::ui::makeConnectionKey;
 
+void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
+                                   const juce::MouseWheelDetails& wheel)
+{
+    const auto bounds = getLocalBounds().toFloat();
+
+    // Limitar el scroll con rueda sólo al área del dock.
+    auto dockBounds = bounds;
+    const float dockWidth = calculateDockWidth(dockBounds.getWidth());
+    juce::Rectangle<float> dockArea =
+        dockBounds.removeFromRight(dockWidth);
+
+    if (!dockArea.contains(event.position)) {
+        juce::Component::mouseWheelMove(event, wheel);
+        return;
+    }
+
+    const auto& objects = scene_.objects();
+    std::size_t dockCount = 0;
+    for (const auto& [id, obj] : objects) {
+        juce::ignoreUnused(id);
+        if (obj.docked()) {
+            ++dockCount;
+        }
+    }
+
+    if (dockCount == 0) {
+        return;
+    }
+
+    // Replicar la lógica de límites usada en el drag del dock.
+    const float titleHeight = 24.0F;
+    juce::Rectangle<float> titleArea =
+        dockArea.removeFromTop(titleHeight);
+    juce::ignoreUnused(titleArea);
+
+    const float availableHeight = dockArea.getHeight();
+    const float nodeRadiusDock = 18.0F;
+    const float verticalPadding = 12.0F;
+    const float slotHeight =
+        nodeRadiusDock * 2.0F + verticalPadding;
+    const float contentHeight =
+        slotHeight * static_cast<float>(dockCount);
+    const float minOffset =
+        (contentHeight > availableHeight)
+            ? (availableHeight - contentHeight)
+            : 0.0F;
+
+    // deltaY > 0 implica rueda hacia arriba; desplazamos el contenido
+    // en pasos proporcionales a la altura de una ranura del dock para
+    // que cada notch de la rueda avance aproximadamente un módulo.
+    const float scrollStepPixels = slotHeight;
+    const float delta = static_cast<float>(wheel.deltaY) *
+                        scrollStepPixels;
+
+    dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
+                                     dockScrollOffset_ + delta);
+    repaint();
+}
+
 void MainComponent::mouseDown(const juce::MouseEvent& event)
 {
     const auto bounds = getLocalBounds().toFloat();
