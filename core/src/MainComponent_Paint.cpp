@@ -127,11 +127,20 @@ void MainComponent::paint(juce::Graphics& g)
             return numSamples;
         }
 
-        const int maxLag = std::max(1, numSamples / 2);
+        // Ignore very small lags when estimating the period so that
+        // slowly varying or low-frequency content does not collapse to
+        // a 1–2 sample "period". Using such tiny lags would make the
+        // visualisation effectively sample a single point repeatedly,
+        // which appears as a straight line that jumps up and down
+        // instead of a stable sine/saw shape, especially for lower
+        // notes driven by the Sequencer.
+        const int minLag = 4;
+        const int maxLag = std::max(minLag, numSamples / 2);
+
         float bestCorr = 0.0F;
         int bestLag = numSamples;
 
-        for (int lag = 1; lag <= maxLag; ++lag) {
+        for (int lag = minLag; lag <= maxLag; ++lag) {
             float corr = 0.0F;
             const int limit = numSamples - lag;
             for (int i = 0; i < limit; ++i) {
@@ -144,7 +153,7 @@ void MainComponent::paint(juce::Graphics& g)
             }
         }
 
-        if (bestLag <= 0 || bestLag >= numSamples) {
+        if (bestLag < minLag || bestLag >= numSamples) {
             return numSamples;
         }
 
@@ -236,6 +245,42 @@ void MainComponent::paint(juce::Graphics& g)
         return false;
     };
 
+    auto getModuleVisualLevel = [](const rectai::AudioModule* module) {
+        if (module == nullptr) {
+            return 1.0F;
+        }
+
+        if (dynamic_cast<const rectai::VolumeModule*>(module) != nullptr) {
+            const float volume =
+                module->GetParameterOrDefault("volume", 0.9F);
+            return juce::jlimit(0.0F, 1.0F, volume);
+        }
+
+        if (dynamic_cast<const rectai::SampleplayModule*>(module) != nullptr ||
+            dynamic_cast<const rectai::LoopModule*>(module) != nullptr ||
+            dynamic_cast<const rectai::InputModule*>(module) != nullptr) {
+            const float amp = module->GetParameterOrDefault("amp", 1.0F);
+            return juce::jlimit(0.0F, 1.0F, amp);
+        }
+
+        if (dynamic_cast<const rectai::OscillatorModule*>(module) != nullptr) {
+            const float gain = module->GetParameterOrDefault("gain", 0.5F);
+            return juce::jlimit(0.0F, 1.0F, gain);
+        }
+
+        if (dynamic_cast<const rectai::FilterModule*>(module) != nullptr) {
+            const float q = module->GetParameterOrDefault("q", 0.5F);
+            return juce::jlimit(0.0F, 1.0F, q);
+        }
+
+        if (module->uses_gain_control()) {
+            const float gain = module->GetParameterOrDefault("gain", 1.0F);
+            return juce::jlimit(0.0F, 1.0F, gain);
+        }
+
+        return 1.0F;
+    };
+
     auto drawWaveformOnLine = [&g](const juce::Point<float>& start,
                                    const juce::Point<float>& end,
                                    float amplitude, float thickness,
@@ -305,7 +350,21 @@ void MainComponent::paint(juce::Graphics& g)
                 sampleValue *= normalisation;
             }
 
-            const float displacement = amplitude * sampleValue;
+            // Apply a simple fade towards both ends of the line so
+            // that the waveform visually tapers near its start and
+            // end instead of stopping abruptly. The central section
+            // (≈84% de la longitud) mantiene la amplitud completa.
+            float taper = 1.0F;
+            constexpr float kFadeSpan = 0.08F;  // ~8% at each side
+            if (t < kFadeSpan) {
+                const float u = t / kFadeSpan;
+                taper = juce::jlimit(0.0F, 1.0F, u);
+            } else if (t > 1.0F - kFadeSpan) {
+                const float u = (1.0F - t) / kFadeSpan;
+                taper = juce::jlimit(0.0F, 1.0F, u);
+            }
+
+            const float displacement = amplitude * sampleValue * taper;
             const juce::Point<float> offset{normal.x * displacement,
                                             normal.y * displacement};
             const float x = baseX + offset.x;
@@ -443,6 +502,8 @@ void MainComponent::paint(juce::Graphics& g)
                 dynamic_cast<const rectai::SampleplayModule*>(
                     moduleForConnection) != nullptr;
 
+            const float visualLevel = getModuleVisualLevel(moduleForConnection);
+
             // Only modules that actually carry audio (produce or
             // consume audio) draw a radial line to the master. Pure
             // control/MIDI modules such as Sequencer or LFO never
@@ -519,7 +580,7 @@ void MainComponent::paint(juce::Graphics& g)
                 
                 if (voiceIndex >= 0 && voiceIndex < AudioEngine::kMaxVoices && voiceNorm[voiceIndex] > 0.0F) {
                     g.setColour(juce::Colours::white.withAlpha(baseAlpha));
-                    const float waveformAmplitude = 3.0F;
+                    const float waveformAmplitude = 15.0F * visualLevel;
                     const float waveformThickness = 1.4F;
                     // Calculate segments based on physical line length in pixels to maintain
                     // consistent waveform visual density (window effect: longer line shows more cycles).
@@ -561,11 +622,11 @@ void MainComponent::paint(juce::Graphics& g)
                 if (isSampleplayModule && sampleplayNorm > 0.0F) {
                     g.setColour(
                         juce::Colours::white.withAlpha(baseAlpha));
-                    const float waveformAmplitude = 4.0F;
+                    const float waveformAmplitude = 15.0F * visualLevel;
                     const float waveformThickness = 1.4F;
                     const int samplesToUse = kWaveformPoints;
                     drawWaveformOnLine(
-                        line.getStart(), line.getEnd(),
+                        line.getEnd(), line.getStart(),
                         waveformAmplitude, waveformThickness,
                         sampleplayWaveform, samplesToUse,
                         sampleplayNorm, segmentsForWaveform,
@@ -585,14 +646,14 @@ void MainComponent::paint(juce::Graphics& g)
                     voiceNorm[voiceIndex] > 0.0F) {
                     g.setColour(
                         juce::Colours::white.withAlpha(baseAlpha));
-                    const float waveformAmplitude = 3.0F;
+                    const float waveformAmplitude = 15.0F * visualLevel;
                     const float waveformThickness = 1.4F;
                     const int periodSamples =
                         voicePeriodSamples[voiceIndex] > 0
                             ? voicePeriodSamples[voiceIndex]
                             : kWaveformPoints;
                     drawWaveformOnLine(
-                        line.getStart(), line.getEnd(),
+                        line.getEnd(), line.getStart(),
                         waveformAmplitude, waveformThickness,
                         voiceWaveforms[voiceIndex], periodSamples,
                         voiceNorm[voiceIndex], segmentsForWaveform,
@@ -699,6 +760,10 @@ void MainComponent::paint(juce::Graphics& g)
                 (dynamic_cast<const rectai::SampleplayModule*>(
                      toModulePtr) != nullptr);
 
+              const float fromLevel = getModuleVisualLevel(fromModulePtr);
+              const float toLevel = getModuleVisualLevel(toModulePtr);
+              const float connectionLevel = juce::jmax(fromLevel, toLevel);
+
             // Check if this connection is marked for mute toggle.
             const std::string connKey = makeConnectionKey(conn);
             const bool isConnectionMarkedForCut =
@@ -740,7 +805,7 @@ void MainComponent::paint(juce::Graphics& g)
                 
                 if (voiceIndex >= 0 && voiceIndex < AudioEngine::kMaxVoices && voiceNorm[voiceIndex] > 0.0F) {
                     g.setColour(activeColour);
-                    const float waveformAmplitude = conn.is_hardlink ? 2.0F : 2.0F;
+                    const float waveformAmplitude = (conn.is_hardlink ? 10.0F : 10.0F) * connectionLevel;
                     const float waveformThickness = conn.is_hardlink ? 1.2F : 1.2F;
                     // Calculate segments based on physical line length in pixels to maintain
                     // consistent waveform visual density (window effect: longer line shows more cycles).
@@ -791,7 +856,7 @@ void MainComponent::paint(juce::Graphics& g)
 
                 if (audioConn && involvesSampleplay &&
                     sampleplayNorm > 0.0F) {
-                    const float waveformAmplitude = 2.0F;
+                    const float waveformAmplitude = 10.0F * connectionLevel;
                     const float waveformThickness = 1.2F;
                     const int samplesToUse = kWaveformPoints;
                     drawWaveformOnLine(
@@ -815,7 +880,7 @@ void MainComponent::paint(juce::Graphics& g)
                     if (voiceIndex >= 0 &&
                         voiceIndex < AudioEngine::kMaxVoices &&
                         voiceNorm[voiceIndex] > 0.0F) {
-                        const float waveformAmplitude = 2.0F;
+                        const float waveformAmplitude = 10.0F * connectionLevel;
                         const float waveformThickness = 1.2F;
                         const int periodSamples =
                             voicePeriodSamples[voiceIndex] > 0
@@ -863,7 +928,7 @@ void MainComponent::paint(juce::Graphics& g)
                 }
 
                 if (useWaveformPath) {
-                    const float waveformAmplitude = 2.0F;
+                    const float waveformAmplitude = 10.0F * connectionLevel;
                     const float waveformThickness = 1.2F;
 
                     if (voiceIndex >= 0 &&
