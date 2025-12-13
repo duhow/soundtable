@@ -236,7 +236,8 @@ void MainComponent::paint(juce::Graphics& g)
                                    const juce::Point<float>& end,
                                    float amplitude, float thickness,
                                    const float* samples, int numSamples,
-                                   float normalisation, int segments) {
+                                   float normalisation, int segments,
+                                   bool tiled) {
         const juce::Point<float> delta = end - start;
         const float length =
             std::sqrt(delta.x * delta.x + delta.y * delta.y);
@@ -265,11 +266,31 @@ void MainComponent::paint(juce::Graphics& g)
             const float baseY = start.y + delta.y * t;
             int sampleIndex = 0;
             if (samples != nullptr && numSamples > 0) {
-                const float distanceAlongLine = t * length;
-                const float samplePos = distanceAlongLine * kSamplesPerPixel;
-                const int wrappedIndex =
-                    static_cast<int>(samplePos) % numSamples;
-                sampleIndex = wrappedIndex >= 0 ? wrappedIndex : wrappedIndex + numSamples;
+                if (tiled) {
+                    const float distanceAlongLine = t * length;
+                    const float samplePos =
+                        distanceAlongLine * kSamplesPerPixel;
+                    const int wrappedIndex =
+                        static_cast<int>(samplePos) % numSamples;
+                    sampleIndex = wrappedIndex >= 0
+                                       ? wrappedIndex
+                                       : wrappedIndex + numSamples;
+                } else {
+                    // For non-tiled sources (e.g. Sampleplay
+                    // SoundFont output), map the entire buffer
+                    // once along the line so that the visual
+                    // curve reflects a contiguous window of audio
+                    // history instead of a repeated period.
+                    const float samplePos =
+                        t * static_cast<float>(numSamples - 1);
+                    int idx = static_cast<int>(samplePos);
+                    if (idx < 0) {
+                        idx = 0;
+                    } else if (idx >= numSamples) {
+                        idx = numSamples - 1;
+                    }
+                    sampleIndex = idx;
+                }
             }
 
             float sampleValue =
@@ -301,13 +322,15 @@ void MainComponent::paint(juce::Graphics& g)
                                   const juce::Point<float>& p2,
                                   float amplitude, float thickness,
                                   const float* samples, int numSamples,
-                                  float normalisation, int segments) {
+                                  float normalisation, int segments,
+                                  bool tiled) {
             juce::ignoreUnused(control);
             // For conexiones dinámicas que ya se dibujan como líneas
             // rectas, reutilizamos drawWaveformOnLine para la
             // visualización de waveform.
             drawWaveformOnLine(p1, p2, amplitude, thickness, samples,
-                               numSamples, normalisation, segments);
+                               numSamples, normalisation, segments,
+                               tiled);
         };
 
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
@@ -425,6 +448,11 @@ void MainComponent::paint(juce::Graphics& g)
                 (moduleForConnection->produces_audio() ||
                  moduleForConnection->consumes_audio());
 
+            const bool isSampleplayModule =
+                moduleForConnection != nullptr &&
+                dynamic_cast<const rectai::SampleplayModule*>(
+                    moduleForConnection) != nullptr;
+
             // Only modules that actually carry audio (produce or
             // consume audio) draw a radial line to the master. Pure
             // control/MIDI modules such as Sequencer or LFO never
@@ -450,9 +478,24 @@ void MainComponent::paint(juce::Graphics& g)
 
             juce::Line<float> line(centre.x, centre.y, cx, cy);
 
+            const juce::Point<float> lineDelta =
+                line.getEnd() - line.getStart();
+            const float lineLength = std::sqrt(
+                lineDelta.x * lineDelta.x + lineDelta.y * lineDelta.y);
+            const int segmentsForWaveform =
+                juce::jmax(32, static_cast<int>(lineLength / 4.0F));
+
             const bool lineCarriesAudio =
+                // Sampleplay modules use the dedicated Sampleplay
+                // waveform buffer instead of per-voice history and
+                // do not rely on modulesWithActiveAudio_ to decide
+                // whether their radial line carries sound. The
+                // visual waveform will still only be drawn when the
+                // Sampleplay buffer actually contains a non-zero
+                // signal (sampleplayNorm > 0).
+                isSampleplayModule ||
                 modulesWithActiveAudio_.find(object.logical_id()) !=
-                modulesWithActiveAudio_.end();
+                    modulesWithActiveAudio_.end();
 
             // Dim the line slightly when this instrument is feeding
             // another one, so the downstream instrument stands out.
@@ -505,7 +548,8 @@ void MainComponent::paint(juce::Graphics& g)
                         {cx, cy}, splitPoint, waveformAmplitude,
                         waveformThickness, voiceWaveforms[voiceIndex],
                         periodSamples, voiceNorm[voiceIndex],
-                        juce::jmax(1, segmentsForWaveform));
+                        juce::jmax(1, segmentsForWaveform),
+                        /*tiled=*/true);
                 } else {
                     g.setColour(juce::Colours::white.withAlpha(baseAlpha));
                     g.drawLine(juce::Line<float>({cx, cy}, splitPoint), 2.0F);
@@ -524,23 +568,18 @@ void MainComponent::paint(juce::Graphics& g)
                 // voice slot, so their waveform comes from the
                 // dedicated Sampleplay history buffer instead of the
                 // per-voice buffers used by generators.
-                if (moduleForConnection != nullptr &&
-                    dynamic_cast<const rectai::SampleplayModule*>(
-                        moduleForConnection) != nullptr &&
-                    sampleplayNorm > 0.0F) {
+                if (isSampleplayModule && sampleplayNorm > 0.0F) {
                     g.setColour(
                         juce::Colours::white.withAlpha(baseAlpha));
-                    const float waveformAmplitude = 3.0F;
+                    const float waveformAmplitude = 4.0F;
                     const float waveformThickness = 1.4F;
-                    const int periodSamples =
-                        sampleplayPeriodSamples > 0
-                            ? sampleplayPeriodSamples
-                            : kWaveformPoints;
+                    const int samplesToUse = kWaveformPoints;
                     drawWaveformOnLine(
                         line.getStart(), line.getEnd(),
                         waveformAmplitude, waveformThickness,
-                        sampleplayWaveform, periodSamples,
-                        sampleplayNorm, 72);
+                        sampleplayWaveform, samplesToUse,
+                        sampleplayNorm, segmentsForWaveform,
+                        /*tiled=*/false);
                     continue;
                 }
 
@@ -566,7 +605,8 @@ void MainComponent::paint(juce::Graphics& g)
                         line.getStart(), line.getEnd(),
                         waveformAmplitude, waveformThickness,
                         voiceWaveforms[voiceIndex], periodSamples,
-                        voiceNorm[voiceIndex], 72);
+                        voiceNorm[voiceIndex], segmentsForWaveform,
+                        /*tiled=*/true);
                     continue;
                 }
             } else if (isMarkedForCut) {
@@ -649,6 +689,27 @@ void MainComponent::paint(juce::Graphics& g)
                  modulesWithActiveAudio_.find(conn.to_module_id) !=
                      modulesWithActiveAudio_.end());
 
+            // Check if either endpoint of this connection is a
+            // Sampleplay module so we can use the dedicated
+            // Sampleplay waveform history when drawing its audio
+            // path, instead of looking for an oscillator voice.
+            const rectai::AudioModule* fromModulePtr = nullptr;
+            const rectai::AudioModule* toModulePtr = nullptr;
+            if (const auto it = modules.find(conn.from_module_id);
+                it != modules.end() && it->second != nullptr) {
+                fromModulePtr = it->second.get();
+            }
+            if (const auto it = modules.find(conn.to_module_id);
+                it != modules.end() && it->second != nullptr) {
+                toModulePtr = it->second.get();
+            }
+
+            const bool involvesSampleplay =
+                (dynamic_cast<const rectai::SampleplayModule*>(
+                     fromModulePtr) != nullptr) ||
+                (dynamic_cast<const rectai::SampleplayModule*>(
+                     toModulePtr) != nullptr);
+
             // Check if this connection is marked for mute toggle.
             const std::string connKey = makeConnectionKey(conn);
             const bool isConnectionMarkedForCut =
@@ -708,7 +769,8 @@ void MainComponent::paint(juce::Graphics& g)
                         waveformThickness,
                         voiceWaveforms[voiceIndex], periodSamples,
                         voiceNorm[voiceIndex],
-                        juce::jmax(1, segmentsForWaveform));
+                        juce::jmax(1, segmentsForWaveform),
+                        /*tiled=*/true);
                 } else {
                     g.setColour(activeColour);
                     g.drawLine(juce::Line<float>(p1, splitPoint), conn.is_hardlink ? 1.8F : 1.5F);
@@ -738,7 +800,18 @@ void MainComponent::paint(juce::Graphics& g)
                 g.setColour(activeColour);
                 bool drewWave = false;
 
-                if (audioConn) {
+                if (audioConn && involvesSampleplay &&
+                    sampleplayNorm > 0.0F) {
+                    const float waveformAmplitude = 2.0F;
+                    const float waveformThickness = 1.2F;
+                    const int samplesToUse = kWaveformPoints;
+                    drawWaveformOnLine(
+                        p1, p2, waveformAmplitude, waveformThickness,
+                        sampleplayWaveform, samplesToUse,
+                        sampleplayNorm, 64,
+                        /*tiled=*/false);
+                    drewWave = true;
+                } else if (audioConn) {
                     int voiceIndex = -1;
                     if (const auto it = moduleVoiceIndex_.find(
                             conn.from_module_id);
@@ -763,7 +836,8 @@ void MainComponent::paint(juce::Graphics& g)
                             p1, p2, waveformAmplitude,
                             waveformThickness,
                             voiceWaveforms[voiceIndex],
-                            periodSamples, voiceNorm[voiceIndex], 64);
+                            periodSamples, voiceNorm[voiceIndex], 64,
+                            /*tiled=*/true);
                         drewWave = true;
                     }
                 }
@@ -777,37 +851,56 @@ void MainComponent::paint(juce::Graphics& g)
                 bool useWaveformPath = false;
                 int voiceIndex = -1;
                 if (audioConn) {
-                    if (const auto it = moduleVoiceIndex_.find(
-                            conn.from_module_id);
-                        it != moduleVoiceIndex_.end()) {
-                        voiceIndex = it->second;
-                    } else if (const auto it2 = moduleVoiceIndex_.find(
-                                   conn.to_module_id);
-                               it2 != moduleVoiceIndex_.end()) {
-                        voiceIndex = it2->second;
-                    }
+                    if (involvesSampleplay && sampleplayNorm > 0.0F) {
+                        useWaveformPath = true;
+                        voiceIndex = -1;  // use Sampleplay buffer
+                    } else {
+                        if (const auto it = moduleVoiceIndex_.find(
+                                conn.from_module_id);
+                            it != moduleVoiceIndex_.end()) {
+                            voiceIndex = it->second;
+                        } else if (const auto it2 =
+                                       moduleVoiceIndex_.find(
+                                           conn.to_module_id);
+                                   it2 != moduleVoiceIndex_.end()) {
+                            voiceIndex = it2->second;
+                        }
 
-                    useWaveformPath =
-                        voiceIndex >= 0 &&
-                        voiceIndex < AudioEngine::kMaxVoices &&
-                        voiceNorm[voiceIndex] > 0.0F;
+                        useWaveformPath =
+                            voiceIndex >= 0 &&
+                            voiceIndex < AudioEngine::kMaxVoices &&
+                            voiceNorm[voiceIndex] > 0.0F;
+                    }
                 }
 
-                if (useWaveformPath && voiceIndex >= 0 &&
-                    voiceIndex < AudioEngine::kMaxVoices) {
+                if (useWaveformPath) {
                     const float waveformAmplitude = 2.0F;
                     const float waveformThickness = 1.2F;
 
-                    const int periodSamples =
-                        voicePeriodSamples[voiceIndex] > 0
-                            ? voicePeriodSamples[voiceIndex]
-                            : kWaveformPoints;
-                    g.setColour(juce::Colours::white.withAlpha(0.8F));
-                    drawWaveformOnLine(
-                        p1, p2, waveformAmplitude,
-                        waveformThickness,
-                        voiceWaveforms[voiceIndex], periodSamples,
-                        voiceNorm[voiceIndex], 72);
+                    if (voiceIndex >= 0 &&
+                        voiceIndex < AudioEngine::kMaxVoices) {
+                        const int periodSamples =
+                            voicePeriodSamples[voiceIndex] > 0
+                                ? voicePeriodSamples[voiceIndex]
+                                : kWaveformPoints;
+                        g.setColour(
+                            juce::Colours::white.withAlpha(0.8F));
+                        drawWaveformOnLine(
+                            p1, p2, waveformAmplitude,
+                            waveformThickness,
+                            voiceWaveforms[voiceIndex], periodSamples,
+                            voiceNorm[voiceIndex], 72,
+                            /*tiled=*/true);
+                    } else if (sampleplayNorm > 0.0F) {
+                        const int samplesToUse = kWaveformPoints;
+                        g.setColour(
+                            juce::Colours::white.withAlpha(0.8F));
+                        drawWaveformOnLine(
+                            p1, p2, waveformAmplitude,
+                            waveformThickness, sampleplayWaveform,
+                            samplesToUse, sampleplayNorm, 72,
+                            /*tiled=*/false);
+                    }
                 }
 
                 // Dynamic, non-hardlink connection without pulse: draw

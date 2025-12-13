@@ -6,6 +6,7 @@
 #include "AudioEngine.h"
 #include "MainComponentHelpers.h"
 #include "core/AudioModules.h"
+#include "core/MidiTypes.h"
 
 using rectai::ui::isConnectionGeometricallyActive;
 using rectai::ui::makeConnectionKey;
@@ -965,9 +966,10 @@ void MainComponent::timerCallback()
                                  [](const Pulse& p) { return p.age >= 1.0F; }),
                   pulses_.end());
 
-    // Helper to run one audio step of all Sequencer modules for a
-    // given step index, driving downstream Sampleplay/Oscillator
-    // modules according to the precomputed presets.
+    // Helper to run one audio step de todos los módulos Sequencer
+    // para un índice de step dado, generando un MidiNoteEvent por
+    // step activo y dejando que los módulos Sampleplay/Oscillator
+    // consuman ese evento como entrada lógica común.
     auto runSequencerStep = [&](const int stepIndex) {
         const auto& modules = scene_.modules();
         const auto& objects = scene_.objects();
@@ -1117,8 +1119,22 @@ void MainComponent::timerCallback()
                     continue;
                 }
 
-                // 1) Sampleplay: trigger a short note using the
-                // Sequencer step's pitch/velocity.
+                // Construimos una descripción MIDI canónica para el
+                // step actual. El runtime sigue siendo monofónico, de
+                // modo que solo usamos la nota principal, pero el
+                // vector SequencerStep::pitches ya está preparado para
+                // modos futuros.
+                rectai::MidiNoteEvent noteEvent;
+                noteEvent.channel = 0;  // único canal lógico por ahora.
+                noteEvent.note = juce::jlimit(0, 127, step.pitch);
+                noteEvent.velocity01 =
+                    juce::jlimit(0.0F, 1.0F, step.velocity01);
+                noteEvent.timeBeats = transportBeats_;
+                noteEvent.is_note_on = true;
+
+                // 1) Sampleplay: trigger una nota corta usando el
+                // MidiNoteEvent junto con el estado de nivel del
+                // módulo y el volumen global.
                 if (const auto* sampleModule =
                         dynamic_cast<const rectai::SampleplayModule*>(
                             dstModule)) {
@@ -1146,39 +1162,37 @@ void MainComponent::timerCallback()
                             ? 0.0F
                             : (baseLevel + extra);
 
-                    const float stepVelocity =
-                        sequencerControlsVolume_ ? step.velocity01 : 1.0F;
+                    const float stepVelocity = sequencerControlsVolume_
+                                                    ? noteEvent.velocity01
+                                                    : 1.0F;
 
-                    float velocity01 = chainLevel * globalVolumeGain *
-                                       stepVelocity;
-                    if (velocity01 <= 0.0F) {
+                    float effectiveVelocity = chainLevel * globalVolumeGain *
+                                             stepVelocity;
+                    if (effectiveVelocity <= 0.0F) {
                         continue;
                     }
 
-                    velocity01 = juce::jlimit(0.0F, 1.0F, velocity01);
-
-                    const int midiKey = juce::jlimit(
-                        0, 127,
-                        step.pitch);
+                    effectiveVelocity = juce::jlimit(0.0F, 1.0F,
+                                                     effectiveVelocity);
 
                     audioEngine_.triggerSampleplayNote(
                         activeInst->bank, activeInst->program,
-                        midiKey, velocity01);
+                        noteEvent.note, effectiveVelocity);
 
                     modulesWithActiveAudio_.insert(
                         sampleModule->id());
                     continue;
                 }
 
-                // 2) Oscillator: update freq/gain parameters from
-                // pitch/velocity; el motor de audio recogerá los
+                // 2) Oscillator: actualiza freq/gain a partir del
+                // MidiNoteEvent; el motor de audio recogerá los
                 // cambios en el siguiente tick.
                 if (auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
                         dstModule)) {
                     const double targetHz = 440.0 *
                                              std::pow(2.0,
                                                       (static_cast<double>(
-                                                           step.pitch) -
+                                                           noteEvent.note) -
                                                        69.0) /
                                                           12.0);
 
@@ -1197,7 +1211,7 @@ void MainComponent::timerCallback()
 
                     if (sequencerControlsVolume_) {
                         const float gainParam = juce::jlimit(
-                            0.0F, 1.0F, step.velocity01);
+                            0.0F, 1.0F, noteEvent.velocity01);
                         scene_.SetModuleParameter(oscModule->id(), "gain",
                                                   gainParam);
                     }
@@ -1211,6 +1225,12 @@ void MainComponent::timerCallback()
     beatPhase_ += bps * dt;
     if (beatPhase_ >= 1.0) {
         beatPhase_ -= 1.0;
+
+        // Avanza un contador simple de beats para etiquetar
+        // MidiNoteEvent::timeBeats con una posición en beats
+        // monotónica, sin introducir todavía un scheduler MIDI
+        // completo.
+        transportBeats_ += 1.0;
 
         const bool strong = (beatIndex_ % 4 == 0);
         pulses_.push_back(Pulse{0.0F, strong});

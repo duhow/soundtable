@@ -161,6 +161,14 @@ void SampleplaySynth::noteOn(const int bank, const int program,
     velocity = 127;
   }
 
+  // Enforce simple monophonic behaviour on the single FluidSynth
+  // channel used by Sampleplay: before triggering a new note, send
+  // an "all notes off" so any previously playing key enters its
+  // release phase. This prevents long or looping presets from
+  // accumulating and sounding "infinite" when driven repeatedly by
+  // the Sequencer.
+  (void)fluid_synth_all_notes_off(impl_->synth, channel);
+
   // Select the requested preset on the fly before triggering the
   // note. This keeps the interface simple at the cost of a tiny
   // overhead per note-on, which is acceptable for the current

@@ -147,7 +147,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         float oscMixed = 0.0F;
 
         const int writeIndex = baseWriteIndex + sample;
-            const int bufIndex =
+        const int bufIndex =
             historySize > 0 ? (writeIndex % historySize) : 0;
 
         if (voiceCount > 0) {
@@ -237,14 +237,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // Store Sampleplay-only contribution for visualisation
             // before mixing with oscillator voices.
             sampleplayWaveformBuffer_[bufIndex] =
-                sampleplayLeft_[sample];
+                sampleplayLeft_[static_cast<std::size_t>(sample)];
 
-            const float leftOut =
-                juce::jlimit(-0.9F, 0.9F,
-                             sampleplayLeft_[sample] + oscMixed);
-            const float rightOut =
-                juce::jlimit(-0.9F, 0.9F,
-                             sampleplayRight_[sample] + oscMixed);
+            const float leftOut = juce::jlimit(
+                -0.9F, 0.9F,
+                sampleplayLeft_[static_cast<std::size_t>(sample)] +
+                    oscMixed);
+            const float rightOut = juce::jlimit(
+                -0.9F, 0.9F,
+                sampleplayRight_[static_cast<std::size_t>(sample)] +
+                    oscMixed);
 
             // Store the mixed mono signal (left channel) for
             // waveform visualisation.
@@ -264,13 +266,34 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 }
             }
         } else {
-            waveformBuffer_[bufIndex] = 0.0F;
+            // No oscillator voices are active. Still propagate
+            // Sampleplay (SoundFont) audio and keep its waveform
+            // history up to date so that Sampleplay-only scenes
+            // both sound and render correctly.
+            const float leftOut = juce::jlimit(
+                -0.9F, 0.9F,
+                sampleplayLeft_[static_cast<std::size_t>(sample)]);
+            const float rightOut = juce::jlimit(
+                -0.9F, 0.9F,
+                sampleplayRight_[static_cast<std::size_t>(sample)]);
+
+            waveformBuffer_[bufIndex] = leftOut;
+            sampleplayWaveformBuffer_[bufIndex] =
+                sampleplayLeft_[static_cast<std::size_t>(sample)];
+
             for (int v = 0; v < kMaxVoices; ++v) {
                 voiceWaveformBuffer_[v][bufIndex] = 0.0F;
             }
+
             for (int channel = 0; channel < numOutputChannels; ++channel) {
                 if (auto* buffer = outputChannelData[channel]) {
-                    buffer[sample] = 0.0F;
+                    if (channel == 0) {
+                        buffer[sample] = leftOut;
+                    } else if (channel == 1) {
+                        buffer[sample] = rightOut;
+                    } else {
+                        buffer[sample] = leftOut;
+                    }
                 }
             }
         }

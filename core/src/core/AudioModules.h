@@ -48,11 +48,17 @@ struct SequenceTrack {
         std::vector<float> volumes;
 };
 
-// Monophonic step representation used by the internal sequencer.
+// Step representation used by the internal sequencer.
+//
+// The current runtime is monophonic and primarily uses the single
+// `pitch` field, but `pitches` is already present so that future
+// polyphonic modes can attach multiple notes to a single step
+// without changing the data model.
 struct SequencerStep {
-        bool enabled{true};
-        float velocity01{1.0F};
-        int pitch{60};  // MIDI note, C4 by default.
+                bool enabled{true};
+                float velocity01{1.0F};
+                int pitch{60};  // Primary MIDI note, C4 by default.
+                std::vector<int> pitches;  // Optional polyphonic pitches.
 };
 
 // Fixed-size preset bank for the Sequencer.

@@ -357,6 +357,12 @@ SequencerModule::SequencerModule(const std::string& id)
       step.velocity01 = 0.0F;
       step.pitch = 60;
     }
+    // Keep the polyphonic-friendly container in sync with the
+    // primary monophonic pitch. Disabled steps expose no pitches.
+    step.pitches.clear();
+    if (step.enabled) {
+      step.pitches.push_back(step.pitch);
+    }
   }
 }
 
@@ -419,6 +425,15 @@ void SequencerModule::SyncPresetsFromTracks()
         pitch = 127;
       }
       step.pitch = pitch;
+
+      // For now, represent the step's pitch as a single-entry
+      // polyphonic list when enabled, so future runtimes can
+      // iterate `pitches` directly without changing how presets
+      // are loaded from .rtp tracks.
+      step.pitches.clear();
+      if (step.enabled) {
+        step.pitches.push_back(step.pitch);
+      }
     }
   }
 }

@@ -115,6 +115,11 @@ private:
     double sequencerAudioPhase_{0.0};
     int sequencerAudioStep_{0};
 
+    // Contador simple de beats avanzando con el transporte global.
+    // Se usa para etiquetar eventos MidiNoteEvent con una posición
+    // en beats, sin introducir todavía un scheduler MIDI completo.
+    double transportBeats_{0.0};
+
     // Cuando es true, los pasos del Sequencer modulan el volumen
     // (velocidad) de los módulos destino: velocidad de nota en
     // Sampleplay y parámetro "gain" en Oscillator. Cuando es false
