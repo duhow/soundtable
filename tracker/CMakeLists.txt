@@ -14,10 +14,7 @@ add_executable(rectai-tracker
     src/TrackerTypes.h
     src/TrackerState.cpp
     src/TrackerEngine.cpp
-    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/segment.c
-    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/fidtrackX.c
-    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/topologysearch.c
-    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/treeidmap.cpp
+    ${REACTIVISION_SOURCES}
 )
 
 # Place the executable in the top-level build directory so that

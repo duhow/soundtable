@@ -112,7 +112,11 @@ target_sources(${PROJECT_NAME}
 if (MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /W4 /permissive-)
 else()
-    target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+    # Para la app JUCE principal evitamos -Wconversion, ya que provoca
+    # muchos avisos ruidosos en el código de terceros (JUCE/Harfbuzz).
+    # Seguimos usando un nivel alto de warnings en la librería de dominio
+    # rectai-core-lib.
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 target_link_libraries(${PROJECT_NAME}

@@ -25,10 +25,7 @@ find_package(OpenCV REQUIRED core imgproc imgcodecs)
 add_executable(rectai-tracker-tests
     tracker_tests.cpp
     ../tracker/src/TrackerEngine.cpp
-    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/segment.c
-    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/fidtrackX.c
-    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/topologysearch.c
-    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/treeidmap.cpp
+    ${REACTIVISION_SOURCES}
 )
 
 if (MSVC)

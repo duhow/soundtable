@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "AudioEngine.h"
 #include "MainComponentHelpers.h"
@@ -299,7 +300,8 @@ void MainComponent::timerCallback()
         // frequency parameter and clockwise rotation increases it.
         const float deltaFreq = -diff / 360.0F;  // [-0.5, 0.5]
 
-        if (deltaFreq == 0.0F) {
+        if (std::fabs(deltaFreq) <=
+            std::numeric_limits<float>::epsilon()) {
             continue;
         }
 
@@ -335,7 +337,7 @@ void MainComponent::timerCallback()
         }
 
         const float diff = deltaIt->second;
-        if (diff == 0.0F) {
+        if (std::fabs(diff) <= std::numeric_limits<float>::epsilon()) {
             continue;
         }
 
@@ -343,7 +345,8 @@ void MainComponent::timerCallback()
         // sign keeps clockwise/counter-clockwise behaviour consistent
         // across controllers.
         const double deltaBpm = static_cast<double>(-diff / 5.0F);
-        if (deltaBpm == 0.0) {
+        if (std::fabs(deltaBpm) <=
+            std::numeric_limits<double>::epsilon()) {
             continue;
         }
 
@@ -393,14 +396,15 @@ void MainComponent::timerCallback()
         }
 
         const float diff = deltaIt->second;
-        if (diff == 0.0F) {
+        if (std::fabs(diff) <= std::numeric_limits<float>::epsilon()) {
             continue;
         }
 
         // Match the control sense used for frequency and tempo so
         // clockwise/counter-clockwise behaviour remains consistent.
         const float deltaVolume = -diff / 360.0F;  // [-0.5, 0.5]
-        if (deltaVolume == 0.0F) {
+        if (std::fabs(deltaVolume) <=
+            std::numeric_limits<float>::epsilon()) {
             continue;
         }
 
@@ -662,16 +666,14 @@ void MainComponent::timerCallback()
     }
 
     // Map the normalised volume control [0,1] to a perceptual
-    // gain curve in dB so that el volumen por defecto no resulte
-    // excesivo y los cambios pequeños alrededor del 90% sean más
-    // progresivos.
+    // gain curve in dB so that the default volume is not excessive
+    // and small changes around 90% feel more progressive.
     float globalVolumeGain = 1.0F;
     if (globalVolumeParam <= 0.0F) {
         globalVolumeGain = 0.0F;
     } else if (globalVolumeParam >= 1.0F) {
         globalVolumeGain = 1.0F;
     } else {
-        const float minDb = -40.0F;
         const float db = -40.0F * (1.0F - globalVolumeParam);
         const float linear = std::pow(10.0F, db / 20.0F);
         globalVolumeGain = linear;
@@ -966,20 +968,21 @@ void MainComponent::timerCallback()
                                  [](const Pulse& p) { return p.age >= 1.0F; }),
                   pulses_.end());
 
-    // Helper to run one audio step de todos los módulos Sequencer
-    // para un índice de step dado, generando un MidiNoteEvent por
-    // step activo y dejando que los módulos Sampleplay/Oscillator
-    // consuman ese evento como entrada lógica común.
+    // Helper to run one audio step for all Sequencer modules for a
+    // given step index, generating one MidiNoteEvent per active step
+    // and letting Sampleplay/Oscillator modules consume that event as
+    // a shared logical input.
     auto runSequencerStep = [&](const int stepIndex) {
-        const auto& modules = scene_.modules();
-        const auto& objects = scene_.objects();
+        const auto& modulesLocal = scene_.modules();
+        const auto& objectsLocal = scene_.objects();
 
         // Precompute mapping from module id to object id so we can
         // test spatial predicates and mute state for destinations.
-        std::unordered_map<std::string, std::int64_t> moduleToObjectId;
-        moduleToObjectId.reserve(objects.size());
-        for (const auto& [objId, obj] : objects) {
-            moduleToObjectId.emplace(obj.logical_id(), objId);
+        std::unordered_map<std::string, std::int64_t>
+            moduleToObjectIdLocal;
+        moduleToObjectIdLocal.reserve(objectsLocal.size());
+        for (const auto& [objId, obj] : objectsLocal) {
+            moduleToObjectIdLocal.emplace(obj.logical_id(), objId);
         }
 
         if (stepIndex < 0 ||
@@ -987,7 +990,7 @@ void MainComponent::timerCallback()
             return;
         }
 
-        for (const auto& [id, modulePtr] : modules) {
+        for (const auto& [id, modulePtr] : modulesLocal) {
             if (modulePtr == nullptr) {
                 continue;
             }
@@ -1000,13 +1003,13 @@ void MainComponent::timerCallback()
 
             // Require the Sequencer tangible to be present and
             // inside the musical area.
-            const auto objIdIt = moduleToObjectId.find(id);
-            if (objIdIt == moduleToObjectId.end()) {
+            const auto objIdIt = moduleToObjectIdLocal.find(id);
+            if (objIdIt == moduleToObjectIdLocal.end()) {
                 continue;
             }
 
-            const auto objIt = objects.find(objIdIt->second);
-            if (objIt == objects.end()) {
+            const auto objIt = objectsLocal.find(objIdIt->second);
+            if (objIt == objectsLocal.end()) {
                 continue;
             }
 
@@ -1044,8 +1047,8 @@ void MainComponent::timerCallback()
                         }
 
                         const auto modDestIt =
-                            modules.find(conn.to_module_id);
-                        if (modDestIt == modules.end() ||
+                            modulesLocal.find(conn.to_module_id);
+                        if (modDestIt == modulesLocal.end() ||
                             modDestIt->second == nullptr) {
                             continue;
                         }
@@ -1070,13 +1073,14 @@ void MainComponent::timerCallback()
                 }
 
                 const auto toObjIdIt =
-                    moduleToObjectId.find(conn.to_module_id);
-                if (toObjIdIt == moduleToObjectId.end()) {
+                    moduleToObjectIdLocal.find(conn.to_module_id);
+                if (toObjIdIt == moduleToObjectIdLocal.end()) {
                     continue;
                 }
 
-                const auto dstObjIt = objects.find(toObjIdIt->second);
-                if (dstObjIt == objects.end()) {
+                const auto dstObjIt =
+                    objectsLocal.find(toObjIdIt->second);
+                if (dstObjIt == objectsLocal.end()) {
                     continue;
                 }
 
@@ -1090,8 +1094,9 @@ void MainComponent::timerCallback()
                     continue;
                 }
 
-                const auto modDestIt = modules.find(conn.to_module_id);
-                if (modDestIt == modules.end() ||
+                const auto modDestIt =
+                    modulesLocal.find(conn.to_module_id);
+                if (modDestIt == modulesLocal.end() ||
                     modDestIt->second == nullptr) {
                     continue;
                 }

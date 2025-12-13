@@ -198,6 +198,10 @@ void MainComponent::paint(juce::Graphics& g)
                 estimateWaveformPeriod(sampleplayWaveform,
                                        kWaveformPoints);
         }
+
+        // Currently we map the full Sampleplay buffer once along
+        // the line, so the estimated period is not yet used.
+        juce::ignoreUnused(sampleplayPeriodSamples);
     }
 
     auto isAudioConnection = [&modules](const rectai::Connection& conn) {
@@ -316,21 +320,8 @@ void MainComponent::paint(juce::Graphics& g)
         g.strokePath(path, juce::PathStrokeType(thickness));
     };
 
-    auto drawWaveformOnQuadratic =
-        [&g, &drawWaveformOnLine](const juce::Point<float>& p1,
-                                  const juce::Point<float>& control,
-                                  const juce::Point<float>& p2,
-                                  float amplitude, float thickness,
-                                  const float* samples, int numSamples,
-                                  float normalisation, int segments,
-                                  bool tiled) {
-            juce::ignoreUnused(control);
-            // For dynamic connections that are already drawn as straight
-            // lines, reuse drawWaveformOnLine for waveform rendering.
-            drawWaveformOnLine(p1, p2, amplitude, thickness, samples,
-                               numSamples, normalisation, segments,
-                               tiled);
-        };
+    // drawWaveformOnLine already handles all current use cases.
+    // Keep the implementation minimal until we need curved paths.
 
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
     for (const auto& [id, object] : objects) {
@@ -534,11 +525,11 @@ void MainComponent::paint(juce::Graphics& g)
                     // consistent waveform visual density (window effect: longer line shows more cycles).
                     const juce::Point<float> delta =
                         splitPoint - juce::Point<float>{cx, cy};
-                    const float lineLength =
+                    const float segmentLineLength =
                         std::sqrt(delta.x * delta.x +
                                   delta.y * delta.y);
-                    const int segmentsForWaveform =
-                        static_cast<int>(lineLength / 5.0F);
+                    const int segmentsForWaveformHold =
+                        static_cast<int>(segmentLineLength / 5.0F);
                     const int periodSamples =
                         voicePeriodSamples[voiceIndex] > 0
                             ? voicePeriodSamples[voiceIndex]
@@ -547,7 +538,7 @@ void MainComponent::paint(juce::Graphics& g)
                         {cx, cy}, splitPoint, waveformAmplitude,
                         waveformThickness, voiceWaveforms[voiceIndex],
                         periodSamples, voiceNorm[voiceIndex],
-                        juce::jmax(1, segmentsForWaveform),
+                        juce::jmax(1, segmentsForWaveformHold),
                         /*tiled=*/true);
                 } else {
                     g.setColour(juce::Colours::white.withAlpha(baseAlpha));
@@ -630,8 +621,7 @@ void MainComponent::paint(juce::Graphics& g)
                 connectionFlowPhase_ +
                     0.25 * static_cast<double>(id % 4),
                 1.0));
-            const float px = juce::jmap(t, 0.0F, 1.0F, cx, centre.x);
-            const float py = juce::jmap(t, 0.0F, 1.0F, cy, centre.y);
+            juce::ignoreUnused(t, cx, cy, centre);
         }
 
         // -----------------------------------------------------------------
@@ -1210,10 +1200,11 @@ void MainComponent::paint(juce::Graphics& g)
             const float bottom = cy + iconRadius * 0.5F;
 
             // Dynamically tint the procedural icon/text based on brightness.
-            const float brightness = bodyColour.getBrightness();
+            const float proceduralBrightness = bodyColour.getBrightness();
             const juce::Colour iconTint =
-                brightness > 0.6F ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
-                                  : juce::Colours::white;
+                proceduralBrightness > 0.6F
+                    ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
+                    : juce::Colours::white;
             g.setColour(iconTint.withAlpha(0.9F));
 
             const bool isOscillatorIcon =
@@ -1281,10 +1272,10 @@ void MainComponent::paint(juce::Graphics& g)
                                         object.logical_id() + ")";
                     }
                 }
-                const float brightness = bodyColour.getBrightness();
+                const float fallbackBrightness = bodyColour.getBrightness();
                 const juce::Colour textTint =
-                    brightness > 0.6F ? juce::Colours::black
-                                      : juce::Colours::white;
+                    fallbackBrightness > 0.6F ? juce::Colours::black
+                                              : juce::Colours::white;
                 g.setColour(textTint);
                 g.setFont(14.0F);
                 g.drawText(fallbackLabel,
@@ -1540,12 +1531,12 @@ void MainComponent::paint(juce::Graphics& g)
 
             const float baseY = dockArea.getY() + dockScrollOffset_;
 
-            for (std::size_t i = 0; i < dockedObjects.size(); ++i) {
-                const auto id = dockedObjects[i].first;
-                const auto* obj = dockedObjects[i].second;
+            for (std::size_t dockIndex = 0; dockIndex < dockedObjects.size(); ++dockIndex) {
+                const auto id = dockedObjects[dockIndex].first;
+                const auto* obj = dockedObjects[dockIndex].second;
 
                 const float cy = baseY +
-                                 (static_cast<float>(i) + 0.5F) *
+                                 (static_cast<float>(dockIndex) + 0.5F) *
                                      slotHeight;
                 const float cx = dockArea.getX() +
                                  dockArea.getWidth() * 0.5F;

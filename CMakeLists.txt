@@ -10,6 +10,25 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(RECTAI_ENABLE_TRACKER "Build the tracker service" ON)
 option(RECTAI_BUILD_TESTS "Build C++ tests" ON)
 
+# Fuentes de la librería externa reacTIVision/libfidtrack que generan
+# muchos warnings de conversion/sign-conversion/float-conversion.
+# Los tratamos como código de terceros y desactivamos esos avisos solo
+# para estos ficheros, manteniendo un nivel de warnings alto en el
+# código propio.
+set(REACTIVISION_SOURCES
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/segment.c
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/fidtrackX.c
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/topologysearch.c
+    ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/treeidmap.cpp
+)
+
+if (NOT MSVC)
+    set_source_files_properties(${REACTIVISION_SOURCES}
+        PROPERTIES
+            COMPILE_OPTIONS "-Wno-conversion;-Wno-sign-conversion;-Wno-float-conversion;-Wno-unused-parameter"
+    )
+endif()
+
 include(CTest)
 
 # Ruta para JUCE como submódulo (esperado en JUCE/)

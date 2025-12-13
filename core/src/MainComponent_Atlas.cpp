@@ -51,7 +51,8 @@ bool MainComponent::loadAtlasResources()
     }
 
     std::unordered_map<std::string, AtlasSprite> sprites;
-    forEachXmlChildElementWithTagName(*root, sprite, "sprite")
+    for (auto* sprite = root->getChildByName("sprite"); sprite != nullptr;
+         sprite = sprite->getNextElementWithTagName("sprite"))
     {
         const auto fullName = sprite->getStringAttribute("name");
         const int x = sprite->getIntAttribute("x");

@@ -140,8 +140,11 @@ void OscSender::appendPaddedString(const std::string& value,
 
 void OscSender::appendInt32(const std::int32_t value, std::string& buffer)
 {
-    const auto networkValue = htonl(static_cast<std::uint32_t>(value));
-    const auto* bytes = reinterpret_cast<const char*>(&networkValue);
+    std::uint32_t networkValue =
+        htonl(static_cast<std::uint32_t>(value));
+
+    char bytes[sizeof(networkValue)];
+    std::memcpy(bytes, &networkValue, sizeof(networkValue));
     buffer.append(bytes, bytes + sizeof(networkValue));
 }
 
@@ -152,7 +155,9 @@ void OscSender::appendFloat32(const float value, std::string& buffer)
 
     std::uint32_t asInt{};
     std::memcpy(&asInt, &value, sizeof(float));
-    const auto networkValue = htonl(asInt);
-    const auto* bytes = reinterpret_cast<const char*>(&networkValue);
+
+    std::uint32_t networkValue = htonl(asInt);
+    char bytes[sizeof(networkValue)];
+    std::memcpy(bytes, &networkValue, sizeof(networkValue));
     buffer.append(bytes, bytes + sizeof(networkValue));
 }

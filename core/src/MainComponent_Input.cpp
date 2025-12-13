@@ -91,10 +91,11 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     isCutModeActive_ = false;
 
     // Determine if touch started in dock area.
-    const float dockWidth = calculateDockWidth(bounds.getWidth());
+    const float dockWidthMain = calculateDockWidth(bounds.getWidth());
     auto boundsCopy = bounds;
-    juce::Rectangle<float> dockArea = boundsCopy.removeFromRight(dockWidth);
-    touchStartedInDock_ = dockArea.contains(event.position);
+    juce::Rectangle<float> dockAreaMain =
+        boundsCopy.removeFromRight(dockWidthMain);
+    touchStartedInDock_ = dockAreaMain.contains(event.position);
 
     repaint();
 
@@ -373,16 +374,17 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                       });
 
             auto dockBounds = bounds;
-            const float dockWidth = calculateDockWidth(dockBounds.getWidth());
-            juce::Rectangle<float> dockArea =
-                dockBounds.removeFromRight(dockWidth);
+            const float dockWidthPick =
+                calculateDockWidth(dockBounds.getWidth());
+            juce::Rectangle<float> dockAreaPick =
+                dockBounds.removeFromRight(dockWidthPick);
 
             const float titleHeight = 24.0F;
             juce::Rectangle<float> titleArea =
-                dockArea.removeFromTop(titleHeight);
+                dockAreaPick.removeFromTop(titleHeight);
             juce::ignoreUnused(titleArea);
 
-            const float availableHeight = dockArea.getHeight();
+            const float availableHeight = dockAreaPick.getHeight();
             const float nodeRadiusDock = 18.0F;
             const float verticalPadding = 12.0F;
             const float slotHeight =
@@ -395,15 +397,15 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                     : 0.0F;
             dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
                                              dockScrollOffset_);
-            const float baseY = dockArea.getY() + dockScrollOffset_;
+            const float baseY = dockAreaPick.getY() + dockScrollOffset_;
 
             for (std::size_t i = 0; i < dockedObjects.size(); ++i) {
                 const auto id = dockedObjects[i].first;
 
                 const float cy = baseY + (static_cast<float>(i) + 0.5F) *
                                             slotHeight;
-                const float cx = dockArea.getX() +
-                                 dockArea.getWidth() * 0.5F;
+                const float cx = dockAreaPick.getX() +
+                                 dockAreaPick.getWidth() * 0.5F;
 
                 const float dx = static_cast<float>(event.position.x) - cx;
                 const float dy = static_cast<float>(event.position.y) - cy;
@@ -418,10 +420,11 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         // If click is inside the dock but not on any module, start a
         // simple drag-based scroll gesture.
         auto dockBounds = bounds;
-        const float dockWidth = calculateDockWidth(dockBounds.getWidth());
-        juce::Rectangle<float> dockArea =
-            dockBounds.removeFromRight(dockWidth);
-        if (dockArea.contains(event.position)) {
+        const float dockWidthDrag =
+            calculateDockWidth(dockBounds.getWidth());
+        juce::Rectangle<float> dockAreaDrag =
+            dockBounds.removeFromRight(dockWidthDrag);
+        if (dockAreaDrag.contains(event.position)) {
             isDraggingDockScroll_ = true;
             dockLastDragY_ = static_cast<float>(event.position.y);
             return;
@@ -1102,6 +1105,8 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
 
 void MainComponent::mouseUp(const juce::MouseEvent& event)
 {
+    juce::ignoreUnused(event);
+
     // Handle click-and-hold mute release.
     // Always unmute when releasing, regardless of previous state.
     if (activeConnectionHold_.has_value()) {
