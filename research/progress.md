@@ -2,6 +2,26 @@
 
 ## 2025-12-13
 
+### Activación inmediata del filtro al crear conexiones
+- Se ha ajustado la lógica de ruteo de audio en `MainComponent_Audio.cpp` para que los módulos aguas abajo (incluidos `FilterModule`) empiecen a afectar al sonido en cuanto exista una `Connection` en la `Scene`, tanto si se ha creado dinámicamente por disposición espacial como si es un hardlink explícito.
+- En el bucle de asignación de voces dentro de `timerCallback`, la selección del módulo destino (`downstreamModule`) ya no vuelve a comprobar el cono geométrico `isConnectionGeometricallyActive` para decidir si una conexión está activa a nivel de audio; este chequeo sigue aplicándose únicamente en la fase de creación de conexiones dinámicas.
+- A partir de este cambio, la ruta de audio considera una conexión válida siempre que su módulo destino esté dentro del área musical y la `Connection` exista en la escena, evitando casos en los que la UI muestra una línea entre un Oscillator y un Filter pero el filtro solo empezaba a sonar tras ajustar manualmente el parámetro `freq`.
+
+### Normalización del parámetro freq al colocar módulos en la mesa
+- En `MainComponent_Input.cpp`, dentro de la rama de `mouseDrag` que actualiza la posición de un objeto arrastrado, se ha añadido una normalización explícita del parámetro `"freq"` cuando un módulo entra por primera vez en el área musical (por ejemplo, al sacar un Filter u Oscillator desde el dock a la mesa).
+- Cuando `wasInsideMusic` es falso e `isNowInsideMusic` pasa a verdadero, se localiza el `AudioModule` asociado al `logical_id` del objeto y, si `uses_frequency_control()` está activo, se lee su valor actual de frecuencia mediante `GetParameterOrDefault("freq", default_parameter_value("freq"))` y se vuelve a escribir en la escena con `scene_.SetModuleParameter(module->id(), "freq", currentFreq)`.
+- Este ajuste replica el efecto que tenía un primer click sobre el slider lateral de frecuencia (que ya llamaba a `SetModuleParameter`), asegurando que módulos como `FilterModule` tengan su cutoff inicial aplicado de forma consistente al entrar en la mesa, incluso antes de que el usuario interactúe manualmente con el control de `freq`.
+
+### Logs de depuración para cadenas Oscillator → Filter
+- En `MainComponent_Audio.cpp` se han añadido logs de depuración justo antes de la llamada a `audioEngine_.setVoiceFilter` cuando la cadena de audio de un generador termina en un `FilterModule`.
+- Por cada voz activa cuyo módulo aguas abajo es un filtro, se emite una línea de log con prefijo `[rectai-core][debug][filter]` que incluye el id del módulo generador, el id del filtro, el cutoff calculado en Hz (`cutoffHz`), el valor efectivo de resonancia (`q`) y el modo de filtro seleccionado (`mode`).
+- Estos logs permiten comparar fácilmente el estado del filtro en la primera colocación de un módulo Filter (antes de tocar el control de `freq`) con el estado tras interactuar con el slider, ayudando a diagnosticar por qué el filtro sólo parece actuar después de modificar explícitamente ese parámetro.
+
+### Clamping de freq en Filter para evitar cutoffs desorbitados
+- Se ha corregido el cálculo de la frecuencia de corte del `FilterModule` en `MainComponent_Audio.cpp` añadiendo un clamping explícito del parámetro normalizado `freq` al rango `[0,1]` antes de traducirlo a Hz mediante `base_frequency_hz` y `frequency_range_hz`.
+- Algunos patches `.rtp` pueden cargar valores heredados para `freq` fuera de ese rango (por ejemplo, ≈124), que al aplicarse directamente en la fórmula `fb + fr * freqParam` daban lugar a cutoffs desorbitados en torno a 186 kHz. En esa situación el filtro se vuelve prácticamente transparente aunque la UI muestre sliders en posición “media”, y sólo empezaba a actuar después de que el usuario tocara el control de `freq` (lo que sobrescribía el valor con un normalizado correcto).
+- Con el nuevo clamping, cualquier valor de `freq` que exceda `[0,1]` se reduce a ese intervalo antes de calcular `cutoffHz`, garantizando que el filtro opere siempre en el rango previsto (≈200–1700 Hz para el Filter actual) desde la primera vez que se coloca el módulo en la mesa, sin requerir una interacción manual previa con el slider de frecuencia.
+
 ### Ajuste de tests CTest para TrackerEngine
 - Se ha corregido el fallo de `ctest` asociado al ejecutable `rectai-tracker-tests`, que abortaba al no encontrar fiduciales en las imágenes de prueba `fiducial_30.jpg` y `fiducial_55.jpg`.
 - En `tracker/src/TrackerEngine.cpp` se ha reforzado la etapa de binarización previa a `libfidtrack`: en lugar de un único umbral adaptativo, el engine prueba ahora varias estrategias (Otsu global normal e invertido, y umbral adaptativo normal e invertido) hasta encontrar la que produce una detección de fiduciales válida. Esto mejora la robustez frente a distintos niveles de contraste y condiciones de iluminación en las imágenes de entrada, respetando el requisito de `libfidtrack` de trabajar sobre imágenes binarias 0/255.

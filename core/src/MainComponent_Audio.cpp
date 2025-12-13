@@ -755,6 +755,10 @@ void MainComponent::timerCallback()
         bool connectionMuted = false;
         std::string downstreamConnectionKey;
 
+        // Prefer Filter modules when several downstream connections exist.
+        // This matches the expectation that placing a Filter next to a
+        // generator should shape that generator's sound, even if the
+        // generator also feeds other modules such as Volume or Output.
         for (const auto& conn : scene_.connections()) {
             if (conn.from_module_id != module->id()) {
                 continue;
@@ -771,9 +775,7 @@ void MainComponent::timerCallback()
             }
 
             const auto& toObj = objIt->second;
-            if (!isInsideMusicArea(toObj) ||
-                (!conn.is_hardlink &&
-                 !isConnectionGeometricallyActive(obj, toObj))) {
+            if (!isInsideMusicArea(toObj)) {
                 continue;
             }
 
@@ -782,15 +784,34 @@ void MainComponent::timerCallback()
                 continue;
             }
 
-            downstreamModule = modDestIt->second.get();
-            downstreamObjId = objIt->first;
-            downstreamInside = true;
+            auto* candidate = modDestIt->second.get();
 
-            const std::string key = makeConnectionKey(conn);
-            downstreamConnectionKey = key;
-            connectionMuted =
-                mutedConnections_.find(key) != mutedConnections_.end();
-            break;
+            // If we do not have a downstream module yet, or this one
+            // is a Filter and the previous one was not, select it.
+            const bool isFilterCandidate =
+                (candidate->type() == rectai::ModuleType::kFilter);
+            const bool hasFilterAlready =
+                (downstreamModule != nullptr &&
+                 downstreamModule->type() == rectai::ModuleType::kFilter);
+
+            if (downstreamModule == nullptr ||
+                (isFilterCandidate && !hasFilterAlready)) {
+                downstreamModule = candidate;
+                downstreamObjId = objIt->first;
+                downstreamInside = true;
+
+                const std::string key = makeConnectionKey(conn);
+                downstreamConnectionKey = key;
+                connectionMuted =
+                    mutedConnections_.find(key) != mutedConnections_.end();
+
+                // If we just selected a Filter, we can stop searching:
+                // this is the highest-priority downstream for per-voice
+                // filtering.
+                if (isFilterCandidate) {
+                    break;
+                }
+            }
         }
 
         bool chainMuted = srcMuted;
@@ -881,10 +902,20 @@ void MainComponent::timerCallback()
                     dynamic_cast<const rectai::FilterModule*>(
                         downstreamModule);
 
-                const float filterFreqParam =
+                float filterFreqParam =
                     downstreamModule->GetParameterOrDefault(
                         "freq", downstreamModule->default_parameter_value(
                                     "freq"));
+                // Frequency controls are modelled como parámetros
+                // normalizados en [0,1]. Algunos patches .rtp pueden
+                // traer valores heredados fuera de ese rango; si se
+                // usan directamente, el mapeo base+range produciría
+                // cutoffs absurdamente altos (≈186 kHz) que hacen que
+                // el filtro sea prácticamente transparente. Aseguramos
+                // aquí que el valor usado para el cálculo esté siempre
+                // en el rango esperado.
+                filterFreqParam =
+                    juce::jlimit(0.0F, 1.0F, filterFreqParam);
                 const double fb = downstreamModule->base_frequency_hz();
                 const double fr = downstreamModule->frequency_range_hz();
                 filterCutoffHz = fb + fr *
@@ -911,6 +942,20 @@ void MainComponent::timerCallback()
                     // Default to low-pass if we do not know the mode.
                     filterMode = 1;
                 }
+            }
+
+            // Debug logging for filter chains so we can inspect
+            // behaviour when an Oscillator feeds a Filter and the
+            // user reports that the filter only activates after
+            // touching the freq control.
+            if (downstreamModule != nullptr &&
+                downstreamModule->type() == rectai::ModuleType::kFilter) {
+                juce::Logger::writeToLog(
+                    juce::String("[rectai-core][debug][filter] chain=") +
+                    module->id() + " -> " + downstreamModule->id() +
+                    " cutoffHz=" + juce::String(filterCutoffHz, 2) +
+                    " q=" + juce::String(filterQ, 2) +
+                    " mode=" + juce::String(filterMode));
             }
 
             audioEngine_.setVoiceFilter(assignedVoice, filterMode,

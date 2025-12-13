@@ -122,7 +122,7 @@ FilterModule::FilterModule(const std::string& id,
   set_mode(Mode::kBandPass);
   enable_frequency_control(true);
   enable_gain_control(true);
-  set_frequency_mapping(200.0, 1500.0);
+  set_frequency_mapping(100.0, 1900.0);
   set_level_mapping(0.02F, 0.90F);
   allow_any_connection_target();
 

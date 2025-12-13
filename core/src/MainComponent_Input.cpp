@@ -1046,6 +1046,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     }
 
     auto updated = it->second;
+    const bool wasDocked = updated.docked();
     const bool wasInsideMusic = isInsideMusicArea(updated);
 
     if (updated.docked()) {
@@ -1076,17 +1077,33 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     const bool isNowInsideMusic = isInsideMusicArea(updated);
     scene_.UpsertObject(updated);
 
-    // When a Sampleplay module enters the musical area (either from
-    // the dock or from outside the circle), start or restart the
-    // visibility timer for its instrument label so that the text is
-    // fully visible for a few seconds and then fades out.
-    if (!wasInsideMusic && isNowInsideMusic) {
-        const auto& modulesForSample = scene_.modules();
-        const auto modItSample =
-            modulesForSample.find(updated.logical_id());
-        if (modItSample != modulesForSample.end() &&
-            modItSample->second != nullptr) {
-            auto* module = modItSample->second.get();
+    // When a module becomes active on the musical surface (either by
+    // leaving the dock or by entering the circle from outside), normalise
+    // its frequency control parameter by explicitly writing its
+    // current value back into the Scene. This mirrors the effect of
+    // clicking on the freq side control once, ensuring that modules
+    // like Filter have their cutoff parameter initialised in the
+    // same way even before the user interacts with the slider.
+    if ((wasDocked || !wasInsideMusic) && isNowInsideMusic) {
+        const auto& modulesForObject = scene_.modules();
+        const auto modIt =
+            modulesForObject.find(updated.logical_id());
+        if (modIt != modulesForObject.end() &&
+            modIt->second != nullptr) {
+            auto* module = modIt->second.get();
+
+            if (module->uses_frequency_control()) {
+                const float currentFreq = module->GetParameterOrDefault(
+                    "freq",
+                    module->default_parameter_value("freq"));
+                scene_.SetModuleParameter(module->id(), "freq",
+                                          currentFreq);
+            }
+
+            // When a Sampleplay module enters the musical area, also
+            // (re)start the visibility timer for its instrument label
+            // so that the text is fully visible for a few seconds and
+            // then fades out.
             if (auto* sampleModule =
                     dynamic_cast<rectai::SampleplayModule*>(module)) {
                 markSampleplayInstrumentLabelActive(
