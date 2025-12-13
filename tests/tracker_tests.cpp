@@ -68,7 +68,6 @@ int main()
     for (const auto& file : files) {
         const cv::Mat img = (file == firstFile) ? firstImage : loadFiducialImage(file);
         const TrackedObjectList objects = engine.processFrame(img);
-
         assert(!objects.empty());
 
         const int expectedId = expectedIdFromFilename(file);

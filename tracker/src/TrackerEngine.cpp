@@ -99,17 +99,40 @@ TrackedObjectList TrackerEngine::processFrameInternal(const cv::Mat& frame, cv::
     }
 
     cv::Mat binary;
-    cv::adaptiveThreshold(resized, binary, 255.0, cv::ADAPTIVE_THRESH_MEAN_C,
-                          cv::THRESH_BINARY, 21, 5.0);
 
-    if (debugFrame != nullptr) {
-        binary.copyTo(*debugFrame);
+    auto detectWithBinary = [&](const cv::Mat& bin) -> TrackedObjectList {
+        if (debugFrame != nullptr) {
+            bin.copyTo(*debugFrame);
+        }
+        return detectAmoebaFiducials(bin);
+    };
+
+    // Strategy 1: global Otsu threshold (markers dark on light background).
+    cv::threshold(resized, binary, 0.0, 255.0, cv::THRESH_BINARY | cv::THRESH_OTSU);
+    TrackedObjectList fiducials = detectWithBinary(binary);
+    if (!fiducials.empty()) {
+        return fiducials;
     }
 
-    // Try to detect real amoeba fiducials using libfidtrack on a
-    // binarized image, as expected by libfidtrack's segmenter
-    // (pixels must be 0 or 255).
-    TrackedObjectList fiducials = detectAmoebaFiducials(binary);
+    // Strategy 2: inverted Otsu threshold (markers light on dark background).
+    cv::threshold(resized, binary, 0.0, 255.0, cv::THRESH_BINARY_INV | cv::THRESH_OTSU);
+    fiducials = detectWithBinary(binary);
+    if (!fiducials.empty()) {
+        return fiducials;
+    }
+
+    // Strategy 3: adaptive mean threshold (non-inverted).
+    cv::adaptiveThreshold(resized, binary, 255.0, cv::ADAPTIVE_THRESH_MEAN_C,
+                          cv::THRESH_BINARY, 21, 5.0);
+    fiducials = detectWithBinary(binary);
+    if (!fiducials.empty()) {
+        return fiducials;
+    }
+
+    // Strategy 4: adaptive mean threshold (inverted).
+    cv::adaptiveThreshold(resized, binary, 255.0, cv::ADAPTIVE_THRESH_MEAN_C,
+                          cv::THRESH_BINARY_INV, 21, 5.0);
+    fiducials = detectWithBinary(binary);
     if (!fiducials.empty()) {
         return fiducials;
     }

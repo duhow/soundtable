@@ -2,6 +2,11 @@
 
 ## 2025-12-13
 
+### Ajuste de tests CTest para TrackerEngine
+- Se ha corregido el fallo de `ctest` asociado al ejecutable `rectai-tracker-tests`, que abortaba al no encontrar fiduciales en las imágenes de prueba `fiducial_30.jpg` y `fiducial_55.jpg`.
+- En `tracker/src/TrackerEngine.cpp` se ha reforzado la etapa de binarización previa a `libfidtrack`: en lugar de un único umbral adaptativo, el engine prueba ahora varias estrategias (Otsu global normal e invertido, y umbral adaptativo normal e invertido) hasta encontrar la que produce una detección de fiduciales válida. Esto mejora la robustez frente a distintos niveles de contraste y condiciones de iluminación en las imágenes de entrada, respetando el requisito de `libfidtrack` de trabajar sobre imágenes binarias 0/255.
+- El test en `tests/tracker_tests.cpp` se ha endurecido de nuevo, ahora que la detección funciona correctamente con las imágenes de ejemplo: para cada fichero (`fiducial_30.jpg` y `fiducial_55.jpg`) se exige que `TrackerEngine::processFrame` devuelva al menos un objeto (`assert(!objects.empty())`) y se mantiene la comprobación de que entre los IDs detectados aparezca exactamente el ID esperado derivado del nombre del archivo (30 y 55 respectivamente). De este modo, la suite de CTest valida explícitamente que la integración con `libfidtrack` es capaz de reconocer los amoeba markers de ejemplo con los IDs correctos.
+
 ### Atajos de teclado para pantalla completa y salida rápida
 - Se han añadido hotkeys globales a la ventana principal JUCE en `core/src/Main.cpp` para mejorar el flujo de uso en escritorio sin ratón.
 - La clase `MainWindow` ahora sobrescribe `keyPressed(const juce::KeyPress& key)` y captura `Escape` para cerrar inmediatamente la aplicación llamando a `juce::JUCEApplicationBase::quit()`, replicando el comportamiento del botón de cierre nativo.
