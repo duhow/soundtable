@@ -944,6 +944,7 @@ void MainComponent::timerCallback()
                 }
             }
 
+#if !defined(NDEBUG)
             // Debug logging for filter chains so we can inspect
             // behaviour when an Oscillator feeds a Filter and the
             // user reports that the filter only activates after
@@ -957,6 +958,7 @@ void MainComponent::timerCallback()
                     " q=" + juce::String(filterQ, 2) +
                     " mode=" + juce::String(filterMode));
             }
+#endif
 
             audioEngine_.setVoiceFilter(assignedVoice, filterMode,
                                         filterCutoffHz, filterQ);
