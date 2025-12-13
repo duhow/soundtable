@@ -363,3 +363,11 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
         juce::Time::getMillisecondCounterHiRes() / 1000.0;
     startTimerHz(120);
 }
+
+void MainComponent::markSampleplayInstrumentLabelActive(
+    const std::string& moduleId)
+{
+    const double nowSeconds =
+        juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    sampleplayLabelLastChangeSeconds_[moduleId] = nowSeconds;
+}

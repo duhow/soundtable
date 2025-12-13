@@ -167,6 +167,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 } else {
                     sampleModule->CycleInstrument();
                 }
+                markSampleplayInstrumentLabelActive(sampleModule->id());
                 repaint();
                 return;
             }
@@ -988,6 +989,8 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     }
 
     auto updated = it->second;
+    const bool wasInsideMusic = isInsideMusicArea(updated);
+
     if (updated.docked()) {
         // While the pointer is inside the dock area, keep the module
         // docked so it remains visible in the dock list. Only when the
@@ -1012,7 +1015,28 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     } else {
         updated.set_position(normX, normY);
     }
+
+    const bool isNowInsideMusic = isInsideMusicArea(updated);
     scene_.UpsertObject(updated);
+
+    // When a Sampleplay module enters the musical area (either from
+    // the dock or from outside the circle), start or restart the
+    // visibility timer for its instrument label so that the text is
+    // fully visible for a few seconds and then fades out.
+    if (!wasInsideMusic && isNowInsideMusic) {
+        const auto& modulesForSample = scene_.modules();
+        const auto modItSample =
+            modulesForSample.find(updated.logical_id());
+        if (modItSample != modulesForSample.end() &&
+            modItSample->second != nullptr) {
+            auto* module = modItSample->second.get();
+            if (auto* sampleModule =
+                    dynamic_cast<rectai::SampleplayModule*>(module)) {
+                markSampleplayInstrumentLabelActive(
+                    sampleModule->id());
+            }
+        }
+    }
 
     // If CONTROL is held while dragging a module inside the musical
     // area, apply a safety mute by setting its volume to 0 as soon as

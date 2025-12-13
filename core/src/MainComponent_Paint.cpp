@@ -1157,14 +1157,52 @@ void MainComponent::paint(juce::Graphics& g)
                     labelWidth,
                     labelHeight);
 
-                const float brightness = bodyColour.getBrightness();
-                const juce::Colour textColour =
-                    brightness > 0.6F ? juce::Colours::white
-                                      : juce::Colours::white;
-                g.setColour(textColour.withAlpha(0.9F));
-                g.setFont(13.0F);
-                g.drawText(instrumentName, labelBounds,
-                           juce::Justification::centredLeft, false);
+                // Sampleplay instrument label fade: keep the text
+                // fully visible for a short period after the module
+                // is placed in the musical area or its instrument is
+                // changed, then fade it out smoothly.
+                double labelAlpha = 0.0;
+                const auto itTime =
+                    sampleplayLabelLastChangeSeconds_.find(
+                        sampleModule->id());
+                if (itTime !=
+                    sampleplayLabelLastChangeSeconds_.end()) {
+                    const double elapsed =
+                        nowSeconds - itTime->second;
+                    if (elapsed >= 0.0) {
+                        if (elapsed <= 3.0) {
+                            labelAlpha = 1.0;
+                        } else if (elapsed <= 3.5) {
+                            labelAlpha =
+                                1.0 - (elapsed - 3.0) / 0.5;
+                        }
+                    }
+                } else {
+                    // First-time render: start the timer so that
+                    // the label appears and will fade after a few
+                    // seconds even for modules that were already on
+                    // the table when the app started.
+                    labelAlpha = 1.0;
+                    const double firstNow = nowSeconds;
+                    sampleplayLabelLastChangeSeconds_.emplace(
+                        sampleModule->id(), firstNow);
+                }
+
+                if (labelAlpha > 0.0) {
+                    const float brightness =
+                        bodyColour.getBrightness();
+                    const juce::Colour textColour =
+                        brightness > 0.6F
+                            ? juce::Colours::white
+                            : juce::Colours::white;
+                    const float alpha =
+                        static_cast<float>(labelAlpha);
+                    g.setColour(textColour.withAlpha(0.9F * alpha));
+                    g.setFont(13.0F);
+                    g.drawText(instrumentName, labelBounds,
+                               juce::Justification::centredLeft,
+                               false);
+                }
             }
         }
 

@@ -79,6 +79,13 @@ private:
     // short period of inactivity.
     double bpmLastChangeSeconds_{0.0};
 
+    // Sampleplay instrument label visibility: per-module timestamp of
+    // the last time the instrument was changed or the module entered
+    // the musical area. Used by the paint code to fade out the
+    // instrument title after a short period of inactivity.
+    std::unordered_map<std::string, double>
+        sampleplayLabelLastChangeSeconds_;
+
     // Last timer tick timestamp (seconds) used to derive dt for
     // animations, so visuals remain stable if the timer frequency
     // changes.
@@ -145,6 +152,11 @@ private:
     // downbeat of each 4-beat bar and can be used to slightly accent
     // the velocity.
     void triggerSampleplayNotesOnBeat(bool strongBeat);
+
+    // Mark the Sampleplay instrument label for a given module id as
+    // recently active so that the UI keeps it visible and restarts
+    // its fade-out timer.
+    void markSampleplayInstrumentLabelActive(const std::string& moduleId);
 
     // Touch interface state.
     bool isTouchActive_{false};
