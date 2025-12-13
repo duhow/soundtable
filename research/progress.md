@@ -2,6 +2,12 @@
 
 ## 2025-12-13
 
+### Atajos de teclado para pantalla completa y salida rápida
+- Se han añadido hotkeys globales a la ventana principal JUCE en `core/src/Main.cpp` para mejorar el flujo de uso en escritorio sin ratón.
+- La clase `MainWindow` ahora sobrescribe `keyPressed(const juce::KeyPress& key)` y captura `Escape` para cerrar inmediatamente la aplicación llamando a `juce::JUCEApplicationBase::quit()`, replicando el comportamiento del botón de cierre nativo.
+- Se ha implementado un toggle de pantalla completa asociado tanto a `Alt+Enter` como a `F11`: cuando se detecta cualquiera de estas combinaciones, `MainWindow` invoca `setFullScreen(!isFullScreen())` sobre sí misma, alternando entre modo ventana y modo fullscreen usando la API estándar de `juce::DocumentWindow`.
+- El resto de teclas se delegan a la implementación por defecto de `juce::DocumentWindow::keyPressed` para no interferir con futuros componentes que deseen manejar atajos propios.
+
 ### Altura de waveform en función del volumen del módulo
 - Se ha ajustado la lógica de pintado en `MainComponent_Paint.cpp` para que la altura de las formas de onda sobre las líneas de audio dependa del volumen o nivel del módulo correspondiente, en lugar de usar una amplitud fija. Esto afecta tanto a las líneas radiales módulo→Master como a las conexiones módulo→módulo (dinámicas y hardlink).
 - Dentro de `paint`, se ha introducido un helper local `getModuleVisualLevel(const rectai::AudioModule*)` que devuelve un factor normalizado en `[0,1]` a partir de los parámetros del módulo:

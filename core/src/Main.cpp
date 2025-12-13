@@ -22,7 +22,59 @@ public:
         juce::JUCEApplicationBase::quit();
     }
 
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        // Escape closes the application.
+        if (key.getKeyCode() == juce::KeyPress::escapeKey) {
+            juce::JUCEApplicationBase::quit();
+            return true;
+        }
+
+        const bool isAltEnter =
+            key.getKeyCode() == juce::KeyPress::returnKey &&
+            key.getModifiers().isAltDown();
+
+        const bool isF11 =
+            key.getKeyCode() == juce::KeyPress::F11Key;
+
+        if (isAltEnter || isF11) {
+            toggleFullscreen();
+            return true;
+        }
+
+        return juce::DocumentWindow::keyPressed(key);
+    }
+
 private:
+    void toggleFullscreen()
+    {
+        auto* peer = getPeer();
+        if (peer == nullptr) {
+            return;
+        }
+
+        if (!isInKioskMode_) {
+            // Enter borderless fullscreen: remember current bounds and
+            // switch to a non-native title bar so we control decorations.
+            normalBounds_ = getBounds();
+            setUsingNativeTitleBar(false);
+            setTitleBarHeight(0);
+            peer->setFullScreen(true);
+            isInKioskMode_ = true;
+        } else {
+            // Leave fullscreen and restore previous window bounds and title.
+            peer->setFullScreen(false);
+            setTitleBarHeight(24);
+            setUsingNativeTitleBar(true);
+            if (!normalBounds_.isEmpty()) {
+                setBounds(normalBounds_);
+            }
+            isInKioskMode_ = false;
+        }
+    }
+
+    bool isInKioskMode_{false};
+    juce::Rectangle<int> normalBounds_{};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
 };
 
