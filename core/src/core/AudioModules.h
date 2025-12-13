@@ -86,11 +86,10 @@ class OscillatorModule : public AudioModule {
          };
 
          explicit OscillatorModule(const std::string& id,
-													float default_freq = 0.5F,
-													float default_gain = 0.5F);
+                                float default_freq = 0.5F,
+                                float default_gain = 0.5F);
 
-         [[nodiscard]] float default_parameter_value(
-							const std::string& name) const override;
+         [[nodiscard]] float default_parameter_value(const std::string& name) const override;
 
          // Reactable Oscillator tangibles also carry an envelope.
          [[nodiscard]] const Envelope& envelope() const { return envelope_; }
@@ -144,11 +143,11 @@ class FilterModule : public AudioModule {
          };
 
          explicit FilterModule(const std::string& id,
-														float default_cutoff = 0.5F,
-														float default_q = 0.5F);
+                                                                                                                float default_cutoff = 0.5F,
+                                                                                                                float default_q = 0.5F);
 
          [[nodiscard]] float default_parameter_value(
-						const std::string& name) const override;
+                                                const std::string& name) const override;
 
          [[nodiscard]] const Envelope& envelope() const { return envelope_; }
          Envelope& mutable_envelope() { return envelope_; }
@@ -160,8 +159,8 @@ class FilterModule : public AudioModule {
          void set_envelope_release(float release_ms);
 
          [[nodiscard]] Mode mode() const { return mode_; }
-		 void set_mode(Mode mode);
-		 void cycle_mode();
+                 void set_mode(Mode mode);
+                 void cycle_mode();
          void set_mode_from_subtype(const std::string& subtype);
 
  private:
