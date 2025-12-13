@@ -96,14 +96,15 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
                 continue;
             }
 
-            // Remember the first instrument name defined in the
-            // .rtp file (if any) so we can use it as a preferred
-            // default when rebuilding the instrument list from the
-            // SoundFont itself.
-            std::string preferredInstrumentName;
+            // Remember the instrument names declared in the .rtp
+            // file in order; this sequence define logical banks
+            // (index 0 → drums, index 1 → synths, etc.) that we will
+            // later map to actual SoundFont presets by name.
+            std::vector<std::string> preferredInstrumentNames;
             const auto& rtpInstruments = sampleModule->instruments();
-            if (!rtpInstruments.empty()) {
-                preferredInstrumentName = rtpInstruments.front().name;
+            preferredInstrumentNames.reserve(rtpInstruments.size());
+            for (const auto& inst : rtpInstruments) {
+                preferredInstrumentNames.push_back(inst.name);
             }
 
             std::string rawName = sampleModule->raw_soundfont_name();
@@ -173,21 +174,148 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
                 instruments.push_back(std::move(inst));
             }
 
-            // If the .rtp file declared a preferred instrument name
-            // and it exists in the SoundFont presets, select it as
-            // the active instrument. Otherwise default to the first
-            // preset in the list.
-            int defaultIndex = 0;
-            if (!preferredInstrumentName.empty()) {
+            // Build default preset indices per logical bank: for each
+            // <instrument> declared en el .rtp, try to find a matching
+            // preset name en el SoundFont y recordar su índice.
+            std::vector<int> defaultPresetIndices(
+                preferredInstrumentNames.size(), -1);
+
+            auto containsIgnoreCase =
+                [](const std::string& haystack,
+                   const std::string& needle) noexcept {
+                    if (needle.empty()) {
+                        return true;
+                    }
+                    auto it = std::search(
+                        haystack.begin(), haystack.end(),
+                        needle.begin(), needle.end(),
+                        [](unsigned char ch1, unsigned char ch2) {
+                            return static_cast<int>(
+                                       std::tolower(ch1)) ==
+                                   static_cast<int>(
+                                       std::tolower(ch2));
+                        });
+                    return it != haystack.end();
+                };
+
+            // Pre-compute indices of presets that live on banks other
+            // than 0. In muchos SoundFonts GM/GS, los kits de percusión
+            // se sitúan en bancos >= 128.
+            std::vector<int> nonZeroBankPresetIndices;
+            std::vector<int> highBankPresetIndices;
+            nonZeroBankPresetIndices.reserve(instruments.size());
+            highBankPresetIndices.reserve(instruments.size());
+            for (std::size_t i = 0; i < instruments.size(); ++i) {
+                const int bank = instruments[i].bank;
+                if (bank != 0) {
+                    nonZeroBankPresetIndices.push_back(
+                        static_cast<int>(i));
+                    if (bank >= 128) {
+                        highBankPresetIndices.push_back(
+                            static_cast<int>(i));
+                    }
+                }
+            }
+
+            for (std::size_t bankIdx = 0;
+                 bankIdx < preferredInstrumentNames.size(); ++bankIdx) {
+                const auto& name = preferredInstrumentNames[bankIdx];
+                if (name.empty()) {
+                    continue;
+                }
+
+                const bool isDrumLogicalBank =
+                    containsIgnoreCase(name, "drumset") ||
+                    containsIgnoreCase(name, "drum");
+
+                int matchedIndex = -1;
+
+                // 1) Exact match against preset name.
                 for (std::size_t i = 0; i < instruments.size(); ++i) {
-                    if (instruments[i].name == preferredInstrumentName) {
-                        defaultIndex = static_cast<int>(i);
+                    if (instruments[i].name == name) {
+                        matchedIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+
+                // 2) For drum banks sin match exacto, intentar primero
+                //    asignar un preset de un banco físico distinto de 0,
+                //    priorizando bancos altos (>= 128) típicamente usados
+                //    para percusión en SoundFonts GM/GS.
+                if (matchedIndex < 0 && isDrumLogicalBank) {
+                    if (!highBankPresetIndices.empty()) {
+                        matchedIndex = highBankPresetIndices.front();
+                    } else if (!nonZeroBankPresetIndices.empty()) {
+                        matchedIndex =
+                            nonZeroBankPresetIndices.front();
+                    }
+                }
+
+                // 3) Si seguimos sin mapping para un banco de drums y no
+                //    hay bancos físicos alternativos, hacemos un último
+                //    intento genérico buscando presets cuyo nombre sugiera
+                //    percusión. Esto mantiene compatibilidad con SF2 que
+                //    sólo usan bank 0 pero incluyen kits como "Warehouse
+                //    Percussion", sin depender de nombres concretos.
+                if (matchedIndex < 0 && isDrumLogicalBank) {
+                    for (std::size_t i = 0; i < instruments.size(); ++i) {
+                        const auto& presetName = instruments[i].name;
+                        if (containsIgnoreCase(presetName,
+                                               "percussion") ||
+                            containsIgnoreCase(presetName,
+                                               "kit") ||
+                            containsIgnoreCase(presetName,
+                                               "drum")) {
+                            matchedIndex = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                }
+
+                // 4) Si aún no tenemos mapping, dejamos el índice en -1.
+                //    La lógica posterior elegirá el primer preset válido
+                //    conocido o, en última instancia, el índice 0.
+                defaultPresetIndices[bankIdx] = matchedIndex;
+            }
+
+            sampleModule->set_default_preset_indices(
+                std::move(defaultPresetIndices));
+
+            // Choose the active instrument according to the logical
+            // channel declared in the .rtp (attribute "channel"). If
+            // there is no valid preset for that channel, fall back to
+            // the first valid preset we know about, or index 0.
+            const auto& defaults =
+                sampleModule->default_preset_indices();
+            int chosenIndex = -1;
+            const int channel = sampleModule->channel();
+            if (channel >= 0 &&
+                channel < static_cast<int>(defaults.size())) {
+                const int idx =
+                    defaults[static_cast<std::size_t>(channel)];
+                if (idx >= 0 &&
+                    idx < static_cast<int>(instruments.size())) {
+                    chosenIndex = idx;
+                }
+            }
+
+            if (chosenIndex < 0) {
+                for (const int idx : defaults) {
+                    if (idx >= 0 &&
+                        idx < static_cast<int>(instruments.size())) {
+                        chosenIndex = idx;
                         break;
                     }
                 }
             }
 
-            sampleModule->set_active_instrument_index(defaultIndex);
+            if (chosenIndex < 0 && !instruments.empty()) {
+                chosenIndex = 0;
+            }
+
+            if (chosenIndex >= 0) {
+                sampleModule->set_active_instrument_index(chosenIndex);
+            }
         }
     };
 

@@ -17,6 +17,10 @@ typedef struct _fluid_synth_t fluid_synth_t;
 fluid_settings_t* new_fluid_settings(void);
 void delete_fluid_settings(fluid_settings_t*);
 
+int fluid_settings_setstr(fluid_settings_t* settings,
+                          const char* name,
+                          const char* str);
+
 fluid_synth_t* new_fluid_synth(fluid_settings_t* settings);
 void delete_fluid_synth(fluid_synth_t* synth);
 
@@ -54,6 +58,12 @@ bool EnumerateSoundfontPresets(const std::string& path,
         return false;
     }
 
+    // We only need offline preset enumeration here, so disable any
+    // attempt by FluidSynth to create a real audio driver to avoid
+    // warnings about SDL3/audio backends on systems where they are
+    // not initialised.
+    (void)fluid_settings_setstr(settings, "audio.driver", "null");
+
     fluid_synth_t* synth = new_fluid_synth(settings);
     if (synth == nullptr) {
         delete_fluid_settings(settings);
@@ -87,7 +97,11 @@ bool EnumerateSoundfontPresets(const std::string& path,
     // Probe a reasonable range of bank/program combinations using the
     // public getter API. This avoids relying on any internal
     // iteration macros that may differ across FluidSynth versions.
-    for (int bank = 0; bank < 128; ++bank) {
+    //
+    // Some soundfonts place drumkits or alternative presets on
+    // banks >= 128 (e.g. 128 for GM drum channel). To avoid
+    // missing those, we scan a slightly wider range of banks.
+    for (int bank = 0; bank < 256; ++bank) {
         for (int program = 0; program < 128; ++program) {
             void* preset = fluid_sfont_get_preset(sfont, bank, program);
             if (preset == nullptr) {

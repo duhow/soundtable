@@ -723,6 +723,11 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         }
       }
 
+      // Logical channel/bank index, used to select between the
+      // different logical banks described by the <instrument>
+      // children (e.g. drums vs synths).
+      sp->set_channel(ParseInt(attrs, "channel", 0));
+
       // Remember the raw SoundFont filename declared in the patch so
       // the UI can later resolve it against the com.reactable/
       // content tree and call SampleplayModule::LoadSoundfont() with
@@ -732,7 +737,10 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         sp->set_raw_soundfont_name(it_filename->second);
       }
 
-      // Instruments.
+      // Instruments as declared in the .rtp patch. The order of
+      // these elements defines the logical banks (index 0 → bank 0,
+      // index 1 → bank 1, etc.), which will later be mapped to
+      // actual SoundFont presets by name.
       std::size_t inst_pos = FindTag(xml, "instrument", inner_start, inner_end);
       while (inst_pos != std::string::npos) {
         std::size_t inst_end = 0U;

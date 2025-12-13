@@ -286,7 +286,9 @@ class SampleplayModule : public AudioModule {
  public:
         explicit SampleplayModule(const std::string& id);
 
-        // Instruments as declared in the Reactable .rtp patch.
+        // Instruments as rebuilt from the SoundFont presets. Each
+        // entry represents a concrete (bank, program, name) preset
+        // that can be triggered via FluidSynth.
         [[nodiscard]] const std::vector<SampleInstrument>& instruments() const
         {
                 return instruments_;
@@ -314,6 +316,40 @@ class SampleplayModule : public AudioModule {
         // Returns a pointer to the currently active instrument, or
         // nullptr if there is none.
         [[nodiscard]] const SampleInstrument* active_instrument() const;
+
+        // Logical bank/channel handling -----------------------------------
+        //
+        // Reactable patches para Sampleplay usan el atributo "channel"
+        // junto con una lista de elementos <instrument> para describir
+        // varios "modos" (por ejemplo, drums vs synths). En este
+        // proyecto interpretamos dicho atributo como un índice lógico
+        // de banco, y mapeamos cada banco a un preset concreto del
+        // SoundFont.
+
+        // Current logical channel/bank index as loaded from the .rtp
+        // attribute "channel" (typically 0 for drums, 1 for synths).
+        [[nodiscard]] int channel() const { return channel_; }
+        void set_channel(int channel) { channel_ = channel; }
+
+        // Default preset indices per logical channel. The i-ésimo
+        // elemento de este vector representa el índice en
+        // instruments_ del preset asociado al banco lógico i. Valores
+        // negativos indican que no se encontró un preset válido para
+        // ese banco.
+        void set_default_preset_indices(std::vector<int> indices)
+        {
+                default_preset_indices_ = std::move(indices);
+        }
+
+        [[nodiscard]] const std::vector<int>& default_preset_indices() const
+        {
+                return default_preset_indices_;
+        }
+
+        // Cambia de banco lógico (por ejemplo, de drums a synths)
+        // avanzando el índice de canal y seleccionando el preset por
+        // defecto asociado a ese banco cuando exista.
+        void CycleBank();
 
         // Soundfont handling -------------------------------------------------
         //
@@ -361,6 +397,8 @@ class SampleplayModule : public AudioModule {
         std::string soundfont_path_;
         bool soundfont_loaded_{false};
         int active_instrument_index_{-1};
+        int channel_{0};
+        std::vector<int> default_preset_indices_;
 };
 
 }  // namespace rectai

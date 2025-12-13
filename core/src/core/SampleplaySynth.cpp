@@ -62,8 +62,12 @@ void SampleplaySynth::ensureSynthLocked()
       // rendering so that FluidSynth matches the audio device.
       (void)fluid_settings_setnum(impl_->settings, "synth.sample-rate",
                                   impl_->sampleRate);
-      // We do not create any audio driver here; the host (JUCE)
-      // pulls audio via render().
+      // Explicitly disable FluidSynth's own audio driver by
+      // selecting the "null" backend. JUCE is responsible for
+      // audio I/O and pulls audio via render(), so we don't need
+      // FluidSynth to initialise any system audio backend.
+      (void)fluid_settings_setstr(impl_->settings, "audio.driver",
+                                  "null");
     }
   }
 

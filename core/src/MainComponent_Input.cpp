@@ -98,7 +98,16 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             if (auto* sampleModule =
                     dynamic_cast<rectai::SampleplayModule*>(
                         modIt->second.get())) {
-                sampleModule->CycleInstrument();
+                // Right-click on Sampleplay cycles instruments within
+                // the current logical bank. Holding CTRL while
+                // right-clicking switches to the next logical bank
+                // (e.g. drums ↔ synth) using the default preset
+                // associated with that bank.
+                if (event.mods.isCtrlDown()) {
+                    sampleModule->CycleBank();
+                } else {
+                    sampleModule->CycleInstrument();
+                }
                 repaint();
                 return;
             }

@@ -1,5 +1,6 @@
 #include "core/AudioModules.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -425,6 +426,7 @@ SampleplayModule::SampleplayModule(const std::string& id)
 
   SetParameter("amp", 1.0F);
   SetParameter("midifreq", 57.0F);
+  SetParameter("channel", 0.0F);
   // The actual filename and instruments are kept in the
   // SampleplayModule-specific data structures.
   active_instrument_index_ = -1;
@@ -541,6 +543,34 @@ const SampleInstrument* SampleplayModule::active_instrument() const
   }
 
   return &instruments_[static_cast<std::size_t>(index)];
+}
+
+void SampleplayModule::CycleBank()
+{
+  if (instruments_.empty() || default_preset_indices_.empty()) {
+    return;
+  }
+
+  const int bankCount =
+      static_cast<int>(default_preset_indices_.size());
+  if (bankCount <= 0) {
+    return;
+  }
+
+  // Avanzar el canal lógico dentro del rango de bancos definidos por
+  // el .rtp (índices de <instrument>) y seleccionar el primer banco
+  // que tenga un índice de preset válido.
+  for (int step = 0; step < bankCount; ++step) {
+    const int nextChannel = (channel_ + 1 + step) % bankCount;
+    const int preferredIndex =
+        default_preset_indices_[static_cast<std::size_t>(nextChannel)];
+    if (preferredIndex >= 0 &&
+        preferredIndex < static_cast<int>(instruments_.size())) {
+      channel_ = nextChannel;
+      set_active_instrument_index(preferredIndex);
+      return;
+    }
+  }
 }
 
 }  // namespace rectai
