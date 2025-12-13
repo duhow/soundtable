@@ -196,6 +196,17 @@ struct Connection {
   std::string to_module_id;
   std::string to_port_name;
   bool is_hardlink{false};
+
+  [[nodiscard]] bool operator==(const Connection& other) const {
+    return from_module_id == other.from_module_id &&
+           from_port_name == other.from_port_name &&
+           to_module_id == other.to_module_id &&
+           to_port_name == other.to_port_name;
+  }
+
+  [[nodiscard]] bool operator!=(const Connection& other) const {
+    return !(*this == other);
+  }
 };
 
 // Complete scene: modules, connections and objects on the table.
@@ -209,6 +220,7 @@ class Scene {
 
   // Connection management.
   bool AddConnection(const Connection& connection);
+  bool RemoveConnection(const Connection& connection);
   bool RemoveConnection(const std::string& from_module_id,
                         const std::string& from_port_name,
                         const std::string& to_module_id,

@@ -13,6 +13,9 @@ using rectai::ui::isConnectionGeometricallyActive;
 using rectai::ui::makeConnectionKey;
 using rectai::ui::makeModulePairKey;
 using rectai::ui::makeObjectPairKey;
+using rectai::ui::generateConnectionFromModules;
+
+#include <optional>
 
 void MainComponent::toggleHardlinkBetweenObjects(
     const std::int64_t objectIdA, const std::int64_t objectIdB)
@@ -39,18 +42,11 @@ void MainComponent::toggleHardlinkBetweenObjects(
     auto* moduleA = modItA->second.get();
     auto* moduleB = modItB->second.get();
 
-    // Decide connection direction based on existing connection policies.
-    std::string fromId;
-    std::string toId;
+    // Prepare the connection object for lookup or creation.
+    rectai::Connection connection;
 
-    if (moduleA->CanConnectTo(*moduleB)) {
-        fromId = moduleA->id();
-        toId = moduleB->id();
-    } else if (moduleB->CanConnectTo(*moduleA)) {
-        fromId = moduleB->id();
-        toId = moduleA->id();
-    } else {
-        // No valid audio routing between these modules.
+    // No valid audio routing between these modules.
+    if(!generateConnectionFromModules(*moduleA, *moduleB, true, connection)) {
         return;
     }
 
@@ -60,8 +56,7 @@ void MainComponent::toggleHardlinkBetweenObjects(
     bool found = false;
     bool isHardlink = false;
     for (const auto& c : connections) {
-        if (c.from_module_id == fromId && c.to_module_id == toId &&
-            c.from_port_name == "out" && c.to_port_name == "in") {
+        if (c == connection) {
             found = true;
             isHardlink = c.is_hardlink;
             break;
@@ -70,32 +65,23 @@ void MainComponent::toggleHardlinkBetweenObjects(
 
     if (!found) {
         // No existing connection: create a new hardlink.
-        rectai::Connection connection{.from_module_id = fromId,
-                                      .from_port_name = "out",
-                                      .to_module_id = toId,
-                                      .to_port_name = "in",
-                                      .is_hardlink = true};
         (void)scene_.AddConnection(connection);
         return;
     }
+
+    const std::string pairKey = makeModulePairKey(connection);
 
     if (isHardlink) {
         // Existing hardlink: remove it. If this pair had a dynamic
         // connection that was previously promoted to hardlink, restore
         // that dynamic connection instead of leaving it disconnected.
-        (void)scene_.RemoveConnection(fromId, "out", toId, "in");
-
-        const std::string pairKey = makeModulePairKey(fromId, toId);
+        (void)scene_.RemoveConnection(connection);
         const auto promotedIt = promotedHardlinkPairs_.find(pairKey);
         if (promotedIt != promotedHardlinkPairs_.end()) {
             promotedHardlinkPairs_.erase(promotedIt);
 
-            rectai::Connection restored{.from_module_id = fromId,
-                                        .from_port_name = "out",
-                                        .to_module_id = toId,
-                                        .to_port_name = "in",
-                                        .is_hardlink = false};
-            (void)scene_.AddConnection(restored);
+            connection.is_hardlink = false;
+            (void)scene_.AddConnection(connection);
         }
         return;
     }
@@ -103,15 +89,10 @@ void MainComponent::toggleHardlinkBetweenObjects(
     // Existing non-hardlink connection: promote it to hardlink and
     // remember that this pair had a base dynamic connection so that we
     // can restore it when toggling the hardlink off again.
-    const std::string pairKey = makeModulePairKey(fromId, toId);
     promotedHardlinkPairs_.insert(pairKey);
-    (void)scene_.RemoveConnection(fromId, "out", toId, "in");
-    rectai::Connection upgraded{.from_module_id = fromId,
-                                .from_port_name = "out",
-                                .to_module_id = toId,
-                                .to_port_name = "in",
-                                .is_hardlink = true};
-    (void)scene_.AddConnection(upgraded);
+    (void)scene_.RemoveConnection(connection);
+    connection.is_hardlink = true;
+    (void)scene_.AddConnection(connection);
 }
 
 void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
@@ -538,8 +519,7 @@ void MainComponent::timerCallback()
         }
 
         for (const auto& ids : hardlinksToRemove) {
-            (void)scene_.RemoveConnection(ids.first, "out", ids.second,
-                                          "in");
+            (void)scene_.RemoveConnection(ids.first, "out", ids.second, "in");
         }
     }
 
@@ -614,12 +594,17 @@ void MainComponent::timerCallback()
 
                 // Skip if a connection already exists between these
                 // modules using the standard audio ports.
+                rectai::Connection connection{
+                    .from_module_id = fromId,
+                    .from_port_name = "out",
+                    .to_module_id = toId,
+                    .to_port_name = "in",
+                    .is_hardlink = false
+                };
+
                 bool alreadyConnected = false;
                 for (const auto& conn : existingConnections) {
-                    if (conn.from_module_id == fromId &&
-                        conn.to_module_id == toId &&
-                        conn.from_port_name == "out" &&
-                        conn.to_port_name == "in") {
+                    if (conn == connection) {
                         alreadyConnected = true;
                         break;
                     }
@@ -629,11 +614,6 @@ void MainComponent::timerCallback()
                     continue;
                 }
 
-                rectai::Connection connection{.from_module_id = fromId,
-                                              .from_port_name = "out",
-                                              .to_module_id = toId,
-                                              .to_port_name = "in",
-                                              .is_hardlink = false};
                 (void)scene_.AddConnection(connection);
             }
         }

@@ -49,6 +49,14 @@ std::string makeModulePairKey(const std::string& fromId,
     return key;
 }
 
+std::string makeModulePairKey(const rectai::Connection& conn)
+{
+    std::string key;
+    key.reserve(conn.from_module_id.size() + conn.to_module_id.size() + 1U);
+    key.append(conn.from_module_id).append(1U, '>').append(conn.to_module_id);
+    return key;
+}
+
 bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
                                      const rectai::ObjectInstance& toObj)
 {
@@ -162,5 +170,30 @@ bool lineSegmentsIntersect(const juce::Point<float>& p1,
     const float minDist = std::min({d1, d2, d3, d4});
     return minDist <= threshold;
 }
+
+bool generateConnectionFromModules(
+    const AudioModule& moduleA,
+    const AudioModule& moduleB,
+    bool isHardlink,
+    Connection& outConnection)
+{
+    std::string fromId;
+    std::string toId;
+
+    if (moduleA.CanConnectTo(moduleB)) {
+      fromId = moduleA.id();
+      toId = moduleB.id();
+    } else if (moduleB.CanConnectTo(moduleA)) {
+      fromId = moduleB.id();
+      toId = moduleA.id();
+    } else {
+      return false;
+    }
+
+    Connection conn{fromId, "out", toId, "in", isHardlink};
+    outConnection = conn;
+    return true;
+}
+
 
 }  // namespace rectai::ui

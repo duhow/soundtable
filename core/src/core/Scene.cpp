@@ -174,6 +174,12 @@ bool Scene::AddConnection(const Connection& connection)
   return true;
 }
 
+bool Scene::RemoveConnection(const Connection& connection)
+{
+  return RemoveConnection(connection.from_module_id, connection.from_port_name,
+                          connection.to_module_id, connection.to_port_name);
+}
+
 bool Scene::RemoveConnection(const std::string& from_module_id,
                              const std::string& from_port_name,
                              const std::string& to_module_id,

@@ -22,6 +22,7 @@ std::string makeObjectPairKey(std::int64_t a, std::int64_t b);
 // Build a stable key for a directed pair of module ids (from>to).
 std::string makeModulePairKey(const std::string& fromId,
                               const std::string& toId);
+std::string makeModulePairKey(const Connection& conn);
 
 // Returns true if `toObj` lies inside a ~120º cone whose vertex is at
 // the centre of the table and whose axis points towards `fromObj`.
@@ -46,5 +47,11 @@ bool lineSegmentsIntersect(const juce::Point<float>& p1,
 // Returns a valid juce::File if found; otherwise returns an empty file
 // (for which existsAsFile() will be false).
 [[nodiscard]] juce::File loadFile(const juce::String& relativePath);
+
+bool generateConnectionFromModules(
+    const AudioModule& moduleA,
+    const AudioModule& moduleB,
+    bool isHardlink,
+    Connection& outConnection);
 
 }  // namespace rectai::ui
