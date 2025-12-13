@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <typeinfo>
 
 namespace rectai {
 
@@ -126,6 +127,12 @@ class AudioModule {
   [[nodiscard]] virtual bool is_global_controller() const { return false; }
 
   [[nodiscard]] bool CanConnectTo(const AudioModule& other) const;
+
+  // Check if the module matches the same concrete C++ type (subclass).
+  template<typename T>
+  [[nodiscard]] bool is() const {
+      return dynamic_cast<const T*>(this) != nullptr;
+  }
 
   // Allows loaders or UI code to override the visual colour of a
   // module based on external data (e.g. colours stored in a Reactable

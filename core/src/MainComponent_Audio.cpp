@@ -504,9 +504,9 @@ void MainComponent::timerCallback()
 
             if (fromObj == nullptr || toObj == nullptr ||
                 !isInsideMusicArea(*fromObj) ||
-                !isInsideMusicArea(*toObj)) {
-                hardlinksToRemove.emplace_back(conn.from_module_id,
-                                               conn.to_module_id);
+                !isInsideMusicArea(*toObj)
+            ) {
+                (void)scene_.RemoveConnection(conn);
 
                 // Clear any collision tracking for this pair.
                 if (fromObj != nullptr && toObj != nullptr) {
@@ -516,10 +516,6 @@ void MainComponent::timerCallback()
                     activeHardlinkCollisions_.erase(pairKey);
                 }
             }
-        }
-
-        for (const auto& ids : hardlinksToRemove) {
-            (void)scene_.RemoveConnection(ids.first, "out", ids.second, "in");
         }
     }
 
@@ -565,19 +561,17 @@ void MainComponent::timerCallback()
 
                 // Decide connection direction based on existing
                 // connection policies.
-                std::string fromId;
-                std::string toId;
+                rectai::Connection connection;
+                if(!generateConnectionFromModules(*moduleA, *moduleB, false, connection)) {
+                    continue;
+                }
                 const rectai::ObjectInstance* fromObj = nullptr;
                 const rectai::ObjectInstance* toObj = nullptr;
 
                 if (moduleA->CanConnectTo(*moduleB)) {
-                    fromId = moduleA->id();
-                    toId = moduleB->id();
                     fromObj = objA;
                     toObj = objB;
                 } else if (moduleB->CanConnectTo(*moduleA)) {
-                    fromId = moduleB->id();
-                    toId = moduleA->id();
                     fromObj = objB;
                     toObj = objA;
                 } else {
@@ -594,14 +588,6 @@ void MainComponent::timerCallback()
 
                 // Skip if a connection already exists between these
                 // modules using the standard audio ports.
-                rectai::Connection connection{
-                    .from_module_id = fromId,
-                    .from_port_name = "out",
-                    .to_module_id = toId,
-                    .to_port_name = "in",
-                    .is_hardlink = false
-                };
-
                 bool alreadyConnected = false;
                 for (const auto& conn : existingConnections) {
                     if (conn == connection) {
@@ -677,7 +663,7 @@ void MainComponent::timerCallback()
             }
 
             auto* module = modIt->second.get();
-            if (dynamic_cast<rectai::SampleplayModule*>(module) == nullptr) {
+            if (!module->is<rectai::SampleplayModule>()){
                 continue;
             }
 
@@ -1022,8 +1008,11 @@ void MainComponent::timerCallback()
                 continue;
             }
 
-            auto* seqModule =
-                dynamic_cast<rectai::SequencerModule*>(modulePtr.get());
+            if(!modulePtr->is<rectai::SequencerModule>()) {
+                continue;
+            }
+
+            auto* seqModule = dynamic_cast<rectai::SequencerModule*>(modulePtr.get());
             if (seqModule == nullptr) {
                 continue;
             }
