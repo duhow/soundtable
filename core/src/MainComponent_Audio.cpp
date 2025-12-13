@@ -676,6 +676,47 @@ void MainComponent::timerCallback()
         globalVolumeGain = linear;
     }
 
+    // Compute a global gain for Sampleplay (SoundFont) output. Since
+    // all Sampleplay modules share a single synthesiser instance in
+    // the AudioEngine, we can only mute/stop SoundFont audio
+    // globally. The rule used here is: if the master is muted, or if
+    // there is no Sampleplay module inside the musical area with its
+    // own line to the master unmuted, then the Sampleplay path gain
+    // is set to 0 (hard stop). Otherwise it follows the master
+    // volume.
+    float sampleplayOutputGain = masterMuted_ ? 0.0F : globalVolumeGain;
+    if (!masterMuted_) {
+        bool hasUnmutedSampleplay = false;
+        for (const auto& [objId, obj] : objects) {
+            const auto modIt = modules.find(obj.logical_id());
+            if (modIt == modules.end() || modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* module = modIt->second.get();
+            if (dynamic_cast<rectai::SampleplayModule*>(module) == nullptr) {
+                continue;
+            }
+
+            if (!isInsideMusicArea(obj)) {
+                continue;
+            }
+
+            const bool isMutedObject =
+                mutedObjects_.find(objId) != mutedObjects_.end();
+            if (!isMutedObject) {
+                hasUnmutedSampleplay = true;
+                break;
+            }
+        }
+
+        if (!hasUnmutedSampleplay) {
+            sampleplayOutputGain = 0.0F;
+        }
+    }
+
+    audioEngine_.setSampleplayOutputGain(sampleplayOutputGain);
+
     struct VoiceParams {
         double frequency{0.0};
         float level{0.0F};
@@ -924,24 +965,275 @@ void MainComponent::timerCallback()
                                  [](const Pulse& p) { return p.age >= 1.0F; }),
                   pulses_.end());
 
+    // Helper to run one audio step of all Sequencer modules for a
+    // given step index, driving downstream Sampleplay/Oscillator
+    // modules according to the precomputed presets.
+    auto runSequencerStep = [&](const int stepIndex) {
+        const auto& modules = scene_.modules();
+        const auto& objects = scene_.objects();
+
+        // Precompute mapping from module id to object id so we can
+        // test spatial predicates and mute state for destinations.
+        std::unordered_map<std::string, std::int64_t> moduleToObjectId;
+        moduleToObjectId.reserve(objects.size());
+        for (const auto& [objId, obj] : objects) {
+            moduleToObjectId.emplace(obj.logical_id(), objId);
+        }
+
+        if (stepIndex < 0 ||
+            stepIndex >= rectai::SequencerPreset::kNumSteps) {
+            return;
+        }
+
+        for (const auto& [id, modulePtr] : modules) {
+            if (modulePtr == nullptr) {
+                continue;
+            }
+
+            auto* seqModule =
+                dynamic_cast<rectai::SequencerModule*>(modulePtr.get());
+            if (seqModule == nullptr) {
+                continue;
+            }
+
+            // Require the Sequencer tangible to be present and
+            // inside the musical area.
+            const auto objIdIt = moduleToObjectId.find(id);
+            if (objIdIt == moduleToObjectId.end()) {
+                continue;
+            }
+
+            const auto objIt = objects.find(objIdIt->second);
+            if (objIt == objects.end()) {
+                continue;
+            }
+
+            const auto& obj = objIt->second;
+            if (!isInsideMusicArea(obj)) {
+                continue;
+            }
+
+            // Skip muted Sequencer objects.
+            if (mutedObjects_.find(objIdIt->second) !=
+                mutedObjects_.end()) {
+                continue;
+            }
+
+            // Resolve current preset and step.
+            const int presetIndex = seqModule->current_preset();
+            if (presetIndex < 0 ||
+                presetIndex >= rectai::SequencerModule::kNumPresets) {
+                continue;
+            }
+
+            const auto& preset = seqModule->preset(presetIndex);
+            const auto& step =
+                preset.steps[static_cast<std::size_t>(stepIndex)];
+
+            // Si el paso está desactivado, no disparamos notas y,
+            // opcionalmente, forzamos silencio explícito en los
+            // osciladores conectados solo cuando el Sequencer está
+            // autorizado a controlar volumen.
+            if (!step.enabled) {
+                if (sequencerControlsVolume_) {
+                    for (const auto& conn : scene_.connections()) {
+                        if (conn.from_module_id != id) {
+                            continue;
+                        }
+
+                        const auto modDestIt =
+                            modules.find(conn.to_module_id);
+                        if (modDestIt == modules.end() ||
+                            modDestIt->second == nullptr) {
+                            continue;
+                        }
+
+                        if (auto* oscModule =
+                                dynamic_cast<rectai::OscillatorModule*>(
+                                    modDestIt->second.get())) {
+                            scene_.SetModuleParameter(oscModule->id(),
+                                                      "gain", 0.0F);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // For each Sequencer, walk outgoing connections and
+            // drive downstream modules that can consume what the
+            // Sequencer produces (Sampleplay/Oscillator for ahora).
+            for (const auto& conn : scene_.connections()) {
+                if (conn.from_module_id != id) {
+                    continue;
+                }
+
+                const auto toObjIdIt =
+                    moduleToObjectId.find(conn.to_module_id);
+                if (toObjIdIt == moduleToObjectId.end()) {
+                    continue;
+                }
+
+                const auto dstObjIt = objects.find(toObjIdIt->second);
+                if (dstObjIt == objects.end()) {
+                    continue;
+                }
+
+                const auto& dstObj = dstObjIt->second;
+
+                // Respect musical area and geometric cone for
+                // non-hardlink connections.
+                if (!isInsideMusicArea(dstObj) ||
+                    (!conn.is_hardlink &&
+                     !isConnectionGeometricallyActive(obj, dstObj))) {
+                    continue;
+                }
+
+                const auto modDestIt = modules.find(conn.to_module_id);
+                if (modDestIt == modules.end() ||
+                    modDestIt->second == nullptr) {
+                    continue;
+                }
+
+                auto* dstModule = modDestIt->second.get();
+
+                // Estado de mute del destino y de la conexión.
+                const bool dstMuted =
+                    mutedObjects_.find(toObjIdIt->second) !=
+                    mutedObjects_.end();
+                const std::string connKey =
+                    makeConnectionKey(conn);
+                const bool connectionMuted =
+                    mutedConnections_.find(connKey) !=
+                    mutedConnections_.end();
+
+                // Si la conexión está silenciada, no propagamos
+                // nada. El estado mute del destino sólo se tiene en
+                // cuenta en ramas donde realmente queremos apagar el
+                // audio (Sampleplay); para Oscillator seguimos
+                // enviando "MIDI" (cambios de freq/gain) aunque el
+                // módulo esté silenciado, tal y como se controla en
+                // la etapa de mezcla.
+                if (connectionMuted) {
+                    continue;
+                }
+
+                // 1) Sampleplay: trigger a short note using the
+                // Sequencer step's pitch/velocity.
+                if (const auto* sampleModule =
+                        dynamic_cast<const rectai::SampleplayModule*>(
+                            dstModule)) {
+                    if (dstMuted) {
+                        continue;
+                    }
+                    const auto* activeInst =
+                        sampleModule->active_instrument();
+                    if (activeInst == nullptr) {
+                        continue;
+                    }
+
+                    const float ampParam =
+                        sampleModule->GetParameterOrDefault(
+                            "amp", 1.0F);
+                    if (ampParam <= 0.0F) {
+                        continue;
+                    }
+
+                    const float baseLevel = sampleModule->base_level();
+                    const float extra =
+                        sampleModule->level_range() * ampParam;
+                    float chainLevel =
+                        (ampParam <= 0.0F)
+                            ? 0.0F
+                            : (baseLevel + extra);
+
+                    const float stepVelocity =
+                        sequencerControlsVolume_ ? step.velocity01 : 1.0F;
+
+                    float velocity01 = chainLevel * globalVolumeGain *
+                                       stepVelocity;
+                    if (velocity01 <= 0.0F) {
+                        continue;
+                    }
+
+                    velocity01 = juce::jlimit(0.0F, 1.0F, velocity01);
+
+                    const int midiKey = juce::jlimit(
+                        0, 127,
+                        step.pitch);
+
+                    audioEngine_.triggerSampleplayNote(
+                        activeInst->bank, activeInst->program,
+                        midiKey, velocity01);
+
+                    modulesWithActiveAudio_.insert(
+                        sampleModule->id());
+                    continue;
+                }
+
+                // 2) Oscillator: update freq/gain parameters from
+                // pitch/velocity; el motor de audio recogerá los
+                // cambios en el siguiente tick.
+                if (auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
+                        dstModule)) {
+                    const double targetHz = 440.0 *
+                                             std::pow(2.0,
+                                                      (static_cast<double>(
+                                                           step.pitch) -
+                                                       69.0) /
+                                                          12.0);
+
+                    const double baseHz = oscModule->base_frequency_hz();
+                    const double rangeHz =
+                        oscModule->frequency_range_hz();
+                    if (rangeHz > 0.0) {
+                        const double norm =
+                            (targetHz - baseHz) / rangeHz;
+                        const float freqParam = juce::jlimit(
+                            0.0F, 1.0F,
+                            static_cast<float>(norm));
+                        scene_.SetModuleParameter(oscModule->id(),
+                                                  "freq", freqParam);
+                    }
+
+                    if (sequencerControlsVolume_) {
+                        const float gainParam = juce::jlimit(
+                            0.0F, 1.0F, step.velocity01);
+                        scene_.SetModuleParameter(oscModule->id(), "gain",
+                                                  gainParam);
+                    }
+                }
+            }
+        }
+    };
+
     // Spawn a new pulse on every beat; every 4th beat is stronger.
     const double bps = bpm_ / 60.0;  // beats per second
     beatPhase_ += bps * dt;
-        if (beatPhase_ >= 1.0) {
-            beatPhase_ -= 1.0;
+    if (beatPhase_ >= 1.0) {
+        beatPhase_ -= 1.0;
 
-            const bool strong = (beatIndex_ % 4 == 0);
-            pulses_.push_back(Pulse{0.0F, strong});
+        const bool strong = (beatIndex_ % 4 == 0);
+        pulses_.push_back(Pulse{0.0F, strong});
 
-            // Trigger Sampleplay notes in sync with the global
-            // transport using FluidSynth.
-            triggerSampleplayNotesOnBeat(strong);
+        // Trigger Sampleplay notes in sync with the global
+        // transport using FluidSynth.
+        triggerSampleplayNotesOnBeat(strong);
 
-            ++beatIndex_;
-            if (beatIndex_ >= 4) {
-                beatIndex_ = 0;
-            }
+        // Advance Sequencer audio step: one step per beat so that
+        // presets like the demo C-major scale follow the tempo
+        // claramente (una nota por beat).
+        const int audioStepsPerBar = rectai::SequencerPreset::kNumSteps;
+        if (audioStepsPerBar > 0) {
+            sequencerAudioStep_ =
+                (sequencerAudioStep_ + 1) % audioStepsPerBar;
+            runSequencerStep(sequencerAudioStep_);
         }
+
+        ++beatIndex_;
+        if (beatIndex_ >= 4) {
+            beatIndex_ = 0;
+        }
+    }
 
     // Advance connection flow phase (used for pulses along edges).
     connectionFlowPhase_ += dt;

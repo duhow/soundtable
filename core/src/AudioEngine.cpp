@@ -131,11 +131,23 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                  sampleplayRight_.data(), numSamples);
     }
 
+    // Apply global Sampleplay gain so the UI can implement an
+    // immediate stop/mute of all SoundFont audio (for example when
+    // the Sampleplay module line to the master is muted).
+    const float spGain = sampleplayOutputGain_.load(std::memory_order_relaxed);
+    if (spGain < 0.999F) {
+        const float clamped = juce::jlimit(0.0F, 1.0F, spGain);
+        for (int i = 0; i < numSamples; ++i) {
+            sampleplayLeft_[static_cast<std::size_t>(i)] *= clamped;
+            sampleplayRight_[static_cast<std::size_t>(i)] *= clamped;
+        }
+    }
+
     for (int sample = 0; sample < numSamples; ++sample) {
         float oscMixed = 0.0F;
 
         const int writeIndex = baseWriteIndex + sample;
-        const int bufIndex =
+            const int bufIndex =
             historySize > 0 ? (writeIndex % historySize) : 0;
 
         if (voiceCount > 0) {
@@ -221,6 +233,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // oscillator side. FluidSynth output is assumed to be
             // already well behaved; we clip after mixing both.
             oscMixed = juce::jlimit(-0.9F, 0.9F, oscMixed);
+
+            // Store Sampleplay-only contribution for visualisation
+            // before mixing with oscillator voices.
+            sampleplayWaveformBuffer_[bufIndex] =
+                sampleplayLeft_[sample];
 
             const float leftOut =
                 juce::jlimit(-0.9F, 0.9F,
@@ -323,6 +340,12 @@ void AudioEngine::triggerSampleplayNote(const int bank, const int program,
     }
 
     sampleplaySynth_->noteOn(bank, program, midiKey, velocity01);
+}
+
+void AudioEngine::setSampleplayOutputGain(const float gain)
+{
+    const float clamped = juce::jlimit(0.0F, 1.0F, gain);
+    sampleplayOutputGain_.store(clamped, std::memory_order_relaxed);
 }
 
 void AudioEngine::getWaveformSnapshot(float* dst, const int numPoints,
@@ -472,6 +495,52 @@ void AudioEngine::getVoiceWaveformSnapshot(const int voiceIndex,
         const int bufIndex =
             (startIndex + offset + historySize) % historySize;
         dst[i] = voiceWaveformBuffer_[voiceIndex][bufIndex];
+    }
+
+    for (int i = points; i < numPoints; ++i) {
+        dst[i] = dst[points - 1];
+    }
+}
+
+void AudioEngine::getSampleplayWaveformSnapshot(float* dst,
+                                                const int numPoints,
+                                                const double windowSeconds)
+{
+    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0) {
+        return;
+    }
+
+    const int historySize = kWaveformHistorySize;
+    const int writeIndex =
+        waveformWriteIndex_.load(std::memory_order_relaxed);
+    const int availableSamples =
+        std::min(historySize, std::max(writeIndex, 0));
+
+    if (availableSamples <= 0) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    double window = windowSeconds;
+    if (window <= 0.0) {
+        window = 0.05;  // Default to ~50 ms.
+    }
+
+    int windowSamples = static_cast<int>(window * sampleRate_);
+    windowSamples = std::max(1, std::min(windowSamples, availableSamples));
+
+    const int startIndex =
+        (writeIndex - windowSamples + historySize * 4) % historySize;
+
+    const int points = std::min(numPoints, windowSamples);
+    const float denom = static_cast<float>(std::max(points - 1, 1));
+
+    for (int i = 0; i < points; ++i) {
+        const float t = static_cast<float>(i) / denom;
+        const int offset = static_cast<int>(t * static_cast<float>(windowSamples - 1));
+        const int bufIndex =
+            (startIndex + offset + historySize) % historySize;
+        dst[i] = sampleplayWaveformBuffer_[bufIndex];
     }
 
     for (int i = points; i < numPoints; ++i) {

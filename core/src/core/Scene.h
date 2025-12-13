@@ -44,17 +44,25 @@ enum class ModuleType {
   kSettings,
 };
 
-// Describes a module port (audio or control).
+// Kind of signal transported by a port.
+enum class PortSignalKind {
+  kAudio = 0,
+  kMidi,
+  kControl,
+};
+
+// Describes a module port (audio, MIDI or control).
 struct PortDescriptor {
   std::string name;
-  bool is_audio{true};
+  PortSignalKind kind{PortSignalKind::kAudio};
 };
 
 // Base class for audio modules placed on the scene.
 class AudioModule {
  public:
   AudioModule(std::string id, ModuleType type, bool produces_audio,
-              bool consumes_audio);
+              bool consumes_audio, bool produces_midi = false,
+              bool consumes_midi = false);
   virtual ~AudioModule() = default;
 
   AudioModule(const AudioModule&) = delete;
@@ -66,6 +74,8 @@ class AudioModule {
   [[nodiscard]] ModuleType type() const { return type_; }
   [[nodiscard]] bool produces_audio() const { return produces_audio_; }
   [[nodiscard]] bool consumes_audio() const { return consumes_audio_; }
+  [[nodiscard]] bool produces_midi() const { return produces_midi_; }
+  [[nodiscard]] bool consumes_midi() const { return consumes_midi_; }
 
   [[nodiscard]] bool uses_frequency_control() const {
     return uses_frequency_control_;
@@ -95,8 +105,8 @@ class AudioModule {
     return output_ports_;
   }
 
-  void AddInputPort(const std::string& name, bool is_audio);
-  void AddOutputPort(const std::string& name, bool is_audio);
+  void AddInputPort(const std::string& name, PortSignalKind kind);
+  void AddOutputPort(const std::string& name, PortSignalKind kind);
 
   void SetParameter(const std::string& name, float value);
   [[nodiscard]] float GetParameterOrDefault(const std::string& name,
@@ -166,6 +176,8 @@ class AudioModule {
   std::string label_;
   std::string description_;
   std::string icon_id_;
+  bool produces_midi_{false};
+  bool consumes_midi_{false};
   bool allow_any_target_{true};
   std::unordered_set<ModuleType> allowed_targets_;
   std::vector<PortDescriptor> input_ports_;

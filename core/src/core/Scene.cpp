@@ -27,20 +27,25 @@ void ObjectInstance::set_angle_radians(const float angle_radians)
 }
 
 AudioModule::AudioModule(std::string id, const ModuleType type,
-                         const bool produces_audio, const bool consumes_audio)
+                         const bool produces_audio, const bool consumes_audio,
+                         const bool produces_midi, const bool consumes_midi)
     : id_(std::move(id)),
       type_(type),
       produces_audio_(produces_audio),
-      consumes_audio_(consumes_audio) {}
+      consumes_audio_(consumes_audio),
+      produces_midi_(produces_midi),
+      consumes_midi_(consumes_midi) {}
 
-void AudioModule::AddInputPort(const std::string& name, const bool is_audio)
+void AudioModule::AddInputPort(const std::string& name,
+                               const PortSignalKind kind)
 {
-  input_ports_.push_back(PortDescriptor{name, is_audio});
+  input_ports_.push_back(PortDescriptor{name, kind});
 }
 
-void AudioModule::AddOutputPort(const std::string& name, const bool is_audio)
+void AudioModule::AddOutputPort(const std::string& name,
+                                const PortSignalKind kind)
 {
-  output_ports_.push_back(PortDescriptor{name, is_audio});
+  output_ports_.push_back(PortDescriptor{name, kind});
 }
 
 void AudioModule::SetParameter(const std::string& name, const float value)
@@ -85,7 +90,9 @@ bool AudioModule::CanConnectTo(const AudioModule& other) const
     return false;
   }
 
-  if (!produces_audio_ || !other.consumes_audio_) {
+  const bool audio_ok = produces_audio_ && other.consumes_audio_;
+  const bool midi_ok = produces_midi_ && other.consumes_midi_;
+  if (!audio_ok && !midi_ok) {
     return false;
   }
 

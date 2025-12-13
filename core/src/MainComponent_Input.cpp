@@ -304,17 +304,31 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
             const auto& modulesForGain = scene_.modules();
             const auto modItGain = modulesForGain.find(object.logical_id());
-            if (modItGain != modulesForGain.end() && modItGain->second != nullptr) {
+            if (modItGain != modulesForGain.end() &&
+                modItGain->second != nullptr) {
                 auto* module = modItGain->second.get();
                 if (module->type() == rectai::ModuleType::kFilter) {
-                    scene_.SetModuleParameter(object.logical_id(), "q", value);
-                } else if (dynamic_cast<rectai::VolumeModule*>(module) != nullptr) {
-                    scene_.SetModuleParameter(object.logical_id(), "volume", value);
+                    scene_.SetModuleParameter(object.logical_id(), "q",
+                                              value);
+                } else if (dynamic_cast<rectai::VolumeModule*>(module) !=
+                           nullptr) {
+                    scene_.SetModuleParameter(object.logical_id(), "volume",
+                                              value);
+                } else if (dynamic_cast<rectai::LoopModule*>(module) !=
+                           nullptr ||
+                           dynamic_cast<rectai::SampleplayModule*>(
+                               module) != nullptr) {
+                    // Loop and Sampleplay expose their main level as
+                    // "amp" instead of "gain".
+                    scene_.SetModuleParameter(object.logical_id(), "amp",
+                                              value);
                 } else {
-                    scene_.SetModuleParameter(object.logical_id(), "gain", value);
+                    scene_.SetModuleParameter(object.logical_id(), "gain",
+                                              value);
                 }
             } else {
-                scene_.SetModuleParameter(object.logical_id(), "gain", value);
+                scene_.SetModuleParameter(object.logical_id(), "gain",
+                                          value);
             }
 
             repaint();
@@ -546,7 +560,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
         // Fallback: muting via the line centre -> object. Only objects that
         // actually render a visible line to the master in paint() should be
-        // clickable here.
+        // clickable here (es decir, sólo módulos que lleven audio y no
+        // control/MIDI puros como el Sequencer).
         for (const auto& [id, object] : objectsLocal) {
             if (object.logical_id() == "-1" || object.docked()) {
                 continue;
@@ -562,15 +577,35 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
             const auto modForConnectionIt =
                 modulesLocal.find(object.logical_id());
-            const bool isGenerator =
-                modForConnectionIt != modulesLocal.end() &&
-                modForConnectionIt->second != nullptr &&
-                modForConnectionIt->second->type() ==
-                    rectai::ModuleType::kGenerator;
+            const rectai::AudioModule* moduleForConnection = nullptr;
+            if (modForConnectionIt != modulesLocal.end() &&
+                modForConnectionIt->second != nullptr) {
+                moduleForConnection = modForConnectionIt->second.get();
+            }
 
-            // Generators feeding another module through an active connection
-            // hide their direct visual link to the master, so that line
-            // should not be clickable either.
+            const bool isGenerator =
+                moduleForConnection != nullptr &&
+                moduleForConnection->type() ==
+                    rectai::ModuleType::kGenerator;
+            const bool isGlobalController =
+                moduleForConnection != nullptr &&
+                moduleForConnection->is_global_controller();
+            const bool isAudioModule =
+                moduleForConnection != nullptr &&
+                (moduleForConnection->produces_audio() ||
+                 moduleForConnection->consumes_audio());
+
+            // Solo módulos que realmente llevan audio (producen o consumen
+            // audio) dibujan una línea radial a master y, por tanto, deben
+            // ser clicables aquí. Los controladores globales y módulos sólo
+            // MIDI/control quedan excluidos.
+            if (isGlobalController || !isAudioModule) {
+                continue;
+            }
+
+            // Generators feeding otro módulo mediante una conexión activa
+            // ocultan su línea visual directa a master; esa línea tampoco
+            // debe ser clicable.
             if (isGenerator && hasActiveOutgoingConnection) {
                 continue;
             }
@@ -687,21 +722,34 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
             const auto& currPoint = touchTrail_[touchTrail_.size() - 1];
             const float detectionThreshold = 15.0F;
 
-            // Check intersections with object-to-center lines.
+            // Check intersections with object-to-center lines. Debe
+            // coincidir con los módulos que realmente dibujan una
+            // línea radial a master en paint(): sólo módulos que
+            // producen/consumen audio, excluyendo controladores
+            // globales y módulos sólo MIDI/control como Sequencer.
             for (const auto& [id, object] : objects) {
                 if (object.logical_id() == "-1" || object.docked() ||
                     !isInsideMusicArea(object)) {
                     continue;
                 }
 
-                // Skip global controllers as they don't have audio lines.
                 const auto modIt = modules.find(object.logical_id());
                 const rectai::AudioModule* moduleForLine = nullptr;
                 if (modIt != modules.end() && modIt->second != nullptr) {
                     moduleForLine = modIt->second.get();
                 }
-                if (moduleForLine != nullptr &&
-                    moduleForLine->is_global_controller()) {
+
+                const bool isGlobalController =
+                    moduleForLine != nullptr &&
+                    moduleForLine->is_global_controller();
+                const bool isAudioModule =
+                    moduleForLine != nullptr &&
+                    (moduleForLine->produces_audio() ||
+                     moduleForLine->consumes_audio());
+
+                // Solo módulos que realmente llevan audio (producen o
+                // consumen audio) tienen línea radial clicable/cortable.
+                if (isGlobalController || !isAudioModule) {
                     continue;
                 }
 
@@ -933,6 +981,12 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                 } else if (dynamic_cast<rectai::VolumeModule*>(module) !=
                            nullptr) {
                     scene_.SetModuleParameter(object.logical_id(), "volume",
+                                              value);
+                } else if (dynamic_cast<rectai::LoopModule*>(module) !=
+                           nullptr ||
+                           dynamic_cast<rectai::SampleplayModule*>(
+                               module) != nullptr) {
+                    scene_.SetModuleParameter(object.logical_id(), "amp",
                                               value);
                 } else {
                     scene_.SetModuleParameter(object.logical_id(), "gain",

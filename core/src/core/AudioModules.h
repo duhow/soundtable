@@ -48,6 +48,19 @@ struct SequenceTrack {
         std::vector<float> volumes;
 };
 
+// Monophonic step representation used by the internal sequencer.
+struct SequencerStep {
+        bool enabled{true};
+        float velocity01{1.0F};
+        int pitch{60};  // MIDI note, C4 by default.
+};
+
+// Fixed-size preset bank for the Sequencer.
+struct SequencerPreset {
+        static constexpr int kNumSteps = 16;
+        std::array<SequencerStep, kNumSteps> steps{};
+};
+
 // Instrument entry for Sampleplay tangibles.
 struct SampleInstrument {
         std::string name;
@@ -187,6 +200,12 @@ class LfoModule : public AudioModule {
 // Step sequencer module.
 class SequencerModule : public AudioModule {
  public:
+         enum class Mode {
+                 kMonophonic = 0,
+                 kPolyphonic,
+                 kRandom,
+         };
+
         explicit SequencerModule(const std::string& id);
 
         [[nodiscard]] const std::vector<SequenceTrack>& tracks() const
@@ -196,8 +215,42 @@ class SequencerModule : public AudioModule {
 
         std::vector<SequenceTrack>& mutable_tracks() { return tracks_; }
 
+                // High-level presets/steps API (MVP: monophonic only).
+                [[nodiscard]] Mode mode() const { return mode_; }
+                void set_mode(Mode mode) { mode_ = mode; }
+
+                static constexpr int kNumPresets = 6;
+                [[nodiscard]] int current_preset() const { return current_preset_; }
+                void set_current_preset(int index)
+                {
+                        if (index < 0) {
+                                current_preset_ = 0;
+                        } else if (index >= kNumPresets) {
+                                current_preset_ = kNumPresets - 1;
+                        } else {
+                                current_preset_ = index;
+                        }
+                }
+
+                [[nodiscard]] const SequencerPreset& preset(int index) const
+                {
+                        return presets_[static_cast<std::size_t>(index)];
+                }
+
+                SequencerPreset& mutable_preset(int index)
+                {
+                        return presets_[static_cast<std::size_t>(index)];
+                }
+
+                // Populate high-level presets/steps from low-level
+                // SequenceTrack data loaded from .rtp files.
+                void SyncPresetsFromTracks();
+
  private:
         std::vector<SequenceTrack> tracks_;
+                Mode mode_{Mode::kMonophonic};
+                int current_preset_{0};  // 0..kNumPresets-1
+                std::array<SequencerPreset, kNumPresets> presets_{};
 };
 
 // Delay / echo module.

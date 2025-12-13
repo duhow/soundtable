@@ -173,13 +173,40 @@ void MainComponent::paint(juce::Graphics& g)
         }
     }
 
+    // Separate mono snapshot for Sampleplay output so that modules
+    // backed by FluidSynth can display a waveform on their lines to
+    // the master and between modules, even though they do not occupy
+    // an AudioEngine voice slot.
+    float sampleplayWaveform[kWaveformPoints]{};
+    float sampleplayNorm = 0.0F;
+    int sampleplayPeriodSamples = 0;
+
+    audioEngine_.getSampleplayWaveformSnapshot(sampleplayWaveform,
+                                               kWaveformPoints, 0.05);
+
+    {
+        float maxAbs = 0.0F;
+        for (int i = 0; i < kWaveformPoints; ++i) {
+            maxAbs = std::max(maxAbs,
+                              std::abs(sampleplayWaveform[i]));
+        }
+        sampleplayNorm =
+            maxAbs > 1.0e-4F ? 1.0F / maxAbs : 0.0F;
+
+        if (sampleplayNorm > 0.0F) {
+            sampleplayPeriodSamples =
+                estimateWaveformPeriod(sampleplayWaveform,
+                                       kWaveformPoints);
+        }
+    }
+
     auto isAudioConnection = [&modules](const rectai::Connection& conn) {
         const auto fromModuleIt = modules.find(conn.from_module_id);
         if (fromModuleIt != modules.end() && fromModuleIt->second != nullptr) {
             const auto& fromModule = *fromModuleIt->second;
             for (const auto& port : fromModule.output_ports()) {
                 if (port.name == conn.from_port_name) {
-                    return port.is_audio;
+                    return port.kind == rectai::PortSignalKind::kAudio;
                 }
             }
 
@@ -193,7 +220,7 @@ void MainComponent::paint(juce::Graphics& g)
             const auto& toModule = *toModuleIt->second;
             for (const auto& port : toModule.input_ports()) {
                 if (port.name == conn.to_port_name) {
-                    return port.is_audio;
+                    return port.kind == rectai::PortSignalKind::kAudio;
                 }
             }
 
@@ -393,7 +420,17 @@ void MainComponent::paint(juce::Graphics& g)
                 moduleForConnection != nullptr &&
                 moduleForConnection->is_global_controller();
 
-            if (!isInsideMusicArea(object) || isGlobalController) {
+            const bool isAudioModule =
+                moduleForConnection != nullptr &&
+                (moduleForConnection->produces_audio() ||
+                 moduleForConnection->consumes_audio());
+
+            // Only modules that actually carry audio (produce or
+            // consume audio) draw a radial line to the master. Pure
+            // control/MIDI modules such as Sequencer or LFO never
+            // connect visually al centro.
+            if (!isInsideMusicArea(object) || isGlobalController ||
+                !isAudioModule) {
                 continue;
             }
 
@@ -483,6 +520,30 @@ void MainComponent::paint(juce::Graphics& g)
             }
 
             if (lineCarriesAudio && !isMuted && !isMarkedForCut) {
+                // Sampleplay modules do not occupy an AudioEngine
+                // voice slot, so their waveform comes from the
+                // dedicated Sampleplay history buffer instead of the
+                // per-voice buffers used by generators.
+                if (moduleForConnection != nullptr &&
+                    dynamic_cast<const rectai::SampleplayModule*>(
+                        moduleForConnection) != nullptr &&
+                    sampleplayNorm > 0.0F) {
+                    g.setColour(
+                        juce::Colours::white.withAlpha(baseAlpha));
+                    const float waveformAmplitude = 3.0F;
+                    const float waveformThickness = 1.4F;
+                    const int periodSamples =
+                        sampleplayPeriodSamples > 0
+                            ? sampleplayPeriodSamples
+                            : kWaveformPoints;
+                    drawWaveformOnLine(
+                        line.getStart(), line.getEnd(),
+                        waveformAmplitude, waveformThickness,
+                        sampleplayWaveform, periodSamples,
+                        sampleplayNorm, 72);
+                    continue;
+                }
+
                 const auto voiceIt =
                     moduleVoiceIndex_.find(object.logical_id());
                 const int voiceIndex =
@@ -875,6 +936,7 @@ void MainComponent::paint(juce::Graphics& g)
             freqValue = moduleForObject->GetParameterOrDefault(
                 "freq",
                 moduleForObject->default_parameter_value("freq"));
+
             if (const auto* volumeModule =
                     dynamic_cast<const rectai::VolumeModule*>(
                         moduleForObject)) {
@@ -885,11 +947,21 @@ void MainComponent::paint(juce::Graphics& g)
                 gainValue = moduleForObject->GetParameterOrDefault(
                     "q",
                     moduleForObject->default_parameter_value("q"));
+            } else if (dynamic_cast<const rectai::LoopModule*>(
+                           moduleForObject) != nullptr ||
+                       dynamic_cast<const rectai::SampleplayModule*>(
+                           moduleForObject) != nullptr) {
+                // Loop and Sampleplay modules expose an "amp"
+                // parameter that behaves as their primary level
+                // control.
+                gainValue = moduleForObject->GetParameterOrDefault(
+                    "amp", 1.0F);
             } else {
                 gainValue = moduleForObject->GetParameterOrDefault(
                     "gain",
                     moduleForObject->default_parameter_value("gain"));
             }
+
             showFreqControl = moduleForObject->uses_frequency_control();
             showGainControl = moduleForObject->uses_gain_control();
         }

@@ -104,8 +104,23 @@ private:
 
     // Animation phases.
     double connectionFlowPhase_{0.0};
+
+    // Visual sequencer phase used only for UI widgets
+    // (independiente del runtime de audio).
     double sequencerPhase_{0.0};
     int sequencerStep_{0};
+
+    // Audio sequencer phase/step (16 steps por compás) usado por el
+    // runtime monofónico del módulo Sequencer.
+    double sequencerAudioPhase_{0.0};
+    int sequencerAudioStep_{0};
+
+    // Cuando es true, los pasos del Sequencer modulan el volumen
+    // (velocidad) de los módulos destino: velocidad de nota en
+    // Sampleplay y parámetro "gain" en Oscillator. Cuando es false
+    // (valor por defecto), el Sequencer solo controla pitch/trigger
+    // y el volumen se asume controlado por otras fuentes MIDI.
+    bool sequencerControlsVolume_{false};
 
     // Set of module ids that are currently contributing audible audio
     // to the master bus. Used by the visual layer to decide which

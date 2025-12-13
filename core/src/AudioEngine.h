@@ -71,6 +71,14 @@ public:
     void getVoiceWaveformSnapshot(int voiceIndex, float* dst,
                                   int numPoints, double windowSeconds);
 
+    // Copies a downsampled snapshot of the recent mono output from
+    // the Sampleplay (SoundFont) path into `dst`, representing
+    // approximately `windowSeconds` of audio. This is used so that
+    // Sampleplay modules can display their own waveform on lines even
+    // though they do not occupy an AudioEngine voice.
+    void getSampleplayWaveformSnapshot(float* dst, int numPoints,
+                                       double windowSeconds);
+
     // Configure filter parameters for a given voice. This can be
     // called from the UI thread; the audio thread will consume the
     // updated coefficients on the next callback.
@@ -90,6 +98,12 @@ public:
     // oscillators.
     void triggerSampleplayNote(int bank, int program, int midiKey,
                                float velocity01);
+
+    // Sets a global linear gain for the Sampleplay (SoundFont)
+    // output. Values are clamped to [0,1]. A value of 0.0 silences
+    // all Sampleplay audio immediately (used e.g. when the
+    // Sampleplay module line to the master bus is muted).
+    void setSampleplayOutputGain(float gain);
 
 private:
     juce::AudioDeviceManager deviceManager_;
@@ -128,6 +142,20 @@ private:
     // the UI. Each buffer shares the same write index as the global
     // mix buffer so that all curves are time-aligned.
     float voiceWaveformBuffer_[kMaxVoices][kWaveformHistorySize]{};
+
+    // Rolling mono buffer containing only the Sampleplay (SoundFont)
+    // contribution before it is mixed with oscillator voices. This
+    // allows Sampleplay modules to render their own waveform on
+    // connections even though they do not map to an AudioEngine
+    // voice index.
+    float sampleplayWaveformBuffer_[kWaveformHistorySize]{};
+
+    // Global gain applied to the Sampleplay (SoundFont) path before it
+    // is mixed with the procedural oscillators. This allows the UI to
+    // implement an immediate "stop" or mute of all Sampleplay audio
+    // (for example, when the Sampleplay module line to the master is
+    // muted) without affecting oscillator voices.
+    std::atomic<float> sampleplayOutputGain_{1.0F};
     std::atomic<int> waveformWriteIndex_{0};
 
     // Simple per-voice RNG state used for noise waveforms.

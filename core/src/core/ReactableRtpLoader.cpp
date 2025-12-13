@@ -527,6 +527,11 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         seq->mutable_tracks().push_back(std::move(track));
         seq_pos = FindTag(xml, "sequence", seq_end, inner_end);
       }
+      // Derive high-level monophonic presets from the loaded
+      // SequenceTrack data so that the runtime sequencer can use a
+      // fixed-size 6x16 bank even cuando el .rtp original tenga más
+      // información de bajo nivel.
+      seq->SyncPresetsFromTracks();
       module = std::move(seq);
     } else if (type == "Filter") {
       auto filter = std::make_unique<FilterModule>(module_id);

@@ -1,6 +1,7 @@
 #include "core/AudioModules.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -22,7 +23,8 @@ OscillatorModule::OscillatorModule(const std::string& id,
                                    const float default_freq,
                                    const float default_gain)
     : AudioModule(id, ModuleType::kGenerator,
-                  /*produces_audio=*/true, /*consumes_audio=*/false)
+                  /*produces_audio=*/true, /*consumes_audio=*/false,
+                  /*produces_midi=*/false, /*consumes_midi=*/true)
 {
   set_colour(MakeColour(0x23, 0x66, 0xE1));
   set_label("Oscillator");
@@ -35,7 +37,9 @@ OscillatorModule::OscillatorModule(const std::string& id,
   set_level_mapping(0.02F, 0.18F);
   set_connection_targets({ModuleType::kAudio, ModuleType::kFilter});
 
-  AddOutputPort("out", true);
+  // MIDI note input (from Sequencer or similar) and audio output.
+  AddInputPort("in", PortSignalKind::kMidi);
+  AddOutputPort("out", PortSignalKind::kAudio);
   SetParameter("freq", default_freq);
   SetParameter("gain", default_gain);
 }
@@ -122,8 +126,8 @@ FilterModule::FilterModule(const std::string& id,
   set_level_mapping(0.02F, 0.90F);
   allow_any_connection_target();
 
-  AddInputPort("in", true);
-  AddOutputPort("out", true);
+  AddInputPort("in", PortSignalKind::kAudio);
+  AddOutputPort("out", PortSignalKind::kAudio);
   SetParameter("freq", default_cutoff);
   SetParameter("q", default_q);
 
@@ -233,8 +237,8 @@ OutputModule::OutputModule(const std::string& id)
   set_level_mapping(0.02F, 0.98F);
   allow_any_connection_target();
 
-  AddInputPort("in", true);
-  AddOutputPort("out", true);
+  AddInputPort("in", PortSignalKind::kAudio);
+  AddOutputPort("out", PortSignalKind::kAudio);
 }
 
 TonalizerModule::TonalizerModule(const std::string& id)
@@ -306,7 +310,7 @@ LfoModule::LfoModule(const std::string& id)
   set_description("Low-frequency modulation source.");
   set_icon_id("lfo");
 
-  AddOutputPort("out", true);
+  AddOutputPort("out", PortSignalKind::kControl);
 
   SetParameter("freq", 9.0F);
   SetParameter("mult", 0.906058F);
@@ -315,14 +319,15 @@ LfoModule::LfoModule(const std::string& id)
 
 SequencerModule::SequencerModule(const std::string& id)
     : AudioModule(id, ModuleType::kSequencer,
-                  /*produces_audio=*/false, /*consumes_audio=*/false)
+                  /*produces_audio=*/false, /*consumes_audio=*/false,
+                  /*produces_midi=*/true, /*consumes_midi=*/false)
 {
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("Sequencer");
   set_description("Step sequencer driving notes or triggers.");
   set_icon_id("sequencer");
 
-  AddOutputPort("out", true);
+  AddOutputPort("out", PortSignalKind::kMidi);
 
   SetParameter("current_track", 0.0F);
   SetParameter("autoseq_on", 0.0F);
@@ -330,6 +335,92 @@ SequencerModule::SequencerModule(const std::string& id)
   SetParameter("duration", 1.0F);
   SetParameter("num_tracks", 6.0F);
   SetParameter("offset", 0.0F);
+
+  // Demo preset: simple C major scale (C4..B4) along the first
+  // seven steps. This provides an audible example when no
+  // SequenceTrack data from .rtp has been loaded; loaders that
+  // populate tracks will later call SyncPresetsFromTracks and can
+  // overwrite this content.
+  static constexpr int kScaleSize = 7;
+  const int scale[kScaleSize] = {60, 62, 64, 65, 67, 69, 71};
+
+  SequencerPreset& demoPreset = presets_[0];
+  for (int i = 0; i < SequencerPreset::kNumSteps; ++i) {
+    SequencerStep& step =
+        demoPreset.steps[static_cast<std::size_t>(i)];
+    if (i < kScaleSize) {
+      step.enabled = true;
+      step.velocity01 = 1.0F;
+      step.pitch = scale[i];
+    } else {
+      step.enabled = false;
+      step.velocity01 = 0.0F;
+      step.pitch = 60;
+    }
+  }
+}
+
+void SequencerModule::SyncPresetsFromTracks()
+{
+  const std::size_t maxPresets = static_cast<std::size_t>(kNumPresets);
+  const std::size_t trackCount = std::min(tracks_.size(), maxPresets);
+
+  for (std::size_t presetIndex = 0; presetIndex < trackCount; ++presetIndex) {
+    const SequenceTrack& track = tracks_[presetIndex];
+    SequencerPreset& preset = presets_[presetIndex];
+
+    for (int stepIndex = 0; stepIndex < SequencerPreset::kNumSteps;
+         ++stepIndex) {
+      SequencerStep& step =
+          preset.steps[static_cast<std::size_t>(stepIndex)];
+
+      // Enabled flag from steps vector (0/1 per step), when available.
+      if (stepIndex < static_cast<int>(track.steps.size())) {
+        step.enabled = (track.steps[static_cast<std::size_t>(stepIndex)] != 0);
+      } else {
+        step.enabled = false;
+      }
+
+      // Velocity from volumes vector when present, clamped to [0,1].
+      if (stepIndex < static_cast<int>(track.volumes.size())) {
+        float v = track.volumes[static_cast<std::size_t>(stepIndex)];
+        if (v < 0.0F) {
+          v = 0.0F;
+        } else if (v > 1.0F) {
+          v = 1.0F;
+        }
+        step.velocity01 = v;
+      } else {
+        // Keep existing default (1.0) when no explicit volume is given.
+        if (!step.enabled) {
+          step.velocity01 = 0.0F;
+        }
+      }
+
+      // Pitch from per-step frequency when available; fallback to middle C.
+      int pitch = 60;  // C4
+      if (stepIndex < static_cast<int>(track.step_frequencies.size())) {
+        const float freq =
+            track.step_frequencies[static_cast<std::size_t>(stepIndex)];
+        if (freq > 0.0F) {
+          const double ratio = static_cast<double>(freq) / 440.0;
+          if (ratio > 0.0) {
+            const double midi =
+                69.0 + 12.0 * std::log(ratio) / std::log(2.0);
+            pitch = static_cast<int>(std::lround(midi));
+          }
+        }
+      }
+
+      // Clamp to a sensible MIDI range.
+      if (pitch < 0) {
+        pitch = 0;
+      } else if (pitch > 127) {
+        pitch = 127;
+      }
+      step.pitch = pitch;
+    }
+  }
 }
 
 DelayModule::DelayModule(const std::string& id)
@@ -341,8 +432,8 @@ DelayModule::DelayModule(const std::string& id)
   set_description("Delay / echo effect.");
   set_icon_id("delay");
 
-  AddInputPort("in", true);
-  AddOutputPort("out", true);
+  AddInputPort("in", PortSignalKind::kAudio);
+  AddOutputPort("out", PortSignalKind::kAudio);
 
   SetParameter("delay", 0.66F);
   SetParameter("fb", 0.5F);
@@ -358,8 +449,8 @@ ModulatorModule::ModulatorModule(const std::string& id)
   set_description("Ringmod / modulation effect.");
   set_icon_id("modulator");
 
-  AddInputPort("in", true);
-  AddOutputPort("out", true);
+  AddInputPort("in", PortSignalKind::kAudio);
+  AddOutputPort("out", PortSignalKind::kAudio);
 
   SetParameter("effect", 0.5F);
   SetParameter("drywet", 0.5F);
@@ -377,8 +468,8 @@ WaveShaperModule::WaveShaperModule(const std::string& id)
   set_description("Waveshaping / distortion effect.");
   set_icon_id("waveshaper");
 
-  AddInputPort("in", true);
-  AddOutputPort("out", true);
+  AddInputPort("in", PortSignalKind::kAudio);
+  AddOutputPort("out", PortSignalKind::kAudio);
 
   SetParameter("effect", 0.5F);
   SetParameter("drywet", 0.5F);
@@ -393,7 +484,7 @@ InputModule::InputModule(const std::string& id)
   set_description("External audio input.");
   set_icon_id("input");
 
-  AddOutputPort("out", true);
+  AddOutputPort("out", PortSignalKind::kAudio);
   SetParameter("amp", 0.0F);
 }
 
@@ -406,7 +497,7 @@ LoopModule::LoopModule(const std::string& id)
   set_description("Loop player.");
   set_icon_id("loop");
 
-  AddOutputPort("out", true);
+  AddOutputPort("out", PortSignalKind::kAudio);
 
   SetParameter("amp", 1.0F);
   SetParameter("sample", 0.0F);
@@ -415,14 +506,26 @@ LoopModule::LoopModule(const std::string& id)
 
 SampleplayModule::SampleplayModule(const std::string& id)
     : AudioModule(id, ModuleType::kAudio,
-                  /*produces_audio=*/true, /*consumes_audio=*/false)
+          /*produces_audio=*/true, /*consumes_audio=*/false,
+          /*produces_midi=*/false, /*consumes_midi=*/true)
 {
   set_colour(MakeColour(0x19, 0xCC, 0xDC));
   set_label("Sampleplay");
   set_description("Sample-based playback.");
   set_icon_id("sampleplay");
 
-  AddOutputPort("out", true);
+  // Expose a gain control so the right-hand arc in the UI can
+  // drive the Sampleplay output level. Use a wider level mapping
+  // than the default so that SoundFont-based instruments have a
+  // comfortable loudness range in combination with the global
+  // volume curve.
+  enable_gain_control(true);
+  set_level_mapping(0.05F, 0.95F);
+
+  // MIDI input controlling which notes to trigger, and audio output
+  // driven by the internal SoundFont engine.
+  AddInputPort("in", PortSignalKind::kMidi);
+  AddOutputPort("out", PortSignalKind::kAudio);
 
   SetParameter("amp", 1.0F);
   SetParameter("midifreq", 57.0F);
