@@ -106,25 +106,25 @@ private:
     double connectionFlowPhase_{0.0};
 
     // Visual sequencer phase used only for UI widgets
-    // (independiente del runtime de audio).
+    // (independent from the audio runtime).
     double sequencerPhase_{0.0};
     int sequencerStep_{0};
 
-    // Audio sequencer phase/step (16 steps por compás) usado por el
-    // runtime monofónico del módulo Sequencer.
+    // Audio sequencer phase/step (16 steps per bar) used by the
+    // monophonic runtime of the Sequencer module.
     double sequencerAudioPhase_{0.0};
     int sequencerAudioStep_{0};
 
-    // Contador simple de beats avanzando con el transporte global.
-    // Se usa para etiquetar eventos MidiNoteEvent con una posición
-    // en beats, sin introducir todavía un scheduler MIDI completo.
+    // Simple beat counter advancing with the global transport.
+    // Used to tag MidiNoteEvent events with a beat position without
+    // introducing a full MIDI scheduler yet.
     double transportBeats_{0.0};
 
-    // Cuando es true, los pasos del Sequencer modulan el volumen
-    // (velocidad) de los módulos destino: velocidad de nota en
-    // Sampleplay y parámetro "gain" en Oscillator. Cuando es false
-    // (valor por defecto), el Sequencer solo controla pitch/trigger
-    // y el volumen se asume controlado por otras fuentes MIDI.
+    // When true, Sequencer steps modulate the volume (velocity) of
+    // destination modules: note velocity in Sampleplay and the
+    // "gain" parameter in Oscillator. When false (default), the
+    // Sequencer only controls pitch/trigger and volume is assumed
+    // to be controlled by other MIDI sources.
     bool sequencerControlsVolume_{false};
 
     // Set of module ids that are currently contributing audible audio

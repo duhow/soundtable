@@ -15,7 +15,7 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
 {
     const auto bounds = getLocalBounds().toFloat();
 
-    // Limitar el scroll con rueda sólo al área del dock.
+    // Limit mouse wheel scrolling to the dock area only.
     auto dockBounds = bounds;
     const float dockWidth = calculateDockWidth(dockBounds.getWidth());
     juce::Rectangle<float> dockArea =
@@ -39,7 +39,7 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
         return;
     }
 
-    // Replicar la lógica de límites usada en el drag del dock.
+    // Replicate the same boundary logic used when dragging the dock.
     const float titleHeight = 24.0F;
     juce::Rectangle<float> titleArea =
         dockArea.removeFromTop(titleHeight);
@@ -57,9 +57,9 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
             ? (availableHeight - contentHeight)
             : 0.0F;
 
-    // deltaY > 0 implica rueda hacia arriba; desplazamos el contenido
-    // en pasos proporcionales a la altura de una ranura del dock para
-    // que cada notch de la rueda avance aproximadamente un módulo.
+    // deltaY > 0 means wheel up; scroll content in steps proportional
+    // to the height of a single dock slot so that each wheel notch
+    // advances approximately one module.
     const float scrollStepPixels = slotHeight;
     const float delta = static_cast<float>(wheel.deltaY) *
                         scrollStepPixels;
@@ -560,8 +560,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
         // Fallback: muting via the line centre -> object. Only objects that
         // actually render a visible line to the master in paint() should be
-        // clickable here (es decir, sólo módulos que lleven audio y no
-        // control/MIDI puros como el Sequencer).
+        // clickable here (i.e. only modules that carry audio and not pure
+        // control/MIDI modules such as the Sequencer).
         for (const auto& [id, object] : objectsLocal) {
             if (object.logical_id() == "-1" || object.docked()) {
                 continue;
@@ -595,17 +595,17 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 (moduleForConnection->produces_audio() ||
                  moduleForConnection->consumes_audio());
 
-            // Solo módulos que realmente llevan audio (producen o consumen
-            // audio) dibujan una línea radial a master y, por tanto, deben
-            // ser clicables aquí. Los controladores globales y módulos sólo
-            // MIDI/control quedan excluidos.
+            // Only modules that truly carry audio (produce or consume audio)
+            // draw a radial line to the master and therefore should be
+            // clickable here. Global controllers and MIDI/control-only
+            // modules are excluded.
             if (isGlobalController || !isAudioModule) {
                 continue;
             }
 
-            // Generators feeding otro módulo mediante una conexión activa
-            // ocultan su línea visual directa a master; esa línea tampoco
-            // debe ser clicable.
+            // Generators feeding another module through an active connection
+            // hide their direct visual line to the master; that line should
+            // not be clickable either.
             if (isGenerator && hasActiveOutgoingConnection) {
                 continue;
             }
@@ -722,11 +722,11 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
             const auto& currPoint = touchTrail_[touchTrail_.size() - 1];
             const float detectionThreshold = 15.0F;
 
-            // Check intersections with object-to-center lines. Debe
-            // coincidir con los módulos que realmente dibujan una
-            // línea radial a master en paint(): sólo módulos que
-            // producen/consumen audio, excluyendo controladores
-            // globales y módulos sólo MIDI/control como Sequencer.
+            // Check intersections with object-to-center lines. This must
+            // match the modules that actually draw a radial line to the
+            // master in paint(): only modules that produce/consume audio,
+            // excluding global controllers and MIDI/control-only modules
+            // such as the Sequencer.
             for (const auto& [id, object] : objects) {
                 if (object.logical_id() == "-1" || object.docked() ||
                     !isInsideMusicArea(object)) {
@@ -747,8 +747,8 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                     (moduleForLine->produces_audio() ||
                      moduleForLine->consumes_audio());
 
-                // Solo módulos que realmente llevan audio (producen o
-                // consumen audio) tienen línea radial clicable/cortable.
+                // Only modules that truly carry audio (produce or consume
+                // audio) have a radial line that can be clicked or cut.
                 if (isGlobalController || !isAudioModule) {
                     continue;
                 }

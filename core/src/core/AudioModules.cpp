@@ -675,9 +675,9 @@ void SampleplayModule::CycleBank()
     return;
   }
 
-  // Avanzar el canal lógico dentro del rango de bancos definidos por
-  // el .rtp (índices de <instrument>) y seleccionar el primer banco
-  // que tenga un índice de preset válido.
+  // Advance the logical channel within the range of banks defined by
+  // the .rtp (indices of <instrument>) and select the first bank that
+  // has a valid preset index.
   for (int step = 0; step < bankCount; ++step) {
     const int nextChannel = (channel_ + 1 + step) % bankCount;
     const int preferredIndex =

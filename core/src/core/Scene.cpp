@@ -125,7 +125,7 @@ bool Scene::RemoveModule(const std::string& module_id)
     return false;
   }
 
-  // Eliminar conexiones que involucren al módulo borrado.
+  // Remove any connections that involve the deleted module.
   connections_.erase(
       std::remove_if(connections_.begin(), connections_.end(),
                      [&module_id](const Connection& c) {
@@ -157,7 +157,7 @@ bool Scene::AddConnection(const Connection& connection)
     return false;
   }
 
-  // Comprobar que no exista ya una conexión idéntica.
+  // Ensure there is no identical connection already present.
   const auto it = std::find_if(
       connections_.cbegin(), connections_.cend(),
       [&connection](const Connection& c) {

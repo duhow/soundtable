@@ -378,23 +378,21 @@ class SampleplayModule : public AudioModule {
 
         // Logical bank/channel handling -----------------------------------
         //
-        // Reactable patches para Sampleplay usan el atributo "channel"
-        // junto con una lista de elementos <instrument> para describir
-        // varios "modos" (por ejemplo, drums vs synths). En este
-        // proyecto interpretamos dicho atributo como un índice lógico
-        // de banco, y mapeamos cada banco a un preset concreto del
-        // SoundFont.
+        // Reactable patches for Sampleplay use the "channel" attribute
+        // together with a list of <instrument> elements to describe
+        // several "modes" (for example, drums vs synths). In this
+        // project we interpret that attribute as a logical bank index
+        // and map each bank to a specific SoundFont preset.
 
         // Current logical channel/bank index as loaded from the .rtp
         // attribute "channel" (typically 0 for drums, 1 for synths).
         [[nodiscard]] int channel() const { return channel_; }
         void set_channel(int channel) { channel_ = channel; }
 
-        // Default preset indices per logical channel. The i-ésimo
-        // elemento de este vector representa el índice en
-        // instruments_ del preset asociado al banco lógico i. Valores
-        // negativos indican que no se encontró un preset válido para
-        // ese banco.
+        // Default preset indices per logical channel. The i-th element
+        // in this vector represents the index in instruments_ of the
+        // preset associated with logical bank i. Negative values
+        // indicate that no valid preset was found for that bank.
         void set_default_preset_indices(std::vector<int> indices)
         {
                 default_preset_indices_ = std::move(indices);
@@ -405,9 +403,9 @@ class SampleplayModule : public AudioModule {
                 return default_preset_indices_;
         }
 
-        // Cambia de banco lógico (por ejemplo, de drums a synths)
-        // avanzando el índice de canal y seleccionando el preset por
-        // defecto asociado a ese banco cuando exista.
+        // Switches logical bank (for example, from drums to synths) by
+        // advancing the channel index and selecting the default preset
+        // associated with that bank when available.
         void CycleBank();
 
         // Soundfont handling -------------------------------------------------

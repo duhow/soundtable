@@ -203,18 +203,18 @@ class Scene {
  public:
   Scene() = default;
 
-  // Gestión de módulos.
+  // Module management.
   bool AddModule(std::unique_ptr<AudioModule> module);
   bool RemoveModule(const std::string& module_id);
 
-  // Gestión de conexiones.
+  // Connection management.
   bool AddConnection(const Connection& connection);
   bool RemoveConnection(const std::string& from_module_id,
                         const std::string& from_port_name,
                         const std::string& to_module_id,
                         const std::string& to_port_name);
 
-  // Gestión de objetos tangibles/virtuales.
+  // Tangible/virtual object management.
   void UpsertObject(const ObjectInstance& object);
   void RemoveObject(std::int64_t tracking_id);
 

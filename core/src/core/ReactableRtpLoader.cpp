@@ -419,9 +419,9 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         }
         try {
           float parsed = std::stof(value);
-          // Reactable almacena el volumen del módulo Volume en
-          // porcentaje (0..100). Normalizamos a [0,1] para el
-          // modelo interno cuando detectamos valores > 1.0.
+          // Reactable stores the Volume module level as a
+          // percentage (0..100). Normalize it to [0,1] for the
+          // internal model when values > 1.0 are detected.
           if (key == "volume" && parsed > 1.0F) {
             parsed = parsed / 100.0F;
           }
@@ -529,8 +529,8 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
       }
       // Derive high-level monophonic presets from the loaded
       // SequenceTrack data so that the runtime sequencer can use a
-      // fixed-size 6x16 bank even cuando el .rtp original tenga más
-      // información de bajo nivel.
+      // fixed-size 6x16 bank even when the original .rtp contains
+      // more low-level detail.
       seq->SyncPresetsFromTracks();
       module = std::move(seq);
     } else if (type == "Filter") {

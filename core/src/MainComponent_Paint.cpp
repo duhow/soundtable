@@ -325,9 +325,8 @@ void MainComponent::paint(juce::Graphics& g)
                                   float normalisation, int segments,
                                   bool tiled) {
             juce::ignoreUnused(control);
-            // For conexiones dinámicas que ya se dibujan como líneas
-            // rectas, reutilizamos drawWaveformOnLine para la
-            // visualización de waveform.
+            // For dynamic connections that are already drawn as straight
+            // lines, reuse drawWaveformOnLine for waveform rendering.
             drawWaveformOnLine(p1, p2, amplitude, thickness, samples,
                                numSamples, normalisation, segments,
                                tiled);

@@ -175,8 +175,8 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
             }
 
             // Build default preset indices per logical bank: for each
-            // <instrument> declared en el .rtp, try to find a matching
-            // preset name en el SoundFont y recordar su índice.
+            // <instrument> declared in the .rtp, try to find a matching
+            // preset name in the SoundFont and remember its index.
             std::vector<int> defaultPresetIndices(
                 preferredInstrumentNames.size(), -1);
 
@@ -199,8 +199,8 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
                 };
 
             // Pre-compute indices of presets that live on banks other
-            // than 0. In muchos SoundFonts GM/GS, los kits de percusión
-            // se sitúan en bancos >= 128.
+            // than 0. In many GM/GS SoundFonts, drum kits are located
+            // on banks >= 128.
             std::vector<int> nonZeroBankPresetIndices;
             std::vector<int> highBankPresetIndices;
             nonZeroBankPresetIndices.reserve(instruments.size());
@@ -238,10 +238,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
                     }
                 }
 
-                // 2) For drum banks sin match exacto, intentar primero
-                //    asignar un preset de un banco físico distinto de 0,
-                //    priorizando bancos altos (>= 128) típicamente usados
-                //    para percusión en SoundFonts GM/GS.
+                // 2) For drum banks without an exact match, first try to
+                //    assign a preset from a physical bank different from 0,
+                //    prioritising higher banks (>= 128) typically used for
+                //    percussion in GM/GS SoundFonts.
                 if (matchedIndex < 0 && isDrumLogicalBank) {
                     if (!highBankPresetIndices.empty()) {
                         matchedIndex = highBankPresetIndices.front();
@@ -251,12 +251,13 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
                     }
                 }
 
-                // 3) Si seguimos sin mapping para un banco de drums y no
-                //    hay bancos físicos alternativos, hacemos un último
-                //    intento genérico buscando presets cuyo nombre sugiera
-                //    percusión. Esto mantiene compatibilidad con SF2 que
-                //    sólo usan bank 0 pero incluyen kits como "Warehouse
-                //    Percussion", sin depender de nombres concretos.
+                // 3) If we still have no mapping for a drum bank and there
+                //    are no alternative physical banks, make a final generic
+                //    attempt by searching for presets whose name suggests
+                //    percussion. This keeps compatibility with SF2 files
+                //    that only use bank 0 but include kits such as
+                //    "Warehouse Percussion", without depending on specific
+                //    names.
                 if (matchedIndex < 0 && isDrumLogicalBank) {
                     for (std::size_t i = 0; i < instruments.size(); ++i) {
                         const auto& presetName = instruments[i].name;
@@ -272,9 +273,9 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
                     }
                 }
 
-                // 4) Si aún no tenemos mapping, dejamos el índice en -1.
-                //    La lógica posterior elegirá el primer preset válido
-                //    conocido o, en última instancia, el índice 0.
+                // 4) If we still do not have a mapping, leave the index at
+                //    -1. Later logic will pick the first known valid preset
+                //    or, ultimately, index 0.
                 defaultPresetIndices[bankIdx] = matchedIndex;
             }
 
