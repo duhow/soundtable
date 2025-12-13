@@ -979,25 +979,17 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
             if (modIt != modules.end() && modIt->second != nullptr) {
                 auto* module = modIt->second.get();
                 if (module->type() == rectai::ModuleType::kFilter) {
-                    scene_.SetModuleParameter(object.logical_id(), "q",
-                                              value);
-                } else if (dynamic_cast<rectai::VolumeModule*>(module) !=
-                           nullptr) {
-                    scene_.SetModuleParameter(object.logical_id(), "volume",
-                                              value);
-                } else if (dynamic_cast<rectai::LoopModule*>(module) !=
-                           nullptr ||
-                           dynamic_cast<rectai::SampleplayModule*>(
-                               module) != nullptr) {
-                    scene_.SetModuleParameter(object.logical_id(), "amp",
-                                              value);
+                    scene_.SetModuleParameter(object.logical_id(), "q", value);
+                } else if (module->is<rectai::VolumeModule>()) {
+                    scene_.SetModuleParameter(object.logical_id(), "volume", value);
+                } else if (module->is<rectai::LoopModule>() ||
+                           module->is<rectai::SampleplayModule>()) {
+                    scene_.SetModuleParameter(object.logical_id(), "amp", value);
                 } else {
-                    scene_.SetModuleParameter(object.logical_id(), "gain",
-                                              value);
+                    scene_.SetModuleParameter(object.logical_id(), "gain", value);
                 }
             } else {
-                scene_.SetModuleParameter(object.logical_id(), "gain",
-                                          value);
+                scene_.SetModuleParameter(object.logical_id(), "gain", value);
             }
         }
 
@@ -1209,10 +1201,10 @@ void MainComponent::applyControlDropMuteIfNeeded(
 
     // Only apply this behaviour to Loop, Oscillator and Sampleplay
     // modules, mapping to their respective gain/amp parameters.
-    if (dynamic_cast<rectai::OscillatorModule*>(module) != nullptr) {
+    if (module->is<rectai::OscillatorModule>()) {
         scene_.SetModuleParameter(obj.logical_id(), "gain", 0.0F);
-    } else if (dynamic_cast<rectai::LoopModule*>(module) != nullptr ||
-               dynamic_cast<rectai::SampleplayModule*>(module) != nullptr) {
+    } else if (module->is<rectai::LoopModule>() ||
+               module->is<rectai::SampleplayModule>()) {
         scene_.SetModuleParameter(obj.logical_id(), "amp", 0.0F);
     }
 }

@@ -250,25 +250,25 @@ void MainComponent::paint(juce::Graphics& g)
             return 1.0F;
         }
 
-        if (dynamic_cast<const rectai::VolumeModule*>(module) != nullptr) {
+        if (module->is<rectai::VolumeModule>()) {
             const float volume =
                 module->GetParameterOrDefault("volume", 0.9F);
             return juce::jlimit(0.0F, 1.0F, volume);
         }
 
-        if (dynamic_cast<const rectai::SampleplayModule*>(module) != nullptr ||
-            dynamic_cast<const rectai::LoopModule*>(module) != nullptr ||
-            dynamic_cast<const rectai::InputModule*>(module) != nullptr) {
+        if (module->is<rectai::SampleplayModule>() ||
+            module->is<rectai::LoopModule>() ||
+            module->is<rectai::InputModule>()) {
             const float amp = module->GetParameterOrDefault("amp", 1.0F);
             return juce::jlimit(0.0F, 1.0F, amp);
         }
 
-        if (dynamic_cast<const rectai::OscillatorModule*>(module) != nullptr) {
+        if (module->is<rectai::OscillatorModule>()) {
             const float gain = module->GetParameterOrDefault("gain", 0.5F);
             return juce::jlimit(0.0F, 1.0F, gain);
         }
 
-        if (dynamic_cast<const rectai::FilterModule*>(module) != nullptr) {
+        if (module->is<rectai::FilterModule>()) {
             const float q = module->GetParameterOrDefault("q", 0.5F);
             return juce::jlimit(0.0F, 1.0F, q);
         }
@@ -499,8 +499,7 @@ void MainComponent::paint(juce::Graphics& g)
 
             const bool isSampleplayModule =
                 moduleForConnection != nullptr &&
-                dynamic_cast<const rectai::SampleplayModule*>(
-                    moduleForConnection) != nullptr;
+                moduleForConnection->is<rectai::SampleplayModule>();
 
             const float visualLevel = getModuleVisualLevel(moduleForConnection);
 
@@ -755,10 +754,8 @@ void MainComponent::paint(juce::Graphics& g)
             }
 
             const bool involvesSampleplay =
-                (dynamic_cast<const rectai::SampleplayModule*>(
-                     fromModulePtr) != nullptr) ||
-                (dynamic_cast<const rectai::SampleplayModule*>(
-                     toModulePtr) != nullptr);
+                fromModulePtr->is<rectai::SampleplayModule>() ||
+                toModulePtr->is<rectai::SampleplayModule>();
 
               const float fromLevel = getModuleVisualLevel(fromModulePtr);
               const float toLevel = getModuleVisualLevel(toModulePtr);
@@ -1094,10 +1091,8 @@ void MainComponent::paint(juce::Graphics& g)
                 gainValue = moduleForObject->GetParameterOrDefault(
                     "q",
                     moduleForObject->default_parameter_value("q"));
-            } else if (dynamic_cast<const rectai::LoopModule*>(
-                           moduleForObject) != nullptr ||
-                       dynamic_cast<const rectai::SampleplayModule*>(
-                           moduleForObject) != nullptr) {
+            } else if (moduleForObject->is<rectai::LoopModule>() ||
+                       moduleForObject->is<rectai::SampleplayModule>()) {
                 // Loop and Sampleplay modules expose an "amp"
                 // parameter that behaves as their primary level
                 // control.
@@ -1234,9 +1229,7 @@ void MainComponent::paint(juce::Graphics& g)
                 // tangible's own rotation so that visual feedback matches
                 // the physical gesture used to change BPM.
                 const bool isTempoIcon =
-                    (moduleForObject != nullptr &&
-                     dynamic_cast<const rectai::TempoModule*>(
-                         moduleForObject) != nullptr);
+                    (moduleForObject->is<rectai::TempoModule>());
                 if (isTempoIcon) {
                     juce::Graphics::ScopedSaveState tempoIconState(g);
                     // Invert the visual rotation so that the
