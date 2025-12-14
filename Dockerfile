@@ -27,6 +27,7 @@ RUN apt-get update && \
         libgl1-mesa-dev \
         libssl-dev \
         libcurl4-openssl-dev \
+        libfluidsynth-dev \
         libwebkit2gtk-4.1-dev \
         libgtk-3-dev \
         libopencv-dev && \
