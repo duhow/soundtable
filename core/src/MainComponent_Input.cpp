@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
+#include <vector>
 
 #include "MainComponentHelpers.h"
 #include "core/AudioModules.h"
@@ -539,29 +540,28 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
             if (isPointNearSegment(click, {fx, fy}, {tx, ty}, maxDistanceSq)) {
                 const std::string key = makeConnectionKey(conn);
-                
+
                 // Calculate normalized position along the line (0=from, 1=to).
                 const juce::Point<float> p1{fx, fy};
                 const juce::Point<float> p2{tx, ty};
                 const auto ab = p2 - p1;
                 const auto ap = click - p1;
                 const auto abLenSq = ab.x * ab.x + ab.y * ab.y;
-                float splitPoint = 0.5F; // Default to mid-point.
+                float splitPoint = 0.5F;  // Default to mid-point.
                 if (abLenSq > 0.0F) {
                     splitPoint = (ap.x * ab.x + ap.y * ab.y) / abLenSq;
                     splitPoint = juce::jlimit(0.0F, 1.0F, splitPoint);
                 }
-                
-                // Store hold state and apply temporary mute.
+
+                // Store hold state for temporary mute/visualisation.
+                // The actual mute is driven by activeConnectionHold_
+                // in timerCallback() rather than by mutating
+                // mutedConnections_.
                 activeConnectionHold_ = ConnectionHoldState{
                     key,
-                    0,  // Not an object-to-center line.
+                    0,   // Not an object-to-center line.
                     false,
-                    splitPoint
-                };
-                
-                // Always mute while holding.
-                mutedConnections_.insert(key);
+                    splitPoint};
 
                 repaint();
                 return;
@@ -1180,67 +1180,27 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
             }
         }
 
-        // If we have just unmuted the master route for a module that
-        // currently has no active outgoing module->module connections
-        // (ignoring the implicit module->master auto-wire), clear any
-        // stored per-connection mutes from that module. This models the
-        // behaviour where a previous "only connection" mute was
-        // mirrored onto the master: once the user explicitly
-        // desilences the module via its radial, new or reactivated
-        // connections from that module should start unmuted.
+        // If we have just unmuted the master route for this module,
+        // clear any stored per-connection mute state for all edges
+        // originating from it, including conexiones que ya no estén
+        // presentes en la Scene pero cuyo estado mute persista en
+        // mutedConnections_. Esto modela un "reset global de mute"
+        // para el generador: una vez que el usuario des-silencia la
+        // radial, todas las rutas salientes (existentes o futuras)
+        // parten sin mute heredado.
         if (justUnmutedMaster) {
-            std::size_t activeOutgoingCount = 0;
+            const std::string prefix = moduleId + ":";
+            std::vector<std::string> keysToErase;
+            keysToErase.reserve(mutedConnections_.size());
 
-            if (isInsideMusicArea(obj)) {
-                for (const auto& conn : connections) {
-                    if (conn.from_module_id != moduleId) {
-                        continue;
-                    }
-
-                    // Ignore the implicit module->master connection.
-                    if (conn.to_module_id == "-1") {
-                        continue;
-                    }
-
-                    const auto toObjIdIt =
-                        moduleToObjectId.find(conn.to_module_id);
-                    if (toObjIdIt == moduleToObjectId.end()) {
-                        continue;
-                    }
-
-                    const auto toObjIt =
-                        objects.find(toObjIdIt->second);
-                    if (toObjIt == objects.end()) {
-                        continue;
-                    }
-
-                    const auto& toObj = toObjIt->second;
-                    if (!isInsideMusicArea(toObj)) {
-                        continue;
-                    }
-
-                    if (!conn.is_hardlink &&
-                        !isConnectionGeometricallyActive(obj, toObj)) {
-                        continue;
-                    }
-
-                    ++activeOutgoingCount;
+            for (const auto& key : mutedConnections_) {
+                if (key.rfind(prefix, 0) == 0U) {
+                    keysToErase.push_back(key);
                 }
             }
 
-            if (activeOutgoingCount == 0U) {
-                // No active outgoing connections remain; clear any
-                // stored mute state for module->module edges from this
-                // module so that future connections start unmuted.
-                for (const auto& conn : connections) {
-                    if (conn.from_module_id != moduleId ||
-                        conn.to_module_id == "-1") {
-                        continue;
-                    }
-
-                    const std::string key = makeConnectionKey(conn);
-                    mutedConnections_.erase(key);
-                }
+            for (const auto& key : keysToErase) {
+                mutedConnections_.erase(key);
             }
         }
     }

@@ -158,16 +158,18 @@ bool Scene::AddConnection(const Connection& connection)
   }
 
   // Enforce that a module can have at most one non-hardlink (dynamic)
-  // outgoing connection, and only when it does not already have any
-  // other outgoing connection (including hardlinks). Hardlink
-  // connections themselves are exempt from this limit so that modules
-  // can maintain multiple explicit hardwired routes in addition to the
-  // single dynamic one that may have been created first.
-  if (!connection.is_hardlink) {
+  // outgoing connection **to other modules**, while still allowing an
+  // additional non-hardlink connection to the master Output (-1). This
+  // keeps the "single dynamic route" invariant for spatial routing
+  // (e.g. Osc → closest Filter) without blocking the implicit
+  // module→Output(-1) auto-wiring used to model radial lines and
+  // connection-level mute to the master.
+  if (!connection.is_hardlink && connection.to_module_id != "-1") {
     const auto existingOut = std::find_if(
         connections_.cbegin(), connections_.cend(),
         [&connection](const Connection& c) {
-          return c.from_module_id == connection.from_module_id;
+          return c.from_module_id == connection.from_module_id &&
+                 c.to_module_id != "-1";
         });
     if (existingOut != connections_.cend()) {
       return false;

@@ -16,6 +16,7 @@ using rectai::Connection;
 using rectai::FilterModule;
 using rectai::ObjectInstance;
 using rectai::OscillatorModule;
+using rectai::OutputModule;
 using rectai::ReactablePatchMetadata;
 using rectai::Scene;
 using rectai::SampleplayModule;
@@ -431,6 +432,49 @@ int main()
 
         assert(dynamicCount == 0U);
         assert(hardlinkCount == 2U);
+    }
+
+    // A module can have one dynamic connection to another module and
+    // an additional non-hardlink connection to the master Output (-1).
+    {
+        Scene s;
+
+        auto osc = std::make_unique<OscillatorModule>("osc1");
+        auto filter = std::make_unique<FilterModule>("filter1");
+        auto output = std::make_unique<OutputModule>("-1");
+
+        assert(s.AddModule(std::move(osc)));
+        assert(s.AddModule(std::move(filter)));
+        assert(s.AddModule(std::move(output)));
+
+        // Dynamic connection osc1 -> filter1.
+        Connection dyn{.from_module_id = "osc1",
+                       .from_port_name = "out",
+                       .to_module_id = "filter1",
+                       .to_port_name = "in",
+                       .is_hardlink = false};
+        assert(s.AddConnection(dyn));
+
+        // Additional non-hardlink connection osc1 -> Output (-1)
+        // should be accepted and must not count against the
+        // per-module dynamic limit.
+        Connection toMaster{.from_module_id = "osc1",
+                            .from_port_name = "out",
+                            .to_module_id = "-1",
+                            .to_port_name = "in",
+                            .is_hardlink = false};
+        assert(s.AddConnection(toMaster));
+
+        const auto& conns = s.connections();
+        std::size_t oscOutCount = 0;
+        for (const auto& c : conns) {
+            if (c.from_module_id == "osc1") {
+                ++oscOutCount;
+            }
+        }
+
+        // Expect both connections to coexist.
+        assert(oscOutCount == 2U);
     }
 
     // When a module already has a hardlink, it must not be allowed

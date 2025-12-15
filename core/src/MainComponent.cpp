@@ -321,27 +321,60 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
     };
 
     if (!loadDefaultPatch()) {
-        // Fallback: example scene with a couple of modules and objects.
+        // Fallback: example scene with a couple of modules and an
+        // explicit Output/master so that connection-level mute via
+        // radials and AudioGraph-based routing behave consistently
+        // with real Reactable patches.
         auto osc1 = std::make_unique<rectai::OscillatorModule>("osc1");
         auto filter1 =
             std::make_unique<rectai::FilterModule>("filter1");
+        auto output =
+            std::make_unique<rectai::OutputModule>("-1");
 
         (void)scene_.AddModule(std::move(osc1));
         (void)scene_.AddModule(std::move(filter1));
+        (void)scene_.AddModule(std::move(output));
 
-        rectai::Connection connection{
-            .from_module_id = "osc1",
-            .from_port_name = "out",
-            .to_module_id = "filter1",
-            .to_port_name = "in",
-        };
-        (void)scene_.AddConnection(connection);
+        // Basic chain Osc -> Filter -> Output(master).
+        {
+            rectai::Connection c1{
+                .from_module_id = "osc1",
+                .from_port_name = "out",
+                .to_module_id = "filter1",
+                .to_port_name = "in",
+                .is_hardlink = false};
+            (void)scene_.AddConnection(c1);
 
-        // Normalized positions on the table.
+            rectai::Connection c2{
+                .from_module_id = "filter1",
+                .from_port_name = "out",
+                .to_module_id = "-1",
+                .to_port_name = "in",
+                .is_hardlink = false};
+            (void)scene_.AddConnection(c2);
+
+            // Auto-wire the Oscillator directly to Output so that
+            // its radial to the master exists in the Scene model and
+            // can be muted via line-cutting gestures, mirroring the
+            // behaviour of patches loaded from .rtp.
+            rectai::Connection c3{
+                .from_module_id = "osc1",
+                .from_port_name = "out",
+                .to_module_id = "-1",
+                .to_port_name = "in",
+                .is_hardlink = false};
+            (void)scene_.AddConnection(c3);
+        }
+
+        // Normalized positions on the table. The Output tangible is
+        // represented as an object with logical_id "-1" but remains
+        // invisible in the UI (MainComponent_Paint filters it out).
         scene_.UpsertObject(
             rectai::ObjectInstance(1, "osc1", 0.3F, 0.5F, 0.0F));
         scene_.UpsertObject(rectai::ObjectInstance(
             2, "filter1", 0.7F, 0.5F, 0.0F));
+        scene_.UpsertObject(rectai::ObjectInstance(
+            -1, "-1", 0.5F, 0.1F, 0.0F));
     }
 
     // After the scene has been populated, attempt to resolve and load
