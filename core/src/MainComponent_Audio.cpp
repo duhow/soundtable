@@ -891,11 +891,44 @@ void MainComponent::timerCallback()
         }
 
         bool chainMuted = srcMuted;
+        bool downstreamMutedToMaster = false;
         float gainParam = module->GetParameterOrDefault(
             "gain", module->default_parameter_value("gain"));
 
         if (downstreamModule != nullptr && downstreamInside) {
-            chainMuted = srcMuted || connectionMuted;
+            // A downstream module can also be effectively muted if all of
+            // its routes to the master Output (-1) are muted. When the
+            // generator feeds such a module (for example two Oscillators
+            // both feeding a Filter whose radial line is muted), the
+            // entire chain must be considered silent even if the
+            // generator's own radial is unmuted.
+            {
+                bool hasMasterRoute = false;
+                bool masterRouteMuted = true;
+
+                for (const auto& conn : scene_.connections()) {
+                    if (conn.from_module_id != downstreamModule->id() ||
+                        conn.to_module_id != "-1") {
+                        continue;
+                    }
+
+                    hasMasterRoute = true;
+                    const std::string key = makeConnectionKey(conn);
+                    const bool connIsMuted =
+                        mutedConnections_.find(key) !=
+                        mutedConnections_.end();
+                    if (!connIsMuted) {
+                        masterRouteMuted = false;
+                        break;
+                    }
+                }
+
+                downstreamMutedToMaster =
+                    hasMasterRoute && masterRouteMuted;
+            }
+
+            chainMuted = srcMuted || connectionMuted ||
+                         downstreamMutedToMaster;
 
             // For most audio modules, let the downstream module's gain
             // control the chain level. Filters are treated specially:
@@ -1044,14 +1077,15 @@ void MainComponent::timerCallback()
                                         filterCutoffHz, filterQ);
             audioEngine_.setVoiceWaveform(assignedVoice, waveformIndex);
 
-            // Mark generator and, when present, its downstream module
-            // as actively carrying audible audio so the visual layer
-            // can render waveforms only on those paths, and remember
-            // which AudioEngine voice index represents this chain.
-            // Chains that are muted at source or along the connection
-            // are not marked as active, so their radials and
-            // module→module edges appear flat.
-            if (!chainMuted) {
+            // Mark generator and, when present, its downstream module as
+            // visually active so the paint layer can render waveforms on
+            // those paths. For visuals consider only mutes at source or
+            // on the direct connection; a mute on the downstream module's
+            // radial (e.g. Filter→Master) should still allow Osc→Filter
+            // to display a waveform even though the chain is silent at
+            // the master.
+            const bool visualChainMuted = srcMuted || connectionMuted;
+            if (!visualChainMuted) {
                 modulesWithActiveAudio_.insert(module->id());
                 moduleVoiceIndex_[module->id()] = assignedVoice;
                 if (downstreamModule != nullptr && downstreamInside &&

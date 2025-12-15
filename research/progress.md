@@ -48,6 +48,13 @@
   - reconexión Osc→Filter,
   vuelve a producir una línea Osc→Filter **no muteada**, ya que el des-silenciado explícito de la radial sin conexiones activas limpia el estado de mute heredado de conexiones anteriores.
 
+### Mute aguas abajo: Filter silenciado bloquea todos los generadores conectados
+- Se ha corregido el caso en el que varios `OscillatorModule` alimentan un mismo `FilterModule` y el usuario silencia la radial de ese filtro (conexión `Filter -> "-1"`), pero se seguía escuchando el sonido directo de los osciladores.
+- En el bucle de ruteo de generadores de `MainComponent_Audio.cpp`, tras seleccionar un `downstreamModule` (por ejemplo, un Filter), se calcula ahora explícitamente si ese módulo aguas abajo está completamente muteado hacia el master (`downstreamMutedToMaster`) comprobando sus conexiones `from=downstream.id()` → `to="-1"` en `mutedConnections_`.
+- El flag `chainMuted` pasa a ser la disyunción de tres condiciones: `srcMuted` (mute en la radial del generador), `connectionMuted` (mute explícito en la conexión generador→módulo) y `downstreamMutedToMaster` (mute en la radial del módulo aguas abajo). Si cualquiera de ellas es cierta, el nivel de salida de la voz se fuerza a 0.
+- Esto garantiza que en una configuración como `Osc1 → Filter`, `Osc2 → Filter`, `Filter → Master`, al silenciar la radial de Filter toda la cadena queda efectivamente en silencio: no se escucha ningún oscilador aunque sus propias radiales no estén muteadas individualmente, porque todo el audio debe atravesar el Filter para llegar al master.
+- Para la capa visual, en cambio, se introduce un flag `visualChainMuted = srcMuted || connectionMuted` y se usa exclusivamente éste para rellenar `modulesWithActiveAudio_` y `moduleVoiceIndex_`. De este modo, un mute sólo en la radial del módulo aguas abajo (Filter→Master) **no** impide que la conexión Osc→Filter se dibuje con waveform: el usuario sigue viendo que los Oscillators envían audio al Filter, aunque el corte de la cadena se produzca en la salida del propio Filter hacia el master.
+
 ## 2025-12-13
 
 ### Activación inmediata del filtro al crear conexiones
