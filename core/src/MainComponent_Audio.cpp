@@ -23,6 +23,13 @@ void MainComponent::toggleHardlinkBetweenObjects(
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();
 
+    // Keep the engine's internal logical audio graph in sync with
+    // the current Scene so that audio-side structures (such as
+    // connection waveform taps or future DSP routing) can reason
+    // about modules and typed connections without re-parsing the
+    // Scene.
+    audioEngine_.rebuildAudioGraphFromScene(scene_);
+
     const auto itA = objects.find(objectIdA);
     const auto itB = objects.find(objectIdB);
     if (itA == objects.end() || itB == objects.end()) {
@@ -151,13 +158,23 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
             bool hasMasterRoute = false;
             bool masterRouteMuted = true;
 
-            for (const auto& conn : scene_.connections()) {
-                if (conn.from_module_id != module->id() ||
-                    conn.to_module_id != "-1") {
+            const auto audioEdges =
+                audioEngine_.audioGraph().audio_edges();
+
+            for (const auto& edge : audioEdges) {
+                if (edge.from_module_id != module->id() ||
+                    edge.to_module_id != "-1") {
                     continue;
                 }
 
                 hasMasterRoute = true;
+
+                rectai::Connection conn{edge.from_module_id,
+                                         edge.from_port_name,
+                                         edge.to_module_id,
+                                         edge.to_port_name,
+                                         edge.is_hardlink};
+
                 const std::string key = makeConnectionKey(conn);
                 const bool connIsMuted =
                     mutedConnections_.find(key) !=
@@ -219,6 +236,133 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
         // underlying waveform comes from FluidSynth rather than the
         // internal oscillators.
         modulesWithActiveAudio_.insert(sampleModule->id());
+    }
+}
+
+void MainComponent::updateConnectionVisualSources()
+{
+    connectionVisualSources_.clear();
+
+    const auto& modules = scene_.modules();
+
+    // Helper to determine whether a Scene::Connection carries audio
+    // by inspecting the declared port kinds on source/destination
+    // modules.
+    auto isAudioConnection = [&](const rectai::Connection& conn) {
+        const auto fromIt = modules.find(conn.from_module_id);
+        const auto toIt = modules.find(conn.to_module_id);
+
+        const rectai::AudioModule* fromModule =
+            (fromIt != modules.end() && fromIt->second != nullptr)
+                ? fromIt->second.get()
+                : nullptr;
+        const rectai::AudioModule* toModule =
+            (toIt != modules.end() && toIt->second != nullptr)
+                ? toIt->second.get()
+                : nullptr;
+
+        if (fromModule != nullptr) {
+            for (const auto& port : fromModule->output_ports()) {
+                if (port.name == conn.from_port_name) {
+                    return port.kind == rectai::PortSignalKind::kAudio;
+                }
+            }
+        }
+
+        if (toModule != nullptr) {
+            for (const auto& port : toModule->input_ports()) {
+                if (port.name == conn.to_port_name) {
+                    return port.kind == rectai::PortSignalKind::kAudio;
+                }
+            }
+        }
+
+        // Fallback: treat the connection as audio only when both
+        // modules agree that they produce/consume audio.
+        if (fromModule != nullptr && toModule != nullptr) {
+            return fromModule->produces_audio() &&
+                   toModule->consumes_audio();
+        }
+
+        return false;
+    };
+
+    for (const auto& conn : scene_.connections()) {
+        if (!isAudioConnection(conn)) {
+            continue;
+        }
+
+        const auto fromIt = modules.find(conn.from_module_id);
+        const auto toIt = modules.find(conn.to_module_id);
+
+        const rectai::AudioModule* fromModule =
+            (fromIt != modules.end() && fromIt->second != nullptr)
+                ? fromIt->second.get()
+                : nullptr;
+        const rectai::AudioModule* toModule =
+            (toIt != modules.end() && toIt->second != nullptr)
+                ? toIt->second.get()
+                : nullptr;
+
+        if (fromModule == nullptr && toModule == nullptr) {
+            continue;
+        }
+
+        ConnectionVisualSource source;
+
+        // Sampleplay connections always use the dedicated Sampleplay
+        // waveform buffer rather than any per-voice buffer.
+        const bool involvesSampleplay =
+            (fromModule != nullptr &&
+             fromModule->is<rectai::SampleplayModule>()) ||
+            (toModule != nullptr &&
+             toModule->is<rectai::SampleplayModule>());
+
+        if (involvesSampleplay) {
+            source.kind = ConnectionVisualSource::Kind::kSampleplay;
+            source.voiceIndex = -1;
+        } else {
+            int voiceIndex = -1;
+
+            // Prefer mapping based on the source module id; fall back
+            // to the destination when the source is not currently
+            // mapped to any voice.
+            if (const auto it =
+                    moduleVoiceIndex_.find(conn.from_module_id);
+                it != moduleVoiceIndex_.end()) {
+                voiceIndex = it->second;
+            } else if (const auto it =
+                           moduleVoiceIndex_.find(conn.to_module_id);
+                       it != moduleVoiceIndex_.end()) {
+                voiceIndex = it->second;
+            }
+
+            if (voiceIndex < 0 || voiceIndex >= AudioEngine::kMaxVoices) {
+                continue;
+            }
+
+            source.voiceIndex = voiceIndex;
+
+            const bool fromIsGenerator =
+                (fromModule != nullptr &&
+                 fromModule->type() == rectai::ModuleType::kGenerator);
+            const bool fromIsFilter =
+                (fromModule != nullptr &&
+                 fromModule->is<rectai::FilterModule>());
+
+            // For generator→X connections use the pre-filter
+            // waveform so that Osc→Filter shows the raw oscillator.
+            // For all other cases (Filter outputs, FX, etc.) use the
+            // post-filter waveform.
+            if (fromIsGenerator && !fromIsFilter) {
+                source.kind = ConnectionVisualSource::Kind::kVoicePre;
+            } else {
+                source.kind = ConnectionVisualSource::Kind::kVoicePost;
+            }
+        }
+
+        const std::string key = makeConnectionKey(conn);
+        connectionVisualSources_.emplace(key, source);
     }
 }
 
@@ -832,6 +976,16 @@ void MainComponent::timerCallback()
         }
     }
 
+    // Keep the engine's internal logical audio graph in sync with the
+    // current Scene after hardlink and dynamic connection updates so
+    // that downstream routing and waveform taps can rely on a
+    // canonical list of typed edges.
+    audioEngine_.rebuildAudioGraphFromScene(scene_);
+
+    // Canonical edge lists derived from the current Scene snapshot.
+    const auto audioEdges = audioEngine_.audioGraph().audio_edges();
+    const auto& graphEdges = audioEngine_.audioGraph().edges();
+
     // Precompute a lookup from module id to object tracking id, so we can
     // quickly test mute/position for downstream modules.
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
@@ -907,17 +1061,26 @@ void MainComponent::timerCallback()
                 continue;
             }
 
-            // Find the implicit connection Sampleplay -> Output (-1).
+            // Find the implicit connection Sampleplay -> Output (-1)
+            // using the audio graph so we only consider audio
+            // routes.
             bool routeToMasterMuted = true;  // Assume muted until a
                                              // non-muted route is
                                              // found.
-            for (const auto& conn : scene_.connections()) {
-                if (conn.from_module_id != module->id() ||
-                    conn.to_module_id != "-1") {
+            for (const auto& edge : audioEdges) {
+                if (edge.from_module_id != module->id() ||
+                    edge.to_module_id != "-1") {
                     continue;
                 }
 
-                const std::string key = makeConnectionKey(conn);
+                rectai::Connection tmpConn{
+                    edge.from_module_id,
+                    edge.from_port_name,
+                    edge.to_module_id,
+                    edge.to_port_name,
+                    edge.is_hardlink};
+
+                const std::string key = makeConnectionKey(tmpConn);
                 const bool connIsMuted =
                     mutedConnections_.find(key) !=
                     mutedConnections_.end();
@@ -980,14 +1143,22 @@ void MainComponent::timerCallback()
             bool hasMasterRoute = false;
             bool masterRouteMuted = true;  // assume muted until proven otherwise
 
-            for (const auto& conn : scene_.connections()) {
-                if (conn.from_module_id != module->id() ||
-                    conn.to_module_id != "-1") {
+            for (const auto& edge : audioEdges) {
+                if (edge.from_module_id != module->id() ||
+                    edge.to_module_id != "-1") {
                     continue;
                 }
 
                 hasMasterRoute = true;
-                const std::string key = makeConnectionKey(conn);
+
+                rectai::Connection tmpConn{
+                    edge.from_module_id,
+                    edge.from_port_name,
+                    edge.to_module_id,
+                    edge.to_port_name,
+                    edge.is_hardlink};
+
+                const std::string key = makeConnectionKey(tmpConn);
                 const bool connIsMuted =
                     mutedConnections_.find(key) !=
                     mutedConnections_.end();
@@ -1020,22 +1191,22 @@ void MainComponent::timerCallback()
         std::vector<GeneratorRoute> routes;
         routes.reserve(4U);
 
-        for (const auto& conn : scene_.connections()) {
+        for (const auto& edge : audioEdges) {
             // Skip auto-wired connections from generators to the
             // invisible Output/master module (id "-1"). The current
             // runtime does not model the Output module as an explicit
             // processing node in the audio graph, so treating it as a
             // downstream target here would change behaviour compared to
             // scenes without auto-wiring (generators direct to master).
-            if (conn.to_module_id == "-1") {
+            if (edge.to_module_id == "-1") {
                 continue;
             }
 
-            if (conn.from_module_id != module->id()) {
+            if (edge.from_module_id != module->id()) {
                 continue;
             }
 
-            const auto toObjIdIt = moduleToObjectId.find(conn.to_module_id);
+            const auto toObjIdIt = moduleToObjectId.find(edge.to_module_id);
             if (toObjIdIt == moduleToObjectId.end()) {
                 continue;
             }
@@ -1054,12 +1225,12 @@ void MainComponent::timerCallback()
             // destination lies inside the geometric cone of the
             // source. Hardlink connections remain active regardless of
             // the cone and are treated as always-on.
-            if (!conn.is_hardlink &&
+            if (!edge.is_hardlink &&
                 !isConnectionGeometricallyActive(obj, toObj)) {
                 continue;
             }
 
-            const auto modDestIt = modules.find(conn.to_module_id);
+            const auto modDestIt = modules.find(edge.to_module_id);
             if (modDestIt == modules.end() || modDestIt->second == nullptr) {
                 continue;
             }
@@ -1070,7 +1241,13 @@ void MainComponent::timerCallback()
             route.module = candidate;
             route.objId = objIt->first;
             route.inside = true;
-            route.connectionKey = makeConnectionKey(conn);
+            rectai::Connection tmpConn{
+                edge.from_module_id,
+                edge.from_port_name,
+                edge.to_module_id,
+                edge.to_port_name,
+                edge.is_hardlink};
+            route.connectionKey = makeConnectionKey(tmpConn);
             route.connectionMuted =
                 mutedConnections_.find(route.connectionKey) !=
                 mutedConnections_.end();
@@ -1130,15 +1307,23 @@ void MainComponent::timerCallback()
                     bool hasMasterRoute = false;
                     bool masterRouteMuted = true;
 
-                    for (const auto& conn : scene_.connections()) {
-                        if (conn.from_module_id !=
+                    for (const auto& edge : audioEdges) {
+                        if (edge.from_module_id !=
                                 downstreamModule->id() ||
-                            conn.to_module_id != "-1") {
+                            edge.to_module_id != "-1") {
                             continue;
                         }
 
                         hasMasterRoute = true;
-                        const std::string key = makeConnectionKey(conn);
+
+                        rectai::Connection tmpConn{
+                            edge.from_module_id,
+                            edge.from_port_name,
+                            edge.to_module_id,
+                            edge.to_port_name,
+                            edge.is_hardlink};
+
+                        const std::string key = makeConnectionKey(tmpConn);
                         const bool connIsMuted =
                             mutedConnections_.find(key) !=
                             mutedConnections_.end();
@@ -1273,7 +1458,6 @@ void MainComponent::timerCallback()
                     const float minQ = 0.5F;
                     const float maxQ = 10.0F;
                     filterQ = minQ + (maxQ - minQ) * qParam;
-
                     // Map FilterModule::Mode to AudioEngine filter
                     // mode.
                     if (filterModule != nullptr) {
@@ -1331,6 +1515,63 @@ void MainComponent::timerCallback()
             audioEngine_.setVoice(v, voices[v].frequency, voices[v].level);
         } else {
             audioEngine_.setVoice(v, 0.0, 0.0F);
+        }
+    }
+    // Synchronise the per-connection visual source map with the
+    // current Scene, modules and module→voice mapping. This allows
+    // the paint layer to query a single abstraction per connection
+    // (pre/post voice or Sampleplay) instead of reimplementing
+    // routing heuristics based on module types.
+    updateConnectionVisualSources();
+
+    // Configure per-connection waveform taps in the audio engine
+    // based on the current visual source mapping. Each audio
+    // connection is mapped to a low-level source (voice pre/post
+    // filter or Sampleplay) so that the engine can maintain an
+    // independent waveform history per connection.
+    audioEngine_.clearAllConnectionWaveformTaps();
+
+    // Use the engine-owned AudioGraph as the canonical list of audio
+    // edges that can have waveform taps. We still rely on the
+    // UI-side ConnectionVisualSource map to decide whether each edge
+    // should observe pre/post voice or Sampleplay, but the set of
+    // candidate edges comes from AudioGraph::audio_edges().
+    using VSKind = MainComponent::ConnectionVisualSource::Kind;
+
+    for (const auto& edge : audioEdges) {
+        rectai::Connection tmpConn{edge.from_module_id,
+                                   edge.from_port_name,
+                                   edge.to_module_id,
+                                   edge.to_port_name,
+                                   edge.is_hardlink};
+        const std::string key = makeConnectionKey(tmpConn);
+
+        const auto vsIt = connectionVisualSources_.find(key);
+        if (vsIt == connectionVisualSources_.end()) {
+            continue;
+        }
+
+        const auto& source = vsIt->second;
+
+        if (source.kind == VSKind::kSampleplay) {
+            audioEngine_.configureConnectionWaveformTap(
+                key,
+                AudioEngine::ConnectionTapSourceKind::kSampleplay,
+                -1);
+        } else if (source.kind == VSKind::kVoicePre ||
+                   source.kind == VSKind::kVoicePost) {
+            if (source.voiceIndex < 0 ||
+                source.voiceIndex >= AudioEngine::kMaxVoices) {
+                continue;
+            }
+
+            const auto tapKind =
+                (source.kind == VSKind::kVoicePre)
+                    ? AudioEngine::ConnectionTapSourceKind::kVoicePre
+                    : AudioEngine::ConnectionTapSourceKind::kVoicePost;
+
+            audioEngine_.configureConnectionWaveformTap(
+                key, tapKind, source.voiceIndex);
         }
     }
 
@@ -1429,13 +1670,18 @@ void MainComponent::timerCallback()
             // autorizado a controlar volumen.
             if (!step.enabled) {
                 if (sequencerControlsVolume_) {
-                    for (const auto& conn : scene_.connections()) {
-                        if (conn.from_module_id != id) {
+                    // When the step is disabled and the Sequencer
+                    // is allowed to control volume, explicitly mute
+                    // any Oscillator modules downstream of this
+                    // Sequencer according to the current graph
+                    // topology.
+                    for (const auto& edge : graphEdges) {
+                        if (edge.from_module_id != id) {
                             continue;
                         }
 
                         const auto modDestIt =
-                            modulesLocal.find(conn.to_module_id);
+                            modulesLocal.find(edge.to_module_id);
                         if (modDestIt == modulesLocal.end() ||
                             modDestIt->second == nullptr) {
                             continue;
@@ -1455,13 +1701,13 @@ void MainComponent::timerCallback()
             // For each Sequencer, walk outgoing connections and
             // drive downstream modules that can consume what the
             // Sequencer produces (Sampleplay/Oscillator for ahora).
-            for (const auto& conn : scene_.connections()) {
-                if (conn.from_module_id != id) {
+            for (const auto& edge : graphEdges) {
+                if (edge.from_module_id != id) {
                     continue;
                 }
 
                 const auto toObjIdIt =
-                    moduleToObjectIdLocal.find(conn.to_module_id);
+                    moduleToObjectIdLocal.find(edge.to_module_id);
                 if (toObjIdIt == moduleToObjectIdLocal.end()) {
                     continue;
                 }
@@ -1477,13 +1723,13 @@ void MainComponent::timerCallback()
                 // Respect musical area and geometric cone for
                 // non-hardlink connections.
                 if (!isInsideMusicArea(dstObj) ||
-                    (!conn.is_hardlink &&
+                    (!edge.is_hardlink &&
                      !isConnectionGeometricallyActive(obj, dstObj))) {
                     continue;
                 }
 
                 const auto modDestIt =
-                    modulesLocal.find(conn.to_module_id);
+                    modulesLocal.find(edge.to_module_id);
                 if (modDestIt == modulesLocal.end() ||
                     modDestIt->second == nullptr) {
                     continue;
@@ -1493,8 +1739,14 @@ void MainComponent::timerCallback()
 
                 // Connection-level mute state for this Sequencer →
                 // destination edge.
+                rectai::Connection tmpConn{
+                    edge.from_module_id,
+                    edge.from_port_name,
+                    edge.to_module_id,
+                    edge.to_port_name,
+                    edge.is_hardlink};
                 const std::string connKey =
-                    makeConnectionKey(conn);
+                    makeConnectionKey(tmpConn);
                 const bool connectionMuted =
                     mutedConnections_.find(connKey) !=
                     mutedConnections_.end();
@@ -1538,13 +1790,22 @@ void MainComponent::timerCallback()
                         bool hasMasterRoute = false;
                         bool masterRouteMuted = true;
 
-                        for (const auto& mconn : scene_.connections()) {
-                            if (mconn.from_module_id != sampleModule->id() ||
-                                mconn.to_module_id != "-1") {
+                        for (const auto& aedge : audioEdges) {
+                            if (aedge.from_module_id !=
+                                    sampleModule->id() ||
+                                aedge.to_module_id != "-1") {
                                 continue;
                             }
 
                             hasMasterRoute = true;
+
+                            rectai::Connection mconn{
+                                aedge.from_module_id,
+                                aedge.from_port_name,
+                                aedge.to_module_id,
+                                aedge.to_port_name,
+                                aedge.is_hardlink};
+
                             const std::string mkey =
                                 makeConnectionKey(mconn);
                             const bool connIsMuted =

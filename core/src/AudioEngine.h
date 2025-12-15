@@ -3,6 +3,8 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -11,6 +13,8 @@
 
 namespace rectai {
 class SampleplaySynth;
+class Scene;
+class AudioGraph;
 }  // namespace rectai
 
 // Minimal audio engine for the RectaiTable core.
@@ -34,6 +38,12 @@ public:
     // waveform visualisation. At 44.1 kHz, 4096 samples correspond
     // to ~93 ms of audio, enough to extract a ~50 ms window.
     static constexpr int kWaveformHistorySize = 4096;
+
+    // Maximum number of independent connection-level waveform taps
+    // that can be monitored simultaneously. This is intentionally
+    // modest to keep the audio callback overhead predictable while
+    // still covering typical Reactable-style scenes.
+    static constexpr int kMaxConnectionTaps = 64;
 
     // juce::AudioIODeviceCallback
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
@@ -86,8 +96,20 @@ public:
     // specific voice into `dst`, representing approximately
     // `windowSeconds` of audio. If the voice index is out of range, or
     // there is not enough history yet, the destination is cleared.
+    //
+    // `getVoiceWaveformSnapshot` returns the pre-filter oscillator
+    // signal for that voice, suitable for visualising generator output
+    // (e.g. Osc → Filter connections).
     void getVoiceWaveformSnapshot(int voiceIndex, float* dst,
                                   int numPoints, double windowSeconds);
+
+    // Returns a snapshot of the post-filter signal for the given
+    // voice, i.e. after the per-voice StateVariableTPTFilter has been
+    // applied. This is used to visualise the audio leaving modules
+    // such as Filter/FX or reaching the master.
+    void getVoiceFilteredWaveformSnapshot(int voiceIndex, float* dst,
+                                          int numPoints,
+                                          double windowSeconds);
 
     // Copies a downsampled snapshot of the recent mono output from
     // the Sampleplay (SoundFont) path into `dst`, representing
@@ -122,6 +144,59 @@ public:
     // all Sampleplay audio immediately (used e.g. when the
     // Sampleplay module line to the master bus is muted).
     void setSampleplayOutputGain(float gain);
+
+    // Per-connection waveform taps --------------------------------------
+
+    // Kind of low-level signal source a connection tap is attached
+    // to. For now this mirrors the high-level ConnectionVisualSource
+    // abstraction used by the UI: taps can observe either the
+    // pre-filter oscillator signal for a given voice, the
+    // post-filter per-voice signal, or the mono Sampleplay path.
+    enum class ConnectionTapSourceKind {
+        kNone = 0,
+        kVoicePre,
+        kVoicePost,
+        kSampleplay
+    };
+
+    // Clears all connection-level waveform taps and their
+    // configuration. Existing history buffers are left untouched but
+    // effectively ignored, as all tap kinds are reset to kNone.
+    void clearAllConnectionWaveformTaps();
+
+    // Associates a logical connection key (as used by the Scene/UI)
+    // with a low-level waveform source. Repeated calls with the same
+    // key update the tap configuration; new keys allocate up to
+    // kMaxConnectionTaps taps. Calls with out-of-range voice indices
+    // or kNone kinds are ignored.
+    void configureConnectionWaveformTap(const std::string& connectionKey,
+                                        ConnectionTapSourceKind kind,
+                                        int voiceIndex);
+
+    // Copies a downsampled snapshot of the recent mono waveform for a
+    // given logical connection into `dst`. If no tap is registered
+    // for the given key, or there is not enough history, the
+    // destination buffer is cleared. The snapshot shares the same
+    // time base as the global and per-voice waveform histories.
+    void getConnectionWaveformSnapshot(const std::string& connectionKey,
+                                       float* dst, int numPoints,
+                                       double windowSeconds);
+
+    // Audio graph integration -------------------------------------------
+
+    // Rebuilds the internal logical audio graph from the current
+    // Scene snapshot. This keeps the engine aware of modules and
+    // typed connections (audio/MIDI/control) even though the DSP
+    // backend is still voice-based for now.
+    void rebuildAudioGraphFromScene(const rectai::Scene& scene);
+
+    // Exposes the current logical audio graph so that higher layers
+    // (e.g. MainComponent) can reason about audio edges without
+    // reparsing the Scene.
+    [[nodiscard]] const rectai::AudioGraph& audioGraph() const noexcept
+    {
+        return *audioGraph_;
+    }
 
 private:
     juce::AudioDeviceManager deviceManager_;
@@ -159,7 +234,19 @@ private:
     // Per-voice rolling buffers used to render per-module waveforms in
     // the UI. Each buffer shares the same write index as the global
     // mix buffer so that all curves are time-aligned.
-    float voiceWaveformBuffer_[kMaxVoices][kWaveformHistorySize]{};
+    //
+    // `voicePreFilterWaveformBuffer_` stores the raw oscillator
+    // output before the per-voice filter is applied so that
+    // connections originating from generators (e.g. Osc → Filter)
+    // can visualise the unprocessed waveform.
+    //
+    // `voicePostFilterWaveformBuffer_` stores the signal after the
+    // per-voice filter, used to visualise the audio leaving modules
+    // such as Filter/FX or reaching the master.
+    float voicePreFilterWaveformBuffer_[kMaxVoices]
+                                      [kWaveformHistorySize]{};
+    float voicePostFilterWaveformBuffer_[kMaxVoices]
+                                       [kWaveformHistorySize]{};
 
     // Rolling mono buffer containing only the Sampleplay (SoundFont)
     // contribution before it is mixed with oscillator voices. This
@@ -188,6 +275,28 @@ private:
     // before mixing it with the oscillator voices.
     std::vector<float> sampleplayLeft_;
     std::vector<float> sampleplayRight_;
+
+    // Connection-level waveform taps. Each tap is configured from
+    // the UI thread via a stable connection key and attached to a
+    // low-level source (voice pre/post filter or Sampleplay). The
+    // audio thread updates the corresponding history buffer on every
+    // callback using the shared global write index, so snapshots are
+    // time-aligned with the rest of the visualisation buffers.
+    struct ConnectionTap {
+        std::atomic<int> kind{0};       // underlying ConnectionTapSourceKind
+        std::atomic<int> voiceIndex{-1};
+    };
+
+    ConnectionTap connectionTaps_[kMaxConnectionTaps]{};
+    float connectionWaveformBuffers_[kMaxConnectionTaps]
+                                   [kWaveformHistorySize]{};
+    std::unordered_map<std::string, int> connectionKeyToTapIndex_;
+    std::atomic<int> numConnectionTaps_{0};
+
+    // Logical audio graph snapshot owned by the engine. Built from
+    // the Scene and used as the canonical representation of modules
+    // and typed connections on the audio side.
+    std::unique_ptr<rectai::AudioGraph> audioGraph_;
 
     // Set to true when the audio device initialisation succeeded but
     // reported zero output channels (e.g. "no channels"). Used by

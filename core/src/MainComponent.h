@@ -9,6 +9,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "TrackingOscReceiver.h"
+#include "core/AudioGraph.h"
 #include "core/Scene.h"
 
 class AudioEngine;
@@ -40,6 +41,11 @@ private:
     AudioEngine& audioEngine_;
     rectai::Scene scene_;
 
+    // Logical audio graph derived from the Scene. This is the Phase 2
+    // building block towards per-connection audio buffers: it captures
+    // modules as nodes and connections as typed edges (audio/MIDI).
+    rectai::AudioGraph audioGraph_;
+
     // OSC bridge that updates the Scene from tracking messages.
     TrackingOscReceiver trackingOscReceiver_{scene_, 3333};
 
@@ -52,10 +58,10 @@ private:
     std::unordered_map<std::int64_t, float> lastObjectAngleDegrees_;
 
     // Per-connection mute state, keyed by a stable connection id. All
-    // mute semantics (incluso la ruta implícita a master) se expresan
-    // como mute de conexiones: las líneas centro→módulo se asocian a la
-    // conexión auto-generada módulo→Output(-1) y las líneas
-    // módulo→módulo a sus `Connection` explícitas en la `Scene`.
+    // mute semantics (including the implicit route to the master) are
+    // expressed as connection mutes: center→module lines map to the
+    // auto-generated module→Output(-1) connection and module→module
+    // lines to their explicit `Connection` entries in the `Scene`.
     std::unordered_set<std::string> mutedConnections_;
 
     // Pairs of objects that are currently colliding (touching) and have
@@ -138,6 +144,23 @@ private:
     // module). This lets the paint code fetch a module-specific
     // waveform instead of relying on the global mix only.
     std::unordered_map<std::string, int> moduleVoiceIndex_;
+
+    // Visual source mapping per audio connection. This is the first
+    // step towards conceptual "per-connection buffers": rather than
+    // deciding ad-hoc in the paint code whether a connection should
+    // use pre- or post-filter signal (or Sampleplay), the audio-side
+    // logic fills this map based on the Scene and the module→voice
+    // mapping. Later, when an explicit audio graph with per-connection
+    // taps exists, this structure will be able to point at real
+    // per-connection buffers in the engine.
+    struct ConnectionVisualSource {
+        enum class Kind { kNone = 0, kVoicePre, kVoicePost, kSampleplay };
+        Kind kind{Kind::kNone};
+        int voiceIndex{-1};  // válido para kVoicePre/kVoicePost
+    };
+
+    std::unordered_map<std::string, ConnectionVisualSource>
+        connectionVisualSources_;
 
     // Per-instrument side controls (left: freq, right: gain).
     std::int64_t sideControlObjectId_{0};
@@ -224,6 +247,13 @@ private:
         float split_point{0.0F};     // Normalized position along the line (0=source, 1=destination).
     };
     std::optional<ConnectionHoldState> activeConnectionHold_;
+
+    // Rebuild the mapping from Scene::connections() to visual
+    // waveform sources (pre/post voice or Sampleplay) using the
+    // current module→voice assignment and module metadata. This lets
+    // the paint code query a single source per connection instead of
+    // reimplementing routing heuristics.
+    void updateConnectionVisualSources();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

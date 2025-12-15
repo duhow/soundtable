@@ -122,9 +122,17 @@ void MainComponent::paint(juce::Graphics& g)
     // that audio-carrying lines can display waveforms that better
     // match the module or chain that is actually producing sound.
     constexpr int kWaveformPoints = 512;
-    float voiceWaveforms[AudioEngine::kMaxVoices][kWaveformPoints]{};
-    float voiceNorm[AudioEngine::kMaxVoices]{};
-    float voiceRms[AudioEngine::kMaxVoices]{};
+    // Pre-filter (raw oscillator) and post-filter (processed) per-voice
+    // snapshots so that generator→module connections can show the
+    // original waveform while filters/FX and master visuals reflect
+    // the processed audio.
+    float voiceWaveformsPre[AudioEngine::kMaxVoices]
+                           [kWaveformPoints]{};
+    float voiceWaveformsPost[AudioEngine::kMaxVoices]
+                            [kWaveformPoints]{};
+    float voiceNormPre[AudioEngine::kMaxVoices]{};
+    float voiceNormPost[AudioEngine::kMaxVoices]{};
+    float voiceRmsPost[AudioEngine::kMaxVoices]{};
 
     // For visual consistency (especially with saw waves), we estimate
     // an approximate period for each voice in the snapshot so that the
@@ -172,32 +180,40 @@ void MainComponent::paint(juce::Graphics& g)
     int voicePeriodSamples[AudioEngine::kMaxVoices]{};
     for (int v = 0; v < AudioEngine::kMaxVoices; ++v) {
         audioEngine_.getVoiceWaveformSnapshot(
-            v, voiceWaveforms[v], kWaveformPoints, 0.05);
+            v, voiceWaveformsPre[v], kWaveformPoints, 0.05);
+        audioEngine_.getVoiceFilteredWaveformSnapshot(
+            v, voiceWaveformsPost[v], kWaveformPoints, 0.05);
 
-        float maxAbs = 0.0F;
-        float sumSquares = 0.0F;
+        float maxAbsPre = 0.0F;
+        float maxAbsPost = 0.0F;
+        float sumSquaresPost = 0.0F;
         for (int i = 0; i < kWaveformPoints; ++i) {
-            const float s = voiceWaveforms[v][i];
-            maxAbs = std::max(maxAbs, std::abs(s));
-            sumSquares += s * s;
+            const float sPre = voiceWaveformsPre[v][i];
+            const float sPost = voiceWaveformsPost[v][i];
+            maxAbsPre = std::max(maxAbsPre, std::abs(sPre));
+            maxAbsPost = std::max(maxAbsPost, std::abs(sPost));
+            sumSquaresPost += sPost * sPost;
         }
 
-        voiceNorm[v] =
-            maxAbs > 1.0e-4F ? 1.0F / maxAbs : 0.0F;
+        voiceNormPre[v] =
+            maxAbsPre > 1.0e-4F ? 1.0F / maxAbsPre : 0.0F;
+        voiceNormPost[v] =
+            maxAbsPost > 1.0e-4F ? 1.0F / maxAbsPost : 0.0F;
 
         if (kWaveformPoints > 0) {
-            const float meanSquare = sumSquares /
-                                     static_cast<float>(
-                                         kWaveformPoints);
-            voiceRms[v] =
-                meanSquare > 0.0F ? std::sqrt(meanSquare) : 0.0F;
+            const float meanSquarePost = sumSquaresPost /
+                                         static_cast<float>(
+                                             kWaveformPoints);
+            voiceRmsPost[v] = meanSquarePost > 0.0F
+                                  ? std::sqrt(meanSquarePost)
+                                  : 0.0F;
         } else {
-            voiceRms[v] = 0.0F;
+            voiceRmsPost[v] = 0.0F;
         }
 
-        if (voiceNorm[v] > 0.0F) {
+        if (voiceNormPre[v] > 0.0F) {
             voicePeriodSamples[v] =
-                estimateWaveformPeriod(voiceWaveforms[v],
+                estimateWaveformPeriod(voiceWaveformsPre[v],
                                        kWaveformPoints);
         } else {
             voicePeriodSamples[v] = 0;
@@ -644,10 +660,23 @@ void MainComponent::paint(juce::Graphics& g)
                 // since the module is temporarily muted during hold.
                 const auto voiceIt = moduleVoiceIndex_.find(object.logical_id());
                 const int voiceIndex = (voiceIt != moduleVoiceIndex_.end()) ? voiceIt->second : -1;
-                
-                if (voiceIndex >= 0 && voiceIndex < AudioEngine::kMaxVoices && voiceNorm[voiceIndex] > 0.0F) {
+
+                if (voiceIndex >= 0 && voiceIndex < AudioEngine::kMaxVoices &&
+                    voiceNormPost[voiceIndex] > 0.0F) {
                     g.setColour(juce::Colours::white.withAlpha(baseAlpha));
-                    const float waveformAmplitude = 15.0F * visualLevel;
+
+                    float amplitudeLevel = visualLevel;
+                    if (!hasExplicitVolumeBar) {
+                        const float rms = voiceRmsPost[voiceIndex];
+                        if (rms > 0.0F) {
+                            amplitudeLevel = juce::jlimit(0.0F, 1.0F,
+                                                          rms / 0.7071F);
+                        } else {
+                            amplitudeLevel = 0.0F;
+                        }
+                    }
+
+                    const float waveformAmplitude = 15.0F * amplitudeLevel;
                     const float waveformThickness = 1.4F;
                     // Calculate segments based on physical line length in pixels to maintain
                     // consistent waveform visual density (window effect: longer line shows more cycles).
@@ -664,8 +693,9 @@ void MainComponent::paint(juce::Graphics& g)
                             : kWaveformPoints;
                     drawWaveformOnLine(
                         {cx, cy}, splitPoint, waveformAmplitude,
-                        waveformThickness, voiceWaveforms[voiceIndex],
-                        periodSamples, voiceNorm[voiceIndex],
+                        waveformThickness,
+                        voiceWaveformsPost[voiceIndex], periodSamples,
+                        voiceNormPost[voiceIndex],
                         juce::jmax(1, segmentsForWaveformHold),
                         /*tiled=*/true);
                 } else {
@@ -732,7 +762,7 @@ void MainComponent::paint(juce::Graphics& g)
 
                 if (voiceIndex >= 0 &&
                     voiceIndex < AudioEngine::kMaxVoices &&
-                    voiceNorm[voiceIndex] > 0.0F) {
+                    voiceNormPost[voiceIndex] > 0.0F) {
                     g.setColour(
                         juce::Colours::white.withAlpha(baseAlpha));
                     float amplitudeLevel = visualLevel;
@@ -744,7 +774,7 @@ void MainComponent::paint(juce::Graphics& g)
                     // instead of a fixed height.
                     if (!hasExplicitVolumeBar) {
                         const float rms =
-                            voiceRms[voiceIndex];
+                            voiceRmsPost[voiceIndex];
                         if (rms > 0.0F) {
                             // Normalise against a full-scale sine
                             // (~0.707 RMS) and clamp to [0,1].
@@ -765,8 +795,8 @@ void MainComponent::paint(juce::Graphics& g)
                     drawWaveformOnLine(
                         line.getEnd(), line.getStart(),
                         waveformAmplitude, waveformThickness,
-                        voiceWaveforms[voiceIndex], periodSamples,
-                        voiceNorm[voiceIndex], segmentsForWaveform,
+                        voiceWaveformsPost[voiceIndex], periodSamples,
+                        voiceNormPost[voiceIndex], segmentsForWaveform,
                         /*tiled=*/true);
                     continue;
                 }
@@ -933,41 +963,47 @@ void MainComponent::paint(juce::Graphics& g)
                     juce::jmap(splitT, 0.0F, 1.0F, p1.y, p2.y)
                 };
                 
-                // First segment: source to split (with waveform even if muted).
-                // Check for voice data directly, not relying on audioConn or modulesWithActiveAudio_
-                // since the connection may be temporarily muted during hold.
-                int voiceIndex = -1;
-                if (const auto it = moduleVoiceIndex_.find(conn.from_module_id);
-                    it != moduleVoiceIndex_.end()) {
-                    voiceIndex = it->second;
-                } else if (const auto it2 = moduleVoiceIndex_.find(conn.to_module_id);
-                           it2 != moduleVoiceIndex_.end()) {
-                    voiceIndex = it2->second;
+                // First segment: source to split (with waveform even
+                // if the connection is temporarily held). The
+                // waveform comes from the per-connection tap in the
+                // audio engine, which already encodes whether this
+                // connection observes a pre/post voice or Sampleplay
+                // signal.
+                float connectionWaveform[kWaveformPoints]{};
+                audioEngine_.getConnectionWaveformSnapshot(
+                    connKey, connectionWaveform, kWaveformPoints, 0.05);
+
+                float maxAbs = 0.0F;
+                for (int i = 0; i < kWaveformPoints; ++i) {
+                    maxAbs = std::max(maxAbs, std::abs(connectionWaveform[i]));
                 }
-                
-                if (voiceIndex >= 0 && voiceIndex < AudioEngine::kMaxVoices && voiceNorm[voiceIndex] > 0.0F) {
+
+                bool drewWave = false;
+                if (maxAbs > 1.0e-4F) {
+                    const float norm = 1.0F / maxAbs;
                     g.setColour(activeColour);
-                    const float waveformAmplitude = (conn.is_hardlink ? 10.0F : 10.0F) * connectionLevel;
+                    const float waveformAmplitude =
+                        (conn.is_hardlink ? 10.0F : 10.0F) * connectionLevel;
                     const float waveformThickness = conn.is_hardlink ? 1.2F : 1.2F;
-                    // Calculate segments based on physical line length in pixels to maintain
-                    // consistent waveform visual density (window effect: longer line shows more cycles).
                     const juce::Point<float> delta = splitPoint - p1;
                     const float lineLength = std::sqrt(
                         delta.x * delta.x + delta.y * delta.y);
                     const int segmentsForWaveform =
                         static_cast<int>(lineLength / 5.0F);
                     const int periodSamples =
-                        voicePeriodSamples[voiceIndex] > 0
-                            ? voicePeriodSamples[voiceIndex]
-                            : kWaveformPoints;
+                        estimateWaveformPeriod(connectionWaveform,
+                                               kWaveformPoints);
+
                     drawWaveformOnLine(
                         p1, splitPoint, waveformAmplitude,
-                        waveformThickness,
-                        voiceWaveforms[voiceIndex], periodSamples,
-                        voiceNorm[voiceIndex],
+                        waveformThickness, connectionWaveform,
+                        periodSamples, norm,
                         juce::jmax(1, segmentsForWaveform),
                         /*tiled=*/true);
-                } else {
+                    drewWave = true;
+                }
+
+                if (!drewWave) {
                     g.setColour(activeColour);
                     g.drawLine(juce::Line<float>(p1, splitPoint), conn.is_hardlink ? 1.8F : 1.5F);
                 }
@@ -996,43 +1032,31 @@ void MainComponent::paint(juce::Graphics& g)
                 g.setColour(activeColour);
                 bool drewWave = false;
 
-                if (audioConn && involvesSampleplay &&
-                    sampleplayNorm > 0.0F) {
-                    const float waveformAmplitude = 10.0F * connectionLevel;
-                    const float waveformThickness = 1.2F;
-                    const int samplesToUse = kWaveformPoints;
-                    drawWaveformOnLine(
-                        p1, p2, waveformAmplitude, waveformThickness,
-                        sampleplayWaveform, samplesToUse,
-                        sampleplayNorm, 64,
-                        /*tiled=*/false);
-                    drewWave = true;
-                } else if (audioConn) {
-                    int voiceIndex = -1;
-                    if (const auto it = moduleVoiceIndex_.find(
-                            conn.from_module_id);
-                        it != moduleVoiceIndex_.end()) {
-                        voiceIndex = it->second;
-                    } else if (const auto it2 = moduleVoiceIndex_.find(
-                                   conn.to_module_id);
-                               it2 != moduleVoiceIndex_.end()) {
-                        voiceIndex = it2->second;
+                if (audioConn) {
+                    float connectionWaveform[kWaveformPoints]{};
+                    audioEngine_.getConnectionWaveformSnapshot(
+                        connKey, connectionWaveform, kWaveformPoints,
+                        0.05);
+
+                    float maxAbs = 0.0F;
+                    for (int i = 0; i < kWaveformPoints; ++i) {
+                        maxAbs = std::max(
+                            maxAbs, std::abs(connectionWaveform[i]));
                     }
 
-                    if (voiceIndex >= 0 &&
-                        voiceIndex < AudioEngine::kMaxVoices &&
-                        voiceNorm[voiceIndex] > 0.0F) {
-                        const float waveformAmplitude = 10.0F * connectionLevel;
+                    if (maxAbs > 1.0e-4F) {
+                        const float norm = 1.0F / maxAbs;
+                        const float waveformAmplitude =
+                            10.0F * connectionLevel;
                         const float waveformThickness = 1.2F;
                         const int periodSamples =
-                            voicePeriodSamples[voiceIndex] > 0
-                                ? voicePeriodSamples[voiceIndex]
-                                : kWaveformPoints;
+                            estimateWaveformPeriod(connectionWaveform,
+                                                   kWaveformPoints);
+
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
-                            waveformThickness,
-                            voiceWaveforms[voiceIndex],
-                            periodSamples, voiceNorm[voiceIndex], 64,
+                            waveformThickness, connectionWaveform,
+                            periodSamples, norm, 64,
                             /*tiled=*/true);
                         drewWave = true;
                     }
@@ -1044,64 +1068,44 @@ void MainComponent::paint(juce::Graphics& g)
                     g.drawLine(juce::Line<float>(p1, p2), thickness);
                 }
             } else {
-                bool useWaveformPath = false;
-                int voiceIndex = -1;
+                bool drewWave = false;
+
                 if (audioConn) {
-                    if (involvesSampleplay && sampleplayNorm > 0.0F) {
-                        useWaveformPath = true;
-                        voiceIndex = -1;  // use Sampleplay buffer
-                    } else {
-                        if (const auto it = moduleVoiceIndex_.find(
-                                conn.from_module_id);
-                            it != moduleVoiceIndex_.end()) {
-                            voiceIndex = it->second;
-                        } else if (const auto it2 =
-                                       moduleVoiceIndex_.find(
-                                           conn.to_module_id);
-                                   it2 != moduleVoiceIndex_.end()) {
-                            voiceIndex = it2->second;
-                        }
-
-                        useWaveformPath =
-                            voiceIndex >= 0 &&
-                            voiceIndex < AudioEngine::kMaxVoices &&
-                            voiceNorm[voiceIndex] > 0.0F;
-                    }
-                }
-
-                if (useWaveformPath) {
-                    const float waveformAmplitude = 10.0F * connectionLevel;
+                    const float waveformAmplitude =
+                        10.0F * connectionLevel;
                     const float waveformThickness = 1.2F;
 
-                    if (voiceIndex >= 0 &&
-                        voiceIndex < AudioEngine::kMaxVoices) {
+                    float connectionWaveform[kWaveformPoints]{};
+                    audioEngine_.getConnectionWaveformSnapshot(
+                        connKey, connectionWaveform, kWaveformPoints,
+                        0.05);
+
+                    float maxAbs = 0.0F;
+                    for (int i = 0; i < kWaveformPoints; ++i) {
+                        maxAbs = std::max(
+                            maxAbs, std::abs(connectionWaveform[i]));
+                    }
+
+                    if (maxAbs > 1.0e-4F) {
+                        const float norm = 1.0F / maxAbs;
                         const int periodSamples =
-                            voicePeriodSamples[voiceIndex] > 0
-                                ? voicePeriodSamples[voiceIndex]
-                                : kWaveformPoints;
+                            estimateWaveformPeriod(connectionWaveform,
+                                                   kWaveformPoints);
+
                         g.setColour(
                             juce::Colours::white.withAlpha(0.8F));
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
-                            waveformThickness,
-                            voiceWaveforms[voiceIndex], periodSamples,
-                            voiceNorm[voiceIndex], 72,
+                            waveformThickness, connectionWaveform,
+                            periodSamples, norm, 72,
                             /*tiled=*/true);
-                    } else if (sampleplayNorm > 0.0F) {
-                        const int samplesToUse = kWaveformPoints;
-                        g.setColour(
-                            juce::Colours::white.withAlpha(0.8F));
-                        drawWaveformOnLine(
-                            p1, p2, waveformAmplitude,
-                            waveformThickness, sampleplayWaveform,
-                            samplesToUse, sampleplayNorm, 72,
-                            /*tiled=*/false);
+                        drewWave = true;
                     }
                 }
 
                 // Dynamic, non-hardlink connection without pulse: draw
                 // a straight segment (with or without waveform).
-                if (!useWaveformPath) {
+                if (!drewWave) {
                     g.setColour(activeColour);
                     const float thickness =
                         isConnectionMarkedForCut ? 3.0F : 1.5F;

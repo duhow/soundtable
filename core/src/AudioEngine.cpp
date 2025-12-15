@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/AudioGraph.h"
 #include "core/SampleplaySynth.h"
 
 AudioEngine::AudioEngine()
@@ -32,6 +33,11 @@ AudioEngine::AudioEngine()
     // sample rate will be configured later from MainComponent and
     // audioDeviceAboutToStart respectively.
     sampleplaySynth_ = std::make_unique<rectai::SampleplaySynth>();
+
+    // Lazily construct the logical audio graph container so that the
+    // engine can keep track of modules and typed connections once a
+    // Scene is provided.
+    audioGraph_ = std::make_unique<rectai::AudioGraph>();
 }
 
 AudioEngine::~AudioEngine()
@@ -114,6 +120,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     const int historySize = kWaveformHistorySize;
     const int voiceCount =
         std::min(numVoices_.load(std::memory_order_relaxed), kMaxVoices);
+
+    // Number of active connection-level taps to update for this
+    // callback. This value is stable for the duration of the
+    // callback even if the UI thread reconfigures taps concurrently;
+    // newly added taps will start receiving data on the next block.
+    const int tapCount = std::min(
+        numConnectionTaps_.load(std::memory_order_relaxed),
+        kMaxConnectionTaps);
 
     // Reserve a contiguous block of indices in the circular history
     // buffer for this callback.
@@ -229,8 +243,42 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     s = filters_[v].processSample(0, raw);
                 }
 
-                // Store unscaled waveform for visualization.
-                voiceWaveformBuffer_[v][bufIndex] = s;
+                // Store both pre- and post-filter waveforms for
+                // visualisation so that connections from generators
+                // (Osc → Filter) can show the raw oscillator shape
+                // while filters/FX and master visuals can reflect
+                // the processed signal.
+                voicePreFilterWaveformBuffer_[v][bufIndex] = raw;
+                voicePostFilterWaveformBuffer_[v][bufIndex] = s;
+
+                // Update any connection taps that monitor this
+                // voice. Taps can either observe the pre-filter
+                // oscillator signal or the post-filter processed
+                // signal.
+                for (int t = 0; t < tapCount; ++t) {
+                    const int tapKind =
+                        connectionTaps_[t].kind.load(
+                            std::memory_order_relaxed);
+                    if (tapKind == 0) {
+                        continue;
+                    }
+
+                    const int tapVoice =
+                        connectionTaps_[t].voiceIndex.load(
+                            std::memory_order_relaxed);
+                    if (tapVoice != v) {
+                        continue;
+                    }
+
+                    if (tapKind ==
+                        static_cast<int>(ConnectionTapSourceKind::kVoicePre)) {
+                        connectionWaveformBuffers_[t][bufIndex] = raw;
+                    } else if (tapKind ==
+                               static_cast<int>(
+                                   ConnectionTapSourceKind::kVoicePost)) {
+                        connectionWaveformBuffers_[t][bufIndex] = s;
+                    }
+                }
                 
                 // Apply level scaling for audio output.
                 const float scaledOutput = s * level;
@@ -245,8 +293,22 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
             // Store Sampleplay-only contribution for visualisation
             // before mixing with oscillator voices.
-            sampleplayWaveformBuffer_[bufIndex] =
+            const float sampleplayMono =
                 sampleplayLeft_[static_cast<std::size_t>(sample)];
+            sampleplayWaveformBuffer_[bufIndex] = sampleplayMono;
+
+            // Update any connection taps attached to the Sampleplay
+            // path.
+            for (int t = 0; t < tapCount; ++t) {
+                const int tapKind =
+                    connectionTaps_[t].kind.load(
+                        std::memory_order_relaxed);
+                if (tapKind == static_cast<int>(
+                                   ConnectionTapSourceKind::kSampleplay)) {
+                    connectionWaveformBuffers_[t][bufIndex] =
+                        sampleplayMono;
+                }
+            }
 
             const float leftOut = juce::jlimit(
                 -0.9F, 0.9F,
@@ -287,11 +349,29 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 sampleplayRight_[static_cast<std::size_t>(sample)]);
 
             waveformBuffer_[bufIndex] = leftOut;
-            sampleplayWaveformBuffer_[bufIndex] =
+            const float sampleplayMono =
                 sampleplayLeft_[static_cast<std::size_t>(sample)];
+            sampleplayWaveformBuffer_[bufIndex] = sampleplayMono;
 
+            // No oscillator voices are active: clear per-voice
+            // histories so that visualisation for generator-based
+            // modules decays gracefully.
             for (int v = 0; v < kMaxVoices; ++v) {
-                voiceWaveformBuffer_[v][bufIndex] = 0.0F;
+                voicePreFilterWaveformBuffer_[v][bufIndex] = 0.0F;
+                voicePostFilterWaveformBuffer_[v][bufIndex] = 0.0F;
+            }
+
+            // Update any connection taps attached to the Sampleplay
+            // path.
+            for (int t = 0; t < tapCount; ++t) {
+                const int tapKind =
+                    connectionTaps_[t].kind.load(
+                        std::memory_order_relaxed);
+                if (tapKind == static_cast<int>(
+                                   ConnectionTapSourceKind::kSampleplay)) {
+                    connectionWaveformBuffers_[t][bufIndex] =
+                        sampleplayMono;
+                }
             }
 
             for (int channel = 0; channel < numOutputChannels; ++channel) {
@@ -380,6 +460,54 @@ void AudioEngine::setSampleplayOutputGain(const float gain)
     sampleplayOutputGain_.store(clamped, std::memory_order_relaxed);
 }
 
+void AudioEngine::clearAllConnectionWaveformTaps()
+{
+    numConnectionTaps_.store(0, std::memory_order_relaxed);
+    connectionKeyToTapIndex_.clear();
+
+    for (int i = 0; i < kMaxConnectionTaps; ++i) {
+        connectionTaps_[i].kind.store(0, std::memory_order_relaxed);
+        connectionTaps_[i].voiceIndex.store(-1,
+                                            std::memory_order_relaxed);
+    }
+}
+
+void AudioEngine::configureConnectionWaveformTap(
+    const std::string& connectionKey, const ConnectionTapSourceKind kind,
+    const int voiceIndex)
+{
+    if (kind == ConnectionTapSourceKind::kNone) {
+        return;
+    }
+
+    if ((kind == ConnectionTapSourceKind::kVoicePre ||
+         kind == ConnectionTapSourceKind::kVoicePost) &&
+        (voiceIndex < 0 || voiceIndex >= kMaxVoices)) {
+        return;
+    }
+
+    int index = -1;
+    const auto it = connectionKeyToTapIndex_.find(connectionKey);
+    if (it != connectionKeyToTapIndex_.end()) {
+        index = it->second;
+    } else {
+        const int current =
+            numConnectionTaps_.load(std::memory_order_relaxed);
+        if (current >= kMaxConnectionTaps) {
+            return;
+        }
+        index = current;
+        numConnectionTaps_.store(current + 1,
+                                 std::memory_order_relaxed);
+        connectionKeyToTapIndex_.emplace(connectionKey, index);
+    }
+
+    connectionTaps_[index].voiceIndex.store(voiceIndex,
+                                            std::memory_order_relaxed);
+    connectionTaps_[index].kind.store(
+        static_cast<int>(kind), std::memory_order_relaxed);
+}
+
 void AudioEngine::getWaveformSnapshot(float* dst, const int numPoints,
                                       const double windowSeconds)
 {
@@ -426,6 +554,73 @@ void AudioEngine::getWaveformSnapshot(float* dst, const int numPoints,
     // remainder with the last value to keep the curve continuous.
     for (int i = points; i < numPoints; ++i) {
         dst[i] = dst[points - 1];
+    }
+}
+
+void AudioEngine::getConnectionWaveformSnapshot(
+    const std::string& connectionKey, float* dst, const int numPoints,
+    const double windowSeconds)
+{
+    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0) {
+        return;
+    }
+
+    const auto it = connectionKeyToTapIndex_.find(connectionKey);
+    if (it == connectionKeyToTapIndex_.end()) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    const int tapIndex = it->second;
+    if (tapIndex < 0 || tapIndex >= kMaxConnectionTaps) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    const int historySize = kWaveformHistorySize;
+    const int writeIndex =
+        waveformWriteIndex_.load(std::memory_order_relaxed);
+    const int availableSamples =
+        std::min(historySize, std::max(writeIndex, 0));
+
+    if (availableSamples <= 0) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    double window = windowSeconds;
+    if (window <= 0.0) {
+        window = 0.05;  // Default to ~50 ms.
+    }
+
+    int windowSamples = static_cast<int>(window * sampleRate_);
+    windowSamples =
+        std::max(1, std::min(windowSamples, availableSamples));
+
+    const int startIndex =
+        (writeIndex - windowSamples + historySize * 4) % historySize;
+
+    const int points = std::min(numPoints, windowSamples);
+    const float denom = static_cast<float>(std::max(points - 1, 1));
+
+    for (int i = 0; i < points; ++i) {
+        const float t = static_cast<float>(i) / denom;
+        const int offset = static_cast<int>(
+            t * static_cast<float>(windowSamples - 1));
+        const int bufIndex =
+            (startIndex + offset + historySize) % historySize;
+        dst[i] = connectionWaveformBuffers_[tapIndex][bufIndex];
+    }
+
+    for (int i = points; i < numPoints; ++i) {
+        dst[i] = dst[points - 1];
+    }
+}
+
+void AudioEngine::rebuildAudioGraphFromScene(const rectai::Scene& scene)
+{
+    if (audioGraph_ != nullptr) {
+        audioGraph_->RebuildFromScene(scene);
     }
 }
 
@@ -523,10 +718,62 @@ void AudioEngine::getVoiceWaveformSnapshot(const int voiceIndex,
 
     for (int i = 0; i < points; ++i) {
         const float t = static_cast<float>(i) / denom;
-        const int offset = static_cast<int>(t * static_cast<float>(windowSamples - 1));
+        const int offset = static_cast<int>(
+            t * static_cast<float>(windowSamples - 1));
         const int bufIndex =
             (startIndex + offset + historySize) % historySize;
-        dst[i] = voiceWaveformBuffer_[voiceIndex][bufIndex];
+        dst[i] =
+            voicePreFilterWaveformBuffer_[voiceIndex][bufIndex];
+    }
+
+    for (int i = points; i < numPoints; ++i) {
+        dst[i] = dst[points - 1];
+    }
+}
+
+void AudioEngine::getVoiceFilteredWaveformSnapshot(const int voiceIndex,
+                                                   float* dst,
+                                                   const int numPoints,
+                                                   const double windowSeconds)
+{
+    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0 ||
+        voiceIndex < 0 || voiceIndex >= kMaxVoices) {
+        return;
+    }
+
+    const int historySize = kWaveformHistorySize;
+    const int writeIndex =
+        waveformWriteIndex_.load(std::memory_order_relaxed);
+    const int availableSamples =
+        std::min(historySize, std::max(writeIndex, 0));
+
+    if (availableSamples <= 0) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    double window = windowSeconds;
+    if (window <= 0.0) {
+        window = 0.05;  // Default to ~50 ms.
+    }
+
+    int windowSamples = static_cast<int>(window * sampleRate_);
+    windowSamples = std::max(1, std::min(windowSamples, availableSamples));
+
+    const int startIndex =
+        (writeIndex - windowSamples + historySize * 4) % historySize;
+
+    const int points = std::min(numPoints, windowSamples);
+    const float denom = static_cast<float>(std::max(points - 1, 1));
+
+    for (int i = 0; i < points; ++i) {
+        const float t = static_cast<float>(i) / denom;
+        const int offset = static_cast<int>(
+            t * static_cast<float>(windowSamples - 1));
+        const int bufIndex =
+            (startIndex + offset + historySize) % historySize;
+        dst[i] =
+            voicePostFilterWaveformBuffer_[voiceIndex][bufIndex];
     }
 
     for (int i = points; i < numPoints; ++i) {
