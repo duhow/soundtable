@@ -252,8 +252,8 @@ TonalizerModule::TonalizerModule(const std::string& id)
 }
 
 VolumeModule::VolumeModule(const std::string& id)
-    : AudioModule(id, ModuleType::kAudio,
-                  /*produces_audio=*/true, /*consumes_audio=*/true)
+    : AudioModule(id, ModuleType::kSettings,
+                  /*produces_audio=*/false, /*consumes_audio=*/false)
 {
   set_colour(MakeColour(0xD5, 0xD5, 0xD5));
   set_label("Volume");

@@ -388,6 +388,71 @@ int main()
         assert(hardlinkCount == 0U);
     }
 
+    // Sampleplay modules must follow the same dynamic connection
+    // limit rules as Oscillator: at most one non-hardlink outgoing
+    // connection to other modules, while still allowing an
+    // additional non-hardlink connection to the master Output (-1).
+    {
+        Scene s;
+
+        auto sample = std::make_unique<SampleplayModule>("sp1");
+        auto filter1 = std::make_unique<FilterModule>("filter1");
+        auto filter2 = std::make_unique<FilterModule>("filter2");
+        auto output = std::make_unique<OutputModule>("-1");
+
+        assert(s.AddModule(std::move(sample)));
+        assert(s.AddModule(std::move(filter1)));
+        assert(s.AddModule(std::move(filter2)));
+        assert(s.AddModule(std::move(output)));
+
+        // First dynamic connection from sp1 to filter1 should be
+        // accepted.
+        Connection d1{.from_module_id = "sp1",
+                      .from_port_name = "out",
+                      .to_module_id = "filter1",
+                      .to_port_name = "in",
+                      .is_hardlink = false};
+        assert(s.AddConnection(d1));
+
+        // Second dynamic connection from sp1 to filter2 should be
+        // rejected due to the per-module limit.
+        Connection d2{.from_module_id = "sp1",
+                      .from_port_name = "out",
+                      .to_module_id = "filter2",
+                      .to_port_name = "in",
+                      .is_hardlink = false};
+        assert(!s.AddConnection(d2));
+
+        // An additional non-hardlink connection to Output (-1)
+        // must still be accepted.
+        Connection toMaster{.from_module_id = "sp1",
+                            .from_port_name = "out",
+                            .to_module_id = "-1",
+                            .to_port_name = "in",
+                            .is_hardlink = false};
+        assert(s.AddConnection(toMaster));
+
+        const auto& conns = s.connections();
+        std::size_t dynamicCount = 0;
+        std::size_t hardlinkCount = 0;
+        for (const auto& c : conns) {
+            if (c.from_module_id != "sp1") {
+                continue;
+            }
+            if (c.is_hardlink) {
+                ++hardlinkCount;
+            } else {
+                ++dynamicCount;
+            }
+        }
+
+        // Expect exactly one dynamic connection to another module
+        // plus one dynamic connection to the master Output (-1),
+        // and no hardlinks.
+        assert(dynamicCount == 2U);
+        assert(hardlinkCount == 0U);
+    }
+
     // Hardlink connections from the same source module are not
     // counted towards the dynamic limit and multiple distinct
     // hardlinks are permitted.

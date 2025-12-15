@@ -535,10 +535,9 @@ void MainComponent::paint(juce::Graphics& g)
                 moduleForConnection = modForConnectionIt->second.get();
             }
 
-            const bool isGenerator =
+            const bool isGeneratorLike =
                 moduleForConnection != nullptr &&
-                moduleForConnection->type() ==
-                    rectai::ModuleType::kGenerator;
+                (moduleForConnection->type() != rectai::ModuleType::kSettings);
             const bool isGlobalController =
                 moduleForConnection != nullptr &&
                 moduleForConnection->is_global_controller();
@@ -578,7 +577,7 @@ void MainComponent::paint(juce::Graphics& g)
                 isInsideMusicArea(object) && isAudioModule) {
                 juce::String msg("[rectai-core][paint-debug] radial id=");
                 msg << object.logical_id().c_str()
-                    << " isGen=" << (isGenerator ? "1" : "0")
+                    << " isGenLike=" << (isGeneratorLike ? "1" : "0")
                     << " hasConn="
                     << (hasActiveOutgoingConnection ? "1" : "0")
                     << " globalCtl="
@@ -603,7 +602,7 @@ void MainComponent::paint(juce::Graphics& g)
             // Generative modules feeding another one hide their
             // direct visual link to the master; the downstream
             // module becomes the visible path.
-            if (isGenerator && hasActiveOutgoingConnection) {
+            if (isGeneratorLike && hasActiveOutgoingConnection) {
                 continue;
             }
 

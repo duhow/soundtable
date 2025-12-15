@@ -866,7 +866,12 @@ void MainComponent::timerCallback()
             }
 
             auto* srcModule = modIt->second.get();
-            if (srcModule->type() != rectai::ModuleType::kGenerator) {
+
+            // Any non-settings module (audio, generators, FX, etc.)
+            // can participate in dynamic routing as long as
+            // AudioModule::CanConnectTo allows it. Settings modules
+            // (Tempo, Tonalizer, etc.) are excluded from this pass.
+            if (srcModule->type() == rectai::ModuleType::kSettings) {
                 continue;
             }
 
