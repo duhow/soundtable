@@ -111,23 +111,6 @@ public:
                                           int numPoints,
                                           double windowSeconds);
 
-    // Copies a downsampled snapshot of the recent mono output from
-    // the Sampleplay (SoundFont) path *before* the dedicated
-    // Sampleplay filter into `dst`, representing approximately
-    // `windowSeconds` of audio. This is used so that Sampleplay
-    // modules can display their own "original" waveform on lines
-    // even though they do not occupy an AudioEngine voice.
-    void getSampleplayWaveformSnapshot(float* dst, int numPoints,
-                                       double windowSeconds);
-
-    // Copies a downsampled snapshot of the recent mono output from
-    // the Sampleplay path *after* the dedicated Sampleplay filter
-    // into `dst`. Downstream visuals such as Filter → Master
-    // radials can use this to reflect the processed SoundFont
-    // signal.
-    void getSampleplayFilteredWaveformSnapshot(float* dst, int numPoints,
-                                               double windowSeconds);
-
     // Configure filter parameters for a given voice. This can be
     // called from the UI thread; the audio thread will consume the
     // updated coefficients on the next callback.
@@ -263,18 +246,6 @@ private:
                                       [kWaveformHistorySize]{};
     float voicePostFilterWaveformBuffer_[kMaxVoices]
                                        [kWaveformHistorySize]{};
-
-    // Rolling mono buffer containing only the Sampleplay (SoundFont)
-    // contribution after global gain and *before* the dedicated
-    // Sampleplay filter is applied. This represents the "original"
-    // SoundFont signal used for connections and Sampleplay radials.
-    float sampleplayWaveformBuffer_[kWaveformHistorySize]{};
-
-    // Rolling mono buffer containing the Sampleplay path *after* the
-    // dedicated Sampleplay filter so that downstream visuals (e.g.
-    // Filter → Master radials) can reflect the processed signal while
-    // connections Sampleplay → X still display the original waveform.
-    float sampleplayFilteredWaveformBuffer_[kWaveformHistorySize]{};
 
     // Global gain applied to the Sampleplay (SoundFont) path before it
     // is mixed with the procedural oscillators. This allows the UI to
