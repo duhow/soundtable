@@ -643,9 +643,6 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                     true,
                     splitPoint
                 };
-                
-                // Always mute while holding.
-                mutedObjects_.insert(id);
 
                 repaint();
                 break;
@@ -1131,33 +1128,231 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
     juce::ignoreUnused(event);
 
     // Handle click-and-hold mute release.
-    // Always unmute when releasing, regardless of previous state.
+    // Always clear hold state when releasing; connection-level mute
+    // changes (if any) are handled via cut gestures.
     if (activeConnectionHold_.has_value()) {
-        const auto& holdState = activeConnectionHold_.value();
-        
-        if (holdState.is_object_line) {
-            mutedObjects_.erase(holdState.object_id);
-        } else {
-            mutedConnections_.erase(holdState.connection_key);
-        }
-        
         activeConnectionHold_.reset();
     }
     
     // Apply mute toggle to lines that were cut during touch drag.
+    const auto& objects = scene_.objects();
+    const auto& connections = scene_.connections();
+
+    // Precompute mapping from module id to object id.
+    std::unordered_map<std::string, std::int64_t> moduleToObjectId;
+    moduleToObjectId.reserve(objects.size());
+    for (const auto& [objId, obj] : objects) {
+        moduleToObjectId.emplace(obj.logical_id(), objId);
+    }
+
+    // Object-to-centre lines: cutting this line is equivalent to
+    // toggling the implicit connection from the module to the master
+    // Output (-1). No per-object or per-module mute state is kept; all
+    // mute is expressed as connection-level state.
     for (const auto& objectId : touchCutObjects_) {
-        if (mutedObjects_.find(objectId) != mutedObjects_.end()) {
-            mutedObjects_.erase(objectId);
-        } else {
-            mutedObjects_.insert(objectId);
+        const auto objIt = objects.find(objectId);
+        if (objIt == objects.end()) {
+            continue;
+        }
+
+        const auto& obj = objIt->second;
+        const std::string moduleId = obj.logical_id();
+
+        bool justUnmutedMaster = false;
+
+        // Find the implicit connection module -> Output (-1) and
+        // toggle its mute state.
+        for (const auto& conn : connections) {
+            if (conn.from_module_id != moduleId ||
+                conn.to_module_id != "-1") {
+                continue;
+            }
+
+            const std::string key = makeConnectionKey(conn);
+            const auto it = mutedConnections_.find(key);
+            if (it != mutedConnections_.end()) {
+                // Master route was muted; unmute it.
+                mutedConnections_.erase(it);
+                justUnmutedMaster = true;
+            } else {
+                // Master route was unmuted; mute it.
+                mutedConnections_.insert(key);
+            }
+        }
+
+        // If we have just unmuted the master route for a module that
+        // currently has no active outgoing module->module connections
+        // (ignoring the implicit module->master auto-wire), clear any
+        // stored per-connection mutes from that module. This models the
+        // behaviour where a previous "only connection" mute was
+        // mirrored onto the master: once the user explicitly
+        // desilences the module via its radial, new or reactivated
+        // connections from that module should start unmuted.
+        if (justUnmutedMaster) {
+            std::size_t activeOutgoingCount = 0;
+
+            if (isInsideMusicArea(obj)) {
+                for (const auto& conn : connections) {
+                    if (conn.from_module_id != moduleId) {
+                        continue;
+                    }
+
+                    // Ignore the implicit module->master connection.
+                    if (conn.to_module_id == "-1") {
+                        continue;
+                    }
+
+                    const auto toObjIdIt =
+                        moduleToObjectId.find(conn.to_module_id);
+                    if (toObjIdIt == moduleToObjectId.end()) {
+                        continue;
+                    }
+
+                    const auto toObjIt =
+                        objects.find(toObjIdIt->second);
+                    if (toObjIt == objects.end()) {
+                        continue;
+                    }
+
+                    const auto& toObj = toObjIt->second;
+                    if (!isInsideMusicArea(toObj)) {
+                        continue;
+                    }
+
+                    if (!conn.is_hardlink &&
+                        !isConnectionGeometricallyActive(obj, toObj)) {
+                        continue;
+                    }
+
+                    ++activeOutgoingCount;
+                }
+            }
+
+            if (activeOutgoingCount == 0U) {
+                // No active outgoing connections remain; clear any
+                // stored mute state for module->module edges from this
+                // module so that future connections start unmuted.
+                for (const auto& conn : connections) {
+                    if (conn.from_module_id != moduleId ||
+                        conn.to_module_id == "-1") {
+                        continue;
+                    }
+
+                    const std::string key = makeConnectionKey(conn);
+                    mutedConnections_.erase(key);
+                }
+            }
         }
     }
 
+    // For module-to-module connections, cutting a line toggles mute for
+    // that specific connection key. Additionally, when this is the only
+    // active outgoing connection from the source module (ignoring the
+    // implicit module→master auto-wire), we mirror the mute state onto
+    // the module→Output(-1) connection so that the mute persists when
+    // the topology changes between module→module and module→master.
     for (const auto& connKey : touchCutConnections_) {
-        if (mutedConnections_.find(connKey) != mutedConnections_.end()) {
+        const bool wasMuted =
+            mutedConnections_.find(connKey) != mutedConnections_.end();
+
+        const rectai::Connection* matchedConn = nullptr;
+        for (const auto& conn : connections) {
+            if (makeConnectionKey(conn) == connKey) {
+                matchedConn = &conn;
+                break;
+            }
+        }
+        std::string srcModuleId;
+        bool hasSingleActiveConnection = false;
+
+        if (matchedConn != nullptr) {
+            srcModuleId = matchedConn->from_module_id;
+
+            const auto fromObjIt =
+                moduleToObjectId.find(srcModuleId);
+            const rectai::ObjectInstance* fromObj = nullptr;
+            if (fromObjIt != moduleToObjectId.end()) {
+                const auto objIt = objects.find(fromObjIt->second);
+                if (objIt != objects.end()) {
+                    fromObj = &objIt->second;
+                }
+            }
+
+            if (fromObj != nullptr && isInsideMusicArea(*fromObj)) {
+                std::size_t activeOutgoingCount = 0;
+                for (const auto& conn : connections) {
+                    if (conn.from_module_id != srcModuleId) {
+                        continue;
+                    }
+
+                    // Ignore auto-wired connections to the invisible
+                    // Output/master module so they do not influence the
+                    // "only one connection" rule from the user's
+                    // perspective.
+                    if (conn.to_module_id == "-1") {
+                        continue;
+                    }
+
+                    const auto toObjIt =
+                        moduleToObjectId.find(conn.to_module_id);
+                    if (toObjIt == moduleToObjectId.end()) {
+                        continue;
+                    }
+
+                    const auto objIt = objects.find(toObjIt->second);
+                    if (objIt == objects.end()) {
+                        continue;
+                    }
+
+                    const auto& toObj = objIt->second;
+                    if (!isInsideMusicArea(toObj)) {
+                        continue;
+                    }
+
+                    if (!conn.is_hardlink &&
+                        !isConnectionGeometricallyActive(*fromObj,
+                                                         toObj)) {
+                        continue;
+                    }
+
+                    ++activeOutgoingCount;
+                }
+
+                hasSingleActiveConnection =
+                    (activeOutgoingCount == 1U);
+            }
+        }
+
+        // Toggle per-connection mute state.
+        if (wasMuted) {
             mutedConnections_.erase(connKey);
         } else {
             mutedConnections_.insert(connKey);
+        }
+
+        // When muting (not unmuting) the only active outgoing
+        // connection from a module, mirror that mute state onto its
+        // implicit module→Output(-1) connection so that the module
+        // stays muted even if the downstream module is later
+        // disconnected and the path reverts to module→master.
+        if (matchedConn != nullptr && hasSingleActiveConnection) {
+            for (const auto& conn : connections) {
+                if (conn.from_module_id != srcModuleId ||
+                    conn.to_module_id != "-1") {
+                    continue;
+                }
+
+                const std::string masterKey = makeConnectionKey(conn);
+                if (!wasMuted) {
+                    // We are muting the only active connection:
+                    // also mute the master route.
+                    mutedConnections_.insert(masterKey);
+                } else {
+                    // We are unmuting that connection: unmute the
+                    // master route as well.
+                    mutedConnections_.erase(masterKey);
+                }
+            }
         }
     }
 

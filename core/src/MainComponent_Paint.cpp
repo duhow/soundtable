@@ -161,15 +161,16 @@ void MainComponent::paint(juce::Graphics& g)
     };
 
     int voicePeriodSamples[AudioEngine::kMaxVoices]{};
-
     for (int v = 0; v < AudioEngine::kMaxVoices; ++v) {
-        audioEngine_.getVoiceWaveformSnapshot(v, voiceWaveforms[v],
-                                              kWaveformPoints, 0.05);
+        audioEngine_.getVoiceWaveformSnapshot(
+            v, voiceWaveforms[v], kWaveformPoints, 0.05);
+
         float maxAbs = 0.0F;
         for (int i = 0; i < kWaveformPoints; ++i) {
             maxAbs = std::max(maxAbs,
                               std::abs(voiceWaveforms[v][i]));
         }
+
         voiceNorm[v] =
             maxAbs > 1.0e-4F ? 1.0F / maxAbs : 0.0F;
 
@@ -476,8 +477,6 @@ void MainComponent::paint(juce::Graphics& g)
             if (object.logical_id() == "-1") {
                 continue;  // Output (master) is not drawn as a module.
             }
-            const bool isMuted =
-                mutedObjects_.find(id) != mutedObjects_.end();
 
             const bool hasActiveOutgoingConnection =
                 objectsWithOutgoingActiveConnection.find(id) !=
@@ -639,7 +638,28 @@ void MainComponent::paint(juce::Graphics& g)
                 continue;
             }
 
-            if (lineCarriesAudio && !isMuted && !isMarkedForCut) {
+            // A radial line is visually muted when its implicit
+            // connection to the master Output (-1) is muted at the
+            // connection level. We derive that state by checking for
+            // a module -> "-1" connection in mutedConnections_.
+            bool isRadialMuted = false;
+            {
+                for (const auto& conn : scene_.connections()) {
+                    if (conn.from_module_id != object.logical_id() ||
+                        conn.to_module_id != "-1") {
+                        continue;
+                    }
+
+                    const std::string key = makeConnectionKey(conn);
+                    if (mutedConnections_.find(key) !=
+                        mutedConnections_.end()) {
+                        isRadialMuted = true;
+                        break;
+                    }
+                }
+            }
+
+            if (lineCarriesAudio && !isRadialMuted && !isMarkedForCut) {
                 // Sampleplay modules do not occupy an AudioEngine
                 // voice slot, so their waveform comes from the
                 // dedicated Sampleplay history buffer instead of the
@@ -691,7 +711,7 @@ void MainComponent::paint(juce::Graphics& g)
                 g.drawLine(line, 3.0F);
             } else {
                 g.setColour(juce::Colours::white.withAlpha(baseAlpha));
-                if (isMuted) {
+                if (isRadialMuted) {
                     const float dashLengths[] = {6.0F, 4.0F};
                     g.drawDashedLine(
                         line, dashLengths,
@@ -753,9 +773,44 @@ void MainComponent::paint(juce::Graphics& g)
 
             const juce::Point<float> p1{fx, fy};
             const juce::Point<float> p2{tx, ty};
+            const std::string connKey = makeConnectionKey(conn);
+
+            // A connection is considered muted either when it is
+            // explicitly in mutedConnections_, or when the source
+            // module has all its routes to the master Output (-1)
+            // muted (i.e. its implicit module→master connection is
+            // muted). This ensures that muting a module's path to
+            // the master also visually mutes any downstream
+            // module→module edges originating from it.
+            bool sourceMutedToMaster = false;
+            {
+                bool hasMasterRoute = false;
+                bool masterRouteMuted = true;
+
+                for (const auto& mconn : scene_.connections()) {
+                    if (mconn.from_module_id != conn.from_module_id ||
+                        mconn.to_module_id != "-1") {
+                        continue;
+                    }
+
+                    hasMasterRoute = true;
+                    const std::string mkey = makeConnectionKey(mconn);
+                    const bool connIsMuted =
+                        mutedConnections_.find(mkey) !=
+                        mutedConnections_.end();
+                    if (!connIsMuted) {
+                        masterRouteMuted = false;
+                        break;
+                    }
+                }
+
+                sourceMutedToMaster = hasMasterRoute && masterRouteMuted;
+            }
+
             const bool isMutedConnection =
-                mutedConnections_.find(makeConnectionKey(conn)) !=
-                mutedConnections_.end();
+                mutedConnections_.find(connKey) !=
+                    mutedConnections_.end() ||
+                sourceMutedToMaster;
 
             const bool audioConn =
                 isAudioConnection(conn) &&
@@ -788,7 +843,6 @@ void MainComponent::paint(juce::Graphics& g)
               const float connectionLevel = juce::jmax(fromLevel, toLevel);
 
             // Check if this connection is marked for mute toggle.
-            const std::string connKey = makeConnectionKey(conn);
             const bool isConnectionMarkedForCut =
                 touchCutConnections_.find(connKey) !=
                 touchCutConnections_.end();
@@ -1037,10 +1091,26 @@ void MainComponent::paint(juce::Graphics& g)
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
         const auto cy = bounds.getY() + object.y() * bounds.getHeight();
 
-        const bool isMuted =
-            mutedObjects_.find(entry.first) != mutedObjects_.end();
+        // A module body is considered muted for colouring purposes
+        // when all its effective routes to the master are muted at
+        // connection level. This is approximated by checking whether
+        // its implicit module -> Output (-1) connection is muted.
+        bool isBodyMuted = false;
+        for (const auto& conn : scene_.connections()) {
+            if (conn.from_module_id != object.logical_id() ||
+                conn.to_module_id != "-1") {
+                continue;
+            }
 
-        const auto bodyColour = getBodyColourForObject(object, isMuted);
+            const std::string key = makeConnectionKey(conn);
+            if (mutedConnections_.find(key) !=
+                mutedConnections_.end()) {
+                isBodyMuted = true;
+                break;
+            }
+        }
+
+        const auto bodyColour = getBodyColourForObject(object, isBodyMuted);
 
         // Compute the orientation of the module when it lives in the
         // musical area. Modules outside the table (or docked) keep a
@@ -1631,10 +1701,26 @@ void MainComponent::paint(juce::Graphics& g)
                     continue;
                 }
 
-                const bool isMuted =
-                    mutedObjects_.find(id) != mutedObjects_.end();
+                // Dock capsules reuse the same body colour logic as
+                // modules on the table: derive mute from the
+                // implicit module -> Output (-1) connection.
+                bool isBodyMuted = false;
+                for (const auto& conn : scene_.connections()) {
+                    if (conn.from_module_id != obj->logical_id() ||
+                        conn.to_module_id != "-1") {
+                        continue;
+                    }
+
+                    const std::string key = makeConnectionKey(conn);
+                    if (mutedConnections_.find(key) !=
+                        mutedConnections_.end()) {
+                        isBodyMuted = true;
+                        break;
+                    }
+                }
+
                 const auto bodyColour =
-                    getBodyColourForObject(*obj, isMuted);
+                    getBodyColourForObject(*obj, isBodyMuted);
 
                 g.setColour(bodyColour);
                 g.fillEllipse(cx - nodeRadiusDock, cy - nodeRadiusDock,

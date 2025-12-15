@@ -142,9 +142,36 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
             continue;
         }
 
-        const bool muted =
-            mutedObjects_.find(objId) != mutedObjects_.end();
-        if (muted) {
+        // Treat the Sampleplay module as muted when all its
+        // effective routes to the master Output (-1) are muted at
+        // connection level. This is driven by the implicit
+        // module -> "-1" connection created by the loader.
+        bool mutedToMaster = false;
+        {
+            bool hasMasterRoute = false;
+            bool masterRouteMuted = true;
+
+            for (const auto& conn : scene_.connections()) {
+                if (conn.from_module_id != module->id() ||
+                    conn.to_module_id != "-1") {
+                    continue;
+                }
+
+                hasMasterRoute = true;
+                const std::string key = makeConnectionKey(conn);
+                const bool connIsMuted =
+                    mutedConnections_.find(key) !=
+                    mutedConnections_.end();
+                if (!connIsMuted) {
+                    masterRouteMuted = false;
+                    break;
+                }
+            }
+
+            mutedToMaster = hasMasterRoute && masterRouteMuted;
+        }
+
+        if (mutedToMaster) {
             continue;
         }
 
@@ -657,7 +684,14 @@ void MainComponent::timerCallback()
     // silent state.
     float sampleplayOutputGain = globalVolumeGain;
     {
+        // Consider the Sampleplay path muted if **all** effective
+        // routes from Sampleplay modules to the master are muted at
+        // connection level. A Sampleplay module is considered routed
+        // to master when it has an auto-wired connection to
+        // Output (-1); muting that connection is equivalent to
+        // muting its radial line.
         bool hasUnmutedSampleplay = false;
+
         for (const auto& [objId, obj] : objects) {
             const auto modIt = modules.find(obj.logical_id());
             if (modIt == modules.end() || modIt->second == nullptr) {
@@ -665,7 +699,7 @@ void MainComponent::timerCallback()
             }
 
             auto* module = modIt->second.get();
-            if (!module->is<rectai::SampleplayModule>()){
+            if (!module->is<rectai::SampleplayModule>()) {
                 continue;
             }
 
@@ -673,9 +707,28 @@ void MainComponent::timerCallback()
                 continue;
             }
 
-            const bool isMutedObject =
-                mutedObjects_.find(objId) != mutedObjects_.end();
-            if (!isMutedObject) {
+            // Find the implicit connection Sampleplay -> Output (-1).
+            bool routeToMasterMuted = true;  // Assume muted until a
+                                             // non-muted route is
+                                             // found.
+            for (const auto& conn : scene_.connections()) {
+                if (conn.from_module_id != module->id() ||
+                    conn.to_module_id != "-1") {
+                    continue;
+                }
+
+                const std::string key = makeConnectionKey(conn);
+                const bool connIsMuted =
+                    mutedConnections_.find(key) !=
+                    mutedConnections_.end();
+
+                if (!connIsMuted) {
+                    routeToMasterMuted = false;
+                    break;
+                }
+            }
+
+            if (!routeToMasterMuted) {
                 hasUnmutedSampleplay = true;
                 break;
             }
@@ -717,8 +770,38 @@ void MainComponent::timerCallback()
             continue;
         }
 
-        const bool srcMuted =
-            mutedObjects_.find(objId) != mutedObjects_.end();
+        // A generator is considered muted at source when all its
+        // effective routes to the master are muted at connection
+        // level. This is modelled as the auto-wired connection from
+        // the generator to the invisible Output (-1); muting that
+        // connection is equivalent to muting the radial line.
+        bool srcMuted = false;
+        {
+            bool hasMasterRoute = false;
+            bool masterRouteMuted = true;  // assume muted until proven otherwise
+
+            for (const auto& conn : scene_.connections()) {
+                if (conn.from_module_id != module->id() ||
+                    conn.to_module_id != "-1") {
+                    continue;
+                }
+
+                hasMasterRoute = true;
+                const std::string key = makeConnectionKey(conn);
+                const bool connIsMuted =
+                    mutedConnections_.find(key) !=
+                    mutedConnections_.end();
+                if (!connIsMuted) {
+                    masterRouteMuted = false;
+                    break;
+                }
+            }
+
+            // If there is an explicit route to master and it is
+            // muted, treat the source as muted; otherwise it is
+            // unmuted.
+            srcMuted = hasMasterRoute && masterRouteMuted;
+        }
 
         // Try to find a downstream audio module that this generator feeds
         // according to spatial rules and connection state.
@@ -762,6 +845,15 @@ void MainComponent::timerCallback()
                 continue;
             }
 
+            // Dynamic connections are only considered active when the
+            // destination lies inside the geometric cone of the
+            // source. Hardlink connections remain active regardless of
+            // the cone and are treated as always-on.
+            if (!conn.is_hardlink &&
+                !isConnectionGeometricallyActive(obj, toObj)) {
+                continue;
+            }
+
             const auto modDestIt = modules.find(conn.to_module_id);
             if (modDestIt == modules.end() || modDestIt->second == nullptr) {
                 continue;
@@ -786,7 +878,8 @@ void MainComponent::timerCallback()
                 const std::string key = makeConnectionKey(conn);
                 downstreamConnectionKey = key;
                 connectionMuted =
-                    mutedConnections_.find(key) != mutedConnections_.end();
+                    mutedConnections_.find(key) !=
+                    mutedConnections_.end();
 
                 // If we just selected a Filter, we can stop searching:
                 // this is the highest-priority downstream for per-voice
@@ -802,10 +895,7 @@ void MainComponent::timerCallback()
             "gain", module->default_parameter_value("gain"));
 
         if (downstreamModule != nullptr && downstreamInside) {
-            const bool dstMuted =
-                mutedObjects_.find(downstreamObjId) !=
-                mutedObjects_.end();
-            chainMuted = srcMuted || dstMuted || connectionMuted;
+            chainMuted = srcMuted || connectionMuted;
 
             // For most audio modules, let the downstream module's gain
             // control the chain level. Filters are treated specially:
@@ -857,7 +947,8 @@ void MainComponent::timerCallback()
             }
         }
 
-        // Process voice if level would be > 0 OR if it's being held for visualization.
+        // Process voice if level would be > 0 OR if it's being held
+        // for visualization.
         if ((calculatedLevel > 0.0F || isBeingHeld) &&
             voiceIndex < AudioEngine::kMaxVoices) {
             voices[voiceIndex].frequency = frequency;
@@ -954,16 +1045,22 @@ void MainComponent::timerCallback()
             audioEngine_.setVoiceWaveform(assignedVoice, waveformIndex);
 
             // Mark generator and, when present, its downstream module
-            // as actively carrying audio so the visual layer can
-            // render waveforms only on those paths, and remember
+            // as actively carrying audible audio so the visual layer
+            // can render waveforms only on those paths, and remember
             // which AudioEngine voice index represents this chain.
-            modulesWithActiveAudio_.insert(module->id());
-            moduleVoiceIndex_[module->id()] = assignedVoice;
-            if (downstreamModule != nullptr && downstreamInside &&
-                !connectionMuted) {
-                modulesWithActiveAudio_.insert(
-                    downstreamModule->id());
-                moduleVoiceIndex_[downstreamModule->id()] = assignedVoice;
+            // Chains that are muted at source or along the connection
+            // are not marked as active, so their radials and
+            // module→module edges appear flat.
+            if (!chainMuted) {
+                modulesWithActiveAudio_.insert(module->id());
+                moduleVoiceIndex_[module->id()] = assignedVoice;
+                if (downstreamModule != nullptr && downstreamInside &&
+                    !connectionMuted) {
+                    modulesWithActiveAudio_.insert(
+                        downstreamModule->id());
+                    moduleVoiceIndex_[downstreamModule->id()] =
+                        assignedVoice;
+                }
             }
         }
     }
@@ -1057,12 +1154,6 @@ void MainComponent::timerCallback()
                 continue;
             }
 
-            // Skip muted Sequencer objects.
-            if (mutedObjects_.find(objIdIt->second) !=
-                mutedObjects_.end()) {
-                continue;
-            }
-
             // Resolve current preset and step.
             const int presetIndex = seqModule->current_preset();
             if (presetIndex < 0 ||
@@ -1142,10 +1233,8 @@ void MainComponent::timerCallback()
 
                 auto* dstModule = modDestIt->second.get();
 
-                // Estado de mute del destino y de la conexión.
-                const bool dstMuted =
-                    mutedObjects_.find(toObjIdIt->second) !=
-                    mutedObjects_.end();
+                // Connection-level mute state for this Sequencer →
+                // destination edge.
                 const std::string connKey =
                     makeConnectionKey(conn);
                 const bool connectionMuted =
@@ -1182,7 +1271,37 @@ void MainComponent::timerCallback()
                 if (const auto* sampleModule =
                         dynamic_cast<const rectai::SampleplayModule*>(
                             dstModule)) {
-                    if (dstMuted) {
+                    // Respect the destination module's route to the
+                    // master: if all Sampleplay → Output (-1)
+                    // connections are muted, do not trigger notes
+                    // for this step.
+                    bool dstMutedToMaster = false;
+                    {
+                        bool hasMasterRoute = false;
+                        bool masterRouteMuted = true;
+
+                        for (const auto& mconn : scene_.connections()) {
+                            if (mconn.from_module_id != sampleModule->id() ||
+                                mconn.to_module_id != "-1") {
+                                continue;
+                            }
+
+                            hasMasterRoute = true;
+                            const std::string mkey =
+                                makeConnectionKey(mconn);
+                            const bool connIsMuted =
+                                mutedConnections_.find(mkey) !=
+                                mutedConnections_.end();
+                            if (!connIsMuted) {
+                                masterRouteMuted = false;
+                                break;
+                            }
+                        }
+
+                        dstMutedToMaster = hasMasterRoute && masterRouteMuted;
+                    }
+
+                    if (dstMutedToMaster) {
                         continue;
                     }
                     const auto* activeInst =

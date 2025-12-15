@@ -16,6 +16,38 @@
 - En `tests/scene_tests.cpp` se ha añadido un caso de prueba que carga un patch mínimo con dos tangibles: un `Output` de id `-1` y un `Oscillator` de id `46`. Tras invocar `LoadReactablePatchFromString`, el test comprueba que la escena resultante contiene exactamente dos módulos, dos objetos y **una** conexión no-hardlink de `46/out` hacia `-1/in`.
 - Este test complementa el ya existente que valida la creación de conexiones de tipo hardlink desde un `Delay` hacia `Output` a partir de etiquetas `<hardlink to="-1" />`, asegurando que ambos mecanismos coexisten correctamente (el loader no duplica conexiones cuando ya hay un hardlink y la auto-conexión solo añade rutas cuando no existían previamente).
 
+### Redefinición del modelo de mute sólo a nivel de conexión
+- Se ha simplificado el modelo de mute eliminando por completo el estado de mute por objeto y por módulo (`mutedObjects_` y `modulesWithPersistentMute_`) de `MainComponent`. A partir de ahora, `mutedConnections_` es la **única** fuente de verdad sobre qué rutas están silenciadas.
+- La ruta al master se modela explícitamente como la conexión implícita módulo → Output (-1) que el loader crea para todos los módulos de audio no globales. Mutear la radial centro→módulo en la UI equivale a mutear esa conexión módulo→`-1` concreta dentro de `mutedConnections_`.
+- En `MainComponent_Audio.cpp`:
+  - El cálculo de `sampleplayOutputGain` ya no consulta `mutedObjects_`; en su lugar, considera silenciado el path global de Sampleplay cuando **todas** las conexiones Sampleplay → `-1` están muteadas en `mutedConnections_`. Si existe al menos un Sampleplay con ruta al master no muteada, el gain sigue al volumen global.
+  - Para generadores, `srcMuted` se deriva ahora comprobando si todas las conexiones desde el módulo a Output (-1) están muteadas. Esto hace que mutear la radial sea exactamente lo mismo que cortar la salida de ese generador hacia el master.
+  - El flag `connectionMuted` para la cadena generador → módulo aguas abajo se calcula únicamente a partir de `mutedConnections_` (se ha eliminado cualquier dependencia de mute persistente por módulo). El `chainMuted` final combina sólo el mute de origen (`srcMuted`) y el mute de la conexión a ese downstream.
+  - `modulesWithActiveAudio_` se actualiza sin consultar estado de mute persistente: si la cadena genera audio (aunque acabe silenciada al master) se sigue usando para poder dibujar waveform, y sólo se omite la marca de “activo” en el módulo destino cuando la conexión está muteada.
+- En `MainComponent_Paint.cpp`:
+  - Las líneas radiales ya no consultan `mutedObjects_` ni `modulesWithPersistentMute_`. El estado visual de mute (línea continua vs discontinua, presencia de waveform) se deduce sólo de si la conexión implícita módulo → `-1` correspondiente está en `mutedConnections_`.
+  - Las conexiones módulo→módulo usan exclusivamente `mutedConnections_` para decidir si se dibujan como activas (con waveform) o muteadas (línea discontinua / sin waveform), tanto en la parte central de la mesa como en gestos de hold/cut.
+  - El color del cuerpo de los módulos (en la mesa y en el dock) se calcula ahora comprobando si su conexión módulo → `-1` está muteada: si todas las rutas al master están muteadas, el nodo se pinta con el esquema de “muteado”; si al menos una ruta al master está activa, se usa el esquema normal.
+- En `MainComponent_Input.cpp`:
+  - Los gestos de click-and-hold en líneas sólo mantienen un estado visual temporal (`activeConnectionHold_`) sin tocar el estado de mute persistente; al soltar el ratón se limpia el hold sin modificar `mutedConnections_`.
+  - Cortar una radial centro→módulo se interpreta como “toggle” sobre la conexión implícita módulo → `-1`: se localiza dicha conexión en `Scene::connections()` y se añade o elimina su clave en `mutedConnections_`.
+  - Cortar una línea módulo→módulo sólo hace toggle del estado de mute de **esa** conexión (`makeConnectionKey(conn)`), sin marcar ni recordar mute a nivel de módulo aunque sea la única conexión saliente.
+- Con este cambio, todas las decisiones de audio y UI relacionadas con mute se pueden razonar exclusivamente en términos de conexiones concretas (`Connection { from, to, ... }`), y el comportamiento se mantiene coherente entre cadena de audio (silencio) y representación visual (líneas y cuerpos atenuados / con waveform).
+
+### Sincronización del estado de mute al des-silenciar la radial sin conexiones activas
+- Se ha ajustado el manejo de gestos de corte sobre la radial centro→módulo en `MainComponent_Input.cpp` para cubrir un caso sutil en el que el estado de mute “persistente” de una única conexión módulo→módulo podía reaparecer de forma inesperada al reconectar módulos.
+- Cuando el usuario corta una línea módulo→módulo que es la **única** conexión saliente activa de un módulo (ignorando la auto-conexión implícita al master), la lógica ya existente espelaba ese mute sobre la conexión módulo→Output (-1), de forma que, si más tarde se desconectaba el módulo destino (sacándolo del cono/área musical), el módulo seguía efectivamente silenciado al quedar solo la ruta al master.
+- El nuevo comportamiento define que, si más tarde el usuario des-silencia explícitamente la radial (toggle sobre módulo→`-1`) en una situación en la que **no queda ninguna conexión módulo→módulo activa** desde ese módulo, entonces se interpreta que el usuario quiere restablecer el estado “no muteado” global del módulo como fuente.
+- Para implementarlo, tras des-silenciar la conexión implícita módulo→`-1` se calcula el número de conexiones salientes módulo→módulo activas desde ese módulo (respetando área musical, hardlinks y cono geométrico). Si el recuento es cero, se recorren todas las conexiones con `from_module_id == moduleId` y `to_module_id != "-1"` y se eliminan sus claves de `mutedConnections_`.
+- Con este ajuste, el flujo
+  - Osc→Master,
+  - Osc→Filter,
+  - mute de Osc→Filter (que también mutea Osc→Master al ser la única conexión activa),
+  - desplazamiento de Filter fuera del cono (queda sólo Osc→Master),
+  - des-silenciado de Osc→Master,
+  - reconexión Osc→Filter,
+  vuelve a producir una línea Osc→Filter **no muteada**, ya que el des-silenciado explícito de la radial sin conexiones activas limpia el estado de mute heredado de conexiones anteriores.
+
 ## 2025-12-13
 
 ### Activación inmediata del filtro al crear conexiones
@@ -228,17 +260,25 @@
   - Modo `--mode=synthetic` (por defecto), que conserva el comportamiento anterior: envía un único objeto sintético `/rectai/object` con `trackingId=1` y `logicalId="osc1"` moviéndose horizontalmente.
   - Modo `--mode=live`, que inicializa un nuevo `rectai::tracker::TrackerEngine` y pasa cada frame capturado para que devuelva una lista de `TrackedObject` con coordenadas normalizadas y ángulo en radianes.
 
-### Validación de `default.rtp` y logs de depuración
+### Validación de `default.rtp`, logs de depuración y mute persistente de una sola conexión
 
-- Se añade un test específico en `tests/scene_tests.cpp` que carga el `default.rtp` real usando `rectai::ui::loadFile("Resources/default.rtp")` + `LoadReactablePatchFromFile` y comprueba:
+- Se añade un test específico en `tests/scene_tests.cpp` que busca `default.rtp` en varias rutas relativas (incluyendo `com.reactable/Resources/default.rtp`) usando `std::ifstream` para evitar dependencias de JUCE en los tests y, una vez localizado, lo carga con `LoadReactablePatchFromFile`. El test comprueba:
   - Presencia de los módulos clave: Output (`"-1"`), Volume (`"1"`), Tempo (`"2"`), Oscillator (`"46"`).
   - Que el master no arranca muteado (`metadata.master_muted == false`).
   - Que el Volume de `default.rtp` (volume="90") se normaliza a ~0.9 en el modelo.
   - Que el Oscillator `46` tiene un `gain` por defecto > 0 para poder sonar al colocarlo en la mesa.
   - Que existe una conexión auto-creada de `"46"` → `"-1"` (`out`→`in`) en `Scene::connections()`.
 - Se añaden logs ligeros de depuración para investigar la ausencia de sonido y la desaparición de la línea entre Oscillator y Output:
-- En `MainComponent_Audio::timerCallback()` se registra, una vez por tick, el primer generador activo con: id, frecuencia en Hz, nivel calculado, nivel de salida tras volumen global, estado de mute de la cadena y módulo downstream (si lo hay).
-- En `MainComponent_Paint.cpp`, dentro del bucle que dibuja las líneas radiales centro→objeto, se añade un log por módulo de audio dentro del área musical indicando: `logical_id`, si es generador y si `objectsWithOutgoingActiveConnection` lo marca como alimentando otro módulo. Esto sirve para entender por qué una radial (Oscillator→master) puede ocultarse después de uno o pocos frames.
+  - En `MainComponent_Audio::timerCallback()` se registra, una vez por tick, el primer generador activo con: id, frecuencia en Hz, nivel calculado, nivel de salida tras volumen global, estado de mute de la cadena y módulo downstream (si lo hay).
+  - En `MainComponent_Paint.cpp`, dentro del bucle que dibuja las líneas radiales centro→objeto, se añade un log por módulo de audio dentro del área musical indicando: `logical_id`, si es generador y si `objectsWithOutgoingActiveConnection` lo marca como alimentando otro módulo. Esto sirve para entender por qué una radial (Oscillator→master) puede ocultarse después de uno o pocos frames.
+- Se introduce un estado de mute persistente a nivel de módulo para el caso en que un módulo sólo tenga **una** conexión activa (dinámica o hardlink, ignorando el auto-wiring a Output -1):
+  - Nuevo miembro `modulesWithPersistentMute_` en `MainComponent` (set de `module_id`) que marca módulos cuyo "mute de línea única" debe conservarse aunque su única conexión cambie de destino.
+  - En `MainComponent_Input::mouseUp`, al aplicar los cortes en `touchCutConnections_`, se localiza la `Connection` correspondiente a cada `connKey` y se calcula cuántas conexiones salientes activas tiene el módulo fuente (dentro del área musical, respetando el cono geométrico y excluyendo conexiones hacia `"-1"`).
+    - Si el corte pasa de no muteado a muteado y el módulo tiene exactamente una conexión activa, se añade su `module_id` a `modulesWithPersistentMute_` además de marcar el `connKey` en `mutedConnections_`.
+    - Si el corte pasa de muteado a no muteado, se elimina su `module_id` de `modulesWithPersistentMute_` para que la siguiente acción vuelva a comportarse como un toggle completo.
+  - En `MainComponent_Audio.cpp`, tanto el flag `srcMuted` (mute de objeto) como `connectionMuted` combinan ahora `mutedObjects_`/`mutedConnections_` con `modulesWithPersistentMute_`, de forma que una vez que un Oscillator ha sido silenciado en condición de única conexión, la cadena de audio permanece muteada aunque la conexión se rehaga hacia otro módulo o al master.
+  - En `MainComponent_Paint.cpp`, las líneas radiales centro→módulo y los cuerpos de los nodos (en mesa y dock) consideran también `modulesWithPersistentMute_` para reflejar visualmente este mute persistente, y las conexiones módulo→módulo tratan cualquier enlace saliente desde un módulo persistente como silenciado (línea discontinua) aunque su `connKey` no estuviera todavía en `mutedConnections_`.
+  - Resultado: cuando un módulo tiene sólo una conexión activa y se corta esa línea (p.ej. Oscillator→Filter), el sistema recuerda que el módulo está globalmente silenciado; si más adelante su única conexión pasa a ser Oscillator→Master o a otro destino, el mute se conserva tanto en audio como en la representación de las líneas.
 - Se ha introducido un pequeño modelo de tracking en `tracker/src/TrackerTypes.h` (`TrackedObject` + alias `TrackedObjectList`) y un esqueleto de `TrackerEngine` en `tracker/src/TrackerEngine.{h,cpp}` con API:
   - `bool initialise(int cameraIndex, int requestedWidth, int requestedHeight, std::string& errorMessage)` para preparar parámetros internos.
   - `TrackedObjectList processFrame(const cv::Mat& frame) const` para extraer objetos de cada frame (por ahora implementación placeholder sin detección real).

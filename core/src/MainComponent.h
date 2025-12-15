@@ -46,15 +46,16 @@ private:
     // Tracking state for simple click-and-drag interaction.
     std::int64_t draggedObjectId_{0};
 
-    // Simple per-object mute state (by tracking id).
-    std::unordered_set<std::int64_t> mutedObjects_;
-
     // Last known angle in degrees for each tracked object, used to
     // compute per-frame rotation deltas that modulate module
     // frequency parameters.
     std::unordered_map<std::int64_t, float> lastObjectAngleDegrees_;
 
-    // Per-connection mute state, keyed by a stable connection id.
+    // Per-connection mute state, keyed by a stable connection id. All
+    // mute semantics (incluso la ruta implícita a master) se expresan
+    // como mute de conexiones: las líneas centro→módulo se asocian a la
+    // conexión auto-generada módulo→Output(-1) y las líneas
+    // módulo→módulo a sus `Connection` explícitas en la `Scene`.
     std::unordered_set<std::string> mutedConnections_;
 
     // Pairs of objects that are currently colliding (touching) and have
