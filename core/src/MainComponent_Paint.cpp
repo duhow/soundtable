@@ -277,11 +277,6 @@ void MainComponent::paint(juce::Graphics& g)
             return juce::jlimit(0.0F, 1.0F, gain);
         }
 
-        if (module->is<rectai::FilterModule>()) {
-            const float q = module->GetParameterOrDefault("q", 0.5F);
-            return juce::jlimit(0.0F, 1.0F, q);
-        }
-
         if (module->uses_gain_control()) {
             const float gain = module->GetParameterOrDefault("gain", 1.0F);
             return juce::jlimit(0.0F, 1.0F, gain);
