@@ -124,6 +124,7 @@ void MainComponent::paint(juce::Graphics& g)
     constexpr int kWaveformPoints = 512;
     float voiceWaveforms[AudioEngine::kMaxVoices][kWaveformPoints]{};
     float voiceNorm[AudioEngine::kMaxVoices]{};
+    float voiceRms[AudioEngine::kMaxVoices]{};
 
     // For visual consistency (especially with saw waves), we estimate
     // an approximate period for each voice in the snapshot so that the
@@ -174,13 +175,25 @@ void MainComponent::paint(juce::Graphics& g)
             v, voiceWaveforms[v], kWaveformPoints, 0.05);
 
         float maxAbs = 0.0F;
+        float sumSquares = 0.0F;
         for (int i = 0; i < kWaveformPoints; ++i) {
-            maxAbs = std::max(maxAbs,
-                              std::abs(voiceWaveforms[v][i]));
+            const float s = voiceWaveforms[v][i];
+            maxAbs = std::max(maxAbs, std::abs(s));
+            sumSquares += s * s;
         }
 
         voiceNorm[v] =
             maxAbs > 1.0e-4F ? 1.0F / maxAbs : 0.0F;
+
+        if (kWaveformPoints > 0) {
+            const float meanSquare = sumSquares /
+                                     static_cast<float>(
+                                         kWaveformPoints);
+            voiceRms[v] =
+                meanSquare > 0.0F ? std::sqrt(meanSquare) : 0.0F;
+        } else {
+            voiceRms[v] = 0.0F;
+        }
 
         if (voiceNorm[v] > 0.0F) {
             voicePeriodSamples[v] =
@@ -197,6 +210,7 @@ void MainComponent::paint(juce::Graphics& g)
     // an AudioEngine voice slot.
     float sampleplayWaveform[kWaveformPoints]{};
     float sampleplayNorm = 0.0F;
+    float sampleplayRms = 0.0F;
     int sampleplayPeriodSamples = 0;
 
     audioEngine_.getSampleplayWaveformSnapshot(sampleplayWaveform,
@@ -204,12 +218,24 @@ void MainComponent::paint(juce::Graphics& g)
 
     {
         float maxAbs = 0.0F;
+        float sumSquares = 0.0F;
         for (int i = 0; i < kWaveformPoints; ++i) {
-            maxAbs = std::max(maxAbs,
-                              std::abs(sampleplayWaveform[i]));
+            const float s = sampleplayWaveform[i];
+            maxAbs = std::max(maxAbs, std::abs(s));
+            sumSquares += s * s;
         }
         sampleplayNorm =
             maxAbs > 1.0e-4F ? 1.0F / maxAbs : 0.0F;
+
+        if (kWaveformPoints > 0) {
+            const float meanSquare = sumSquares /
+                                     static_cast<float>(
+                                         kWaveformPoints);
+            sampleplayRms =
+                meanSquare > 0.0F ? std::sqrt(meanSquare) : 0.0F;
+        } else {
+            sampleplayRms = 0.0F;
+        }
 
         if (sampleplayNorm > 0.0F) {
             sampleplayPeriodSamples =
@@ -510,6 +536,20 @@ void MainComponent::paint(juce::Graphics& g)
                 moduleForConnection != nullptr &&
                 moduleForConnection->is<rectai::SampleplayModule>();
 
+            // Modules that expose a true volume-like control (right
+            // arc) keep using their parameter to drive waveform
+            // height. Modules without such a control (for example,
+            // Filter, Delay, Modulator, WaveShaper, Output) derive
+            // their visual level from the actual audio RMS measured
+            // in the AudioEngine.
+            const bool hasExplicitVolumeBar =
+                moduleForConnection != nullptr &&
+                (moduleForConnection->is<rectai::VolumeModule>() ||
+                 moduleForConnection->is<rectai::OscillatorModule>() ||
+                 moduleForConnection->is<rectai::SampleplayModule>() ||
+                 moduleForConnection->is<rectai::LoopModule>() ||
+                 moduleForConnection->is<rectai::InputModule>());
+
             const float visualLevel = getModuleVisualLevel(moduleForConnection);
 
 #if !defined(NDEBUG)
@@ -670,7 +710,8 @@ void MainComponent::paint(juce::Graphics& g)
                 if (isSampleplayModule && sampleplayNorm > 0.0F) {
                     g.setColour(
                         juce::Colours::white.withAlpha(baseAlpha));
-                    const float waveformAmplitude = 15.0F * visualLevel;
+                    const float waveformAmplitude =
+                        15.0F * visualLevel;
                     const float waveformThickness = 1.4F;
                     const int samplesToUse = kWaveformPoints;
                     drawWaveformOnLine(
@@ -694,7 +735,28 @@ void MainComponent::paint(juce::Graphics& g)
                     voiceNorm[voiceIndex] > 0.0F) {
                     g.setColour(
                         juce::Colours::white.withAlpha(baseAlpha));
-                    const float waveformAmplitude = 15.0F * visualLevel;
+                    float amplitudeLevel = visualLevel;
+
+                    // If this module does not have an explicit
+                    // volume bar, derive the visual level from the
+                    // RMS of the corresponding audio voice so that
+                    // filters/FX reflect their actual output level
+                    // instead of a fixed height.
+                    if (!hasExplicitVolumeBar) {
+                        const float rms =
+                            voiceRms[voiceIndex];
+                        if (rms > 0.0F) {
+                            // Normalise against a full-scale sine
+                            // (~0.707 RMS) and clamp to [0,1].
+                            amplitudeLevel = juce::jlimit(
+                                0.0F, 1.0F, rms / 0.7071F);
+                        } else {
+                            amplitudeLevel = 0.0F;
+                        }
+                    }
+
+                    const float waveformAmplitude =
+                        15.0F * amplitudeLevel;
                     const float waveformThickness = 1.4F;
                     const int periodSamples =
                         voicePeriodSamples[voiceIndex] > 0
