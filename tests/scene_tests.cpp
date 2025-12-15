@@ -257,6 +257,46 @@ int main()
         assert(c.is_hardlink);
     }
 
+    // Auto-wired connections from audio-capable modules to Output/master.
+    {
+        const char* kRtpWithMasterAuto =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
+            "<reactablepatch>\n"
+            "  <background color=\"0,0,0\" texture=\"\" alpha=\"1\" rotation=\"0\" revolution=\"0\" random=\"0\" />\n"
+            "  <tangibles>\n"
+            "    <tangible type=\"Output\" id=\"-1\" x=\"0\" y=\"0\" angle=\"0\" color=\"ffffffff\" docked=\"0\" muted=\"0\" point=\"0\" />\n"
+            "    <tangible type=\"Oscillator\" id=\"46\" x=\"0.2\" y=\"0.3\" angle=\"0\" color=\"ffffffff\" docked=\"0\" muted=\"0\" point=\"0\" subtype=\"sine\" amp=\"0.5\" sweep=\"0\" midifreq=\"44\">\n"
+            "      <envelope attack=\"0\" decay=\"0\" duration=\"25\" points_x=\"0,1\" points_y=\"0,1\" release=\"0\" />\n"
+            "    </tangible>\n"
+            "  </tangibles>\n"
+            "  <author name=\"TestAuthor\" />\n"
+            "  <patch name=\"MasterAutoPatch\" />\n"
+            "</reactablepatch>\n";
+
+        Scene loaded_scene;
+        ReactablePatchMetadata metadata;
+        std::string error;
+        const bool ok = rectai::LoadReactablePatchFromString(
+            kRtpWithMasterAuto, loaded_scene, &metadata, &error);
+        assert(ok);
+        assert(error.empty());
+
+        // Expect two modules (Output and Oscillator) and two objects.
+        assert(loaded_scene.modules().size() == 2U);
+        assert(loaded_scene.objects().size() == 2U);
+
+        // One non-hardlink connection should have been auto-created
+        // from the Oscillator (46) to Output (-1).
+        const auto& connections2 = loaded_scene.connections();
+        assert(connections2.size() == 1U);
+        const Connection& c2 = connections2.front();
+        assert(c2.from_module_id == "46");
+        assert(c2.from_port_name == "out");
+        assert(c2.to_module_id == "-1");
+        assert(c2.to_port_name == "in");
+        assert(!c2.is_hardlink);
+    }
+
     // Global controller modules (Volume, Tempo, Tonalizer) must not
     // participate in the explicit connection graph (no dynamic links
     // or hardlinks in Scene::connections).
@@ -374,6 +414,88 @@ int main()
         filter.set_envelope_release(600.0F);
         assert(filter.envelope().release == 600.0F);
         assert(filter.GetParameterOrDefault("release", 0.0F) == 600.0F);
+    }
+
+    // Default Reactable patch configuration (default.rtp).
+    {
+        // Locate the bundled default.rtp file under com.reactable/Resources/
+        // by probing a small set of likely relative paths (no JUCE here).
+        const char* candidates[] = {
+            "com.reactable/Resources/default.rtp",
+            "./com.reactable/Resources/default.rtp",
+            "../com.reactable/Resources/default.rtp",
+            "../../com.reactable/Resources/default.rtp",
+            "Resources/default.rtp",
+            nullptr
+        };
+
+        std::string foundPath;
+        for (int i = 0; candidates[i] != nullptr; ++i) {
+            std::ifstream in(candidates[i]);
+            if (in.is_open()) {
+                foundPath = candidates[i];
+                break;
+            }
+        }
+        assert(!foundPath.empty());
+
+        Scene loaded_scene;
+        ReactablePatchMetadata metadata;
+        std::string error;
+
+        const bool ok = rectai::LoadReactablePatchFromFile(foundPath,
+            loaded_scene, &metadata, &error);
+        assert(ok);
+        assert(error.empty());
+
+        // The default patch should contain at least the core modules:
+        // Output (-1), Volume (1), Tempo (2), Oscillator (46) and
+        // Sampleplay banks (48, 49).
+        const auto& modules = loaded_scene.modules();
+        assert(modules.find("-1") != modules.end());  // Output/master
+        assert(modules.find("1") != modules.end());   // Volume
+        assert(modules.find("2") != modules.end());   // Tempo
+        assert(modules.find("46") != modules.end());  // Oscillator (sine)
+
+        // Master output should not start muted.
+        assert(!metadata.master_muted);
+
+        // Volume from default.rtp (volume="90") must be normalised
+        // to ~= 0.9 in the internal model.
+        const auto volIt = modules.find("1");
+        assert(volIt != modules.end());
+        const auto* volModule =
+            dynamic_cast<const VolumeModule*>(volIt->second.get());
+        assert(volModule != nullptr);
+        const float volumeParamFromRtp =
+            volModule->GetParameterOrDefault("volume", 0.0F);
+        assert(volumeParamFromRtp > 0.89F &&
+               volumeParamFromRtp < 0.91F);
+
+        // The Oscillator used in the dock (id 46) should have a
+        // default gain > 0 so that, once placed on the table, it can
+        // produce audible sound without extra interaction.
+        const auto oscIt = modules.find("46");
+        assert(oscIt != modules.end());
+        const auto* oscModule =
+            dynamic_cast<const OscillatorModule*>(oscIt->second.get());
+        assert(oscModule != nullptr);
+        const float oscGain =
+            oscModule->GetParameterOrDefault("gain", 0.0F);
+        assert(oscGain > 0.0F);
+
+        // Auto-wired master connection from Oscillator (46) to
+        // Output (-1) should be present in Scene::connections().
+        const auto& connections = loaded_scene.connections();
+        bool foundMasterConn = false;
+        for (const auto& c : connections) {
+            if (c.from_module_id == "46" && c.to_module_id == "-1" &&
+                c.from_port_name == "out" && c.to_port_name == "in") {
+                foundMasterConn = true;
+                break;
+            }
+        }
+        assert(foundMasterConn);
     }
 
     std::cout << "rectai-core-tests: OK" << std::endl;

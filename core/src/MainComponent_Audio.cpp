@@ -648,13 +648,15 @@ void MainComponent::timerCallback()
     // Compute a global gain for Sampleplay (SoundFont) output. Since
     // all Sampleplay modules share a single synthesiser instance in
     // the AudioEngine, we can only mute/stop SoundFont audio
-    // globally. The rule used here is: if the master is muted, or if
-    // there is no Sampleplay module inside the musical area with its
-    // own line to the master unmuted, then the Sampleplay path gain
-    // is set to 0 (hard stop). Otherwise it follows the master
-    // volume.
-    float sampleplayOutputGain = masterMuted_ ? 0.0F : globalVolumeGain;
-    if (!masterMuted_) {
+    // globally. The rule used here is: if there is no Sampleplay
+    // module inside the musical area with its own line to the master
+    // unmuted, then the Sampleplay path gain is set to 0 (hard stop).
+    // Otherwise it follows the master volume. The master visual mute
+    // state (Output tangible) does not gate audio here to avoid
+    // loading patches whose Output starts muted in a completely
+    // silent state.
+    float sampleplayOutputGain = globalVolumeGain;
+    {
         bool hasUnmutedSampleplay = false;
         for (const auto& [objId, obj] : objects) {
             const auto modIt = modules.find(obj.logical_id());
@@ -695,6 +697,11 @@ void MainComponent::timerCallback()
     VoiceParams voices[AudioEngine::kMaxVoices];
     int voiceIndex = 0;
 
+    // Per-tick guard so we only emit one debug line for the first
+    // active generator, keeping logs readable while still capturing
+    // whether any Oscillator chain is actually producing audio.
+    bool loggedGeneratorDebug = false;
+
     for (const auto& [objId, obj] : objects) {
         const auto modIt = modules.find(obj.logical_id());
         if (modIt == modules.end() || modIt->second == nullptr) {
@@ -726,6 +733,16 @@ void MainComponent::timerCallback()
         // generator should shape that generator's sound, even if the
         // generator also feeds other modules such as Volume or Output.
         for (const auto& conn : scene_.connections()) {
+            // Skip auto-wired connections from generators to the
+            // invisible Output/master module (id "-1"). The current
+            // runtime does not model the Output module as an explicit
+            // processing node in the audio graph, so treating it as a
+            // downstream target here would change behaviour compared to
+            // escenas sin auto-wiring (generadores directos al master).
+            if (conn.to_module_id == "-1") {
+                continue;
+            }
+
             if (conn.from_module_id != module->id()) {
                 continue;
             }
@@ -841,14 +858,36 @@ void MainComponent::timerCallback()
         }
 
         // Process voice if level would be > 0 OR if it's being held for visualization.
-        if ((calculatedLevel > 0.0F || isBeingHeld) && voiceIndex < AudioEngine::kMaxVoices) {
+        if ((calculatedLevel > 0.0F || isBeingHeld) &&
+            voiceIndex < AudioEngine::kMaxVoices) {
             voices[voiceIndex].frequency = frequency;
-            // Output level: 0 if muted/held/master-muted, otherwise normal level.
-            const float outputLevel = (chainMuted || isBeingHeld || masterMuted_) 
-                                         ? 0.0F 
+            // Output level: 0 if muted/held, otherwise normal level.
+            const float outputLevel = (chainMuted || isBeingHeld)
+                                         ? 0.0F
                                          : (calculatedLevel * globalVolumeGain);
             voices[voiceIndex].level = outputLevel;
             voices[voiceIndex].waveform = waveformIndex;
+
+#if !defined(NDEBUG)
+            // Lightweight debug log to validate generator audio state
+            // without flooding the log: only log the first active
+            // generator per timer tick.
+            if (!loggedGeneratorDebug) {
+                juce::String msg("[rectai-core][audio-debug] gen=");
+                msg << module->id().c_str() << " freqHz=" << frequency
+                    << " level=" << calculatedLevel
+                    << " out=" << outputLevel
+                    << " muted=" << (chainMuted ? "1" : "0");
+                if (downstreamModule != nullptr && downstreamInside) {
+                    msg << " downstream=" << downstreamModule->id().c_str();
+                } else {
+                    msg << " downstream=none";
+                }
+                juce::Logger::writeToLog(msg);
+                loggedGeneratorDebug = true;
+            }
+#endif  // !defined(NDEBUG)
+
             const int assignedVoice = voiceIndex;
             ++voiceIndex;
 
@@ -909,22 +948,6 @@ void MainComponent::timerCallback()
                     filterMode = 1;
                 }
             }
-
-#if !defined(NDEBUG)
-            // Debug logging for filter chains so we can inspect
-            // behaviour when an Oscillator feeds a Filter and the
-            // user reports that the filter only activates after
-            // touching the freq control.
-            if (downstreamModule != nullptr &&
-                downstreamModule->type() == rectai::ModuleType::kFilter) {
-                juce::Logger::writeToLog(
-                    juce::String("[rectai-core][debug][filter] chain=") +
-                    module->id() + " -> " + downstreamModule->id() +
-                    " cutoffHz=" + juce::String(filterCutoffHz, 2) +
-                    " q=" + juce::String(filterQ, 2) +
-                    " mode=" + juce::String(filterMode));
-            }
-#endif
 
             audioEngine_.setVoiceFilter(assignedVoice, filterMode,
                                         filterCutoffHz, filterQ);

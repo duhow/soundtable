@@ -843,6 +843,52 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
     }
   }
 
+  // Auto-connect audio-capable modules to the Output (master) module when
+  // present. Reactable patches use a tangible with id -1 to represent the
+  // master output; in the Scene model this becomes an OutputModule with
+  // module id "-1" that should act as the common sink for chains. The
+  // Output tangible itself remains invisible in the UI, but other modules are
+  // allowed to connect to it logically via Scene::connections.
+  const auto masterMappingIt = tangible_to_module_id.find(-1);
+  if (masterMappingIt != tangible_to_module_id.end()) {
+    const std::string& master_module_id = masterMappingIt->second;
+    const AudioModule* const master_module = scene.FindModule(master_module_id);
+
+    if (master_module != nullptr) {
+      for (const auto& [module_id, module_ptr] : scene.modules()) {
+        if (module_ptr == nullptr) {
+          continue;
+        }
+
+        // Skip the master module itself and any global controllers such as
+        // Volume, Tempo or Tonalizer, which must not participate in the
+        // explicit connection graph.
+        if (module_id == master_module_id ||
+            module_ptr->is_global_controller()) {
+          continue;
+        }
+
+        // Only create a link when the source can route signal to the
+        // Output module according to the AudioModule graph rules (audio
+        // compatibility, allowed target types, etc.). This also naturally
+        // excludes MIDI-only modules such as the Sequencer.
+        if (!module_ptr->CanConnectTo(*master_module)) {
+          continue;
+        }
+
+        // Prefer the standard "out" -> "in" audio path; Scene::AddConnection
+        // will reject duplicates (including existing hardlinks) and enforce
+        // any additional validity checks.
+        Connection connection{.from_module_id = module_id,
+                              .from_port_name = "out",
+                              .to_module_id = master_module_id,
+                              .to_port_name = "in",
+                              .is_hardlink = false};
+        (void)scene.AddConnection(connection);
+      }
+    }
+  }
+
   return true;
 }
 

@@ -474,6 +474,13 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         // line to the master and therefore should not be clickable either.
         std::unordered_set<std::int64_t> objectsWithOutgoingActiveConnection;
         for (const auto& conn : scene_.connections()) {
+            // Ignore connections targeting the invisible Output/master
+            // module (id "-1") so that auto-wired master links do not
+            // affect centre-line hit-testing.
+            if (conn.to_module_id == "-1") {
+                continue;
+            }
+
             const auto fromIdIt = moduleToObjectId.find(conn.from_module_id);
             const auto toIdIt = moduleToObjectId.find(conn.to_module_id);
             if (fromIdIt == moduleToObjectId.end() ||
@@ -764,6 +771,13 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                 
                 bool hasActiveOutgoingConnection = false;
                 for (const auto& conn : scene_.connections()) {
+                    // Skip auto-wired connections from generators to the
+                    // invisible Output/master module so that only real
+                    // module-to-module chains influence centre-line cuts.
+                    if (conn.to_module_id == "-1") {
+                        continue;
+                    }
+
                     if (conn.from_module_id == object.logical_id()) {
                         const auto toIdIt = std::find_if(
                             objects.begin(), objects.end(),

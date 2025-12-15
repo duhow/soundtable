@@ -1,5 +1,21 @@
 # Progreso de implementación
 
+## 2025-12-15
+
+### Activación del módulo Output (-1) como Master conectable
+- Se ha extendido el loader de patches Reactable en `core/src/core/ReactableRtpLoader.cpp` para que, tras crear módulos y objetos a partir de los `<tangible>`, busque el tangible `Output` con id `-1` (master de la mesa) y lo trate como un módulo de salida real en el modelo de dominio (`OutputModule` con id "-1").
+- Después de derivar las conexiones a partir de los `<hardlink>` de los `DelayModule`, el loader recorre todos los módulos de la escena y, para cada módulo de audio que pueda conectar hacia `Output` según `AudioModule::CanConnectTo` (es decir, que produzca audio y no sea un controlador global como `Volume`, `Tempo` o `Tonalizer`), intenta crear una `Connection` estándar `from=module_id/out` → `to="-1"/in` marcada como no-hardlink. `Scene::AddConnection` filtra duplicados, por lo que si ya existía un hardlink explícito hacia `-1` no se añade una segunda conexión redundante.
+- De este modo, en cualquier patch `.rtp` que incluya el tangible `Output` con id `-1`, todos los módulos que emiten audio quedan explícitamente conectados al master en `Scene::connections`, preparando el grafo de ruteo para futuras fases del motor de audio sin exigir que el usuario manipule un tangible de Output visible.
+
+### Preservación del comportamiento visual de la línea centro→módulo
+- Para evitar que estas nuevas conexiones automáticas hacia `Output` alteren la lógica de las líneas radiales centro→módulo, se han ajustado los recorridos de conexiones en `MainComponent_Paint.cpp` y `MainComponent_Input.cpp` que calculan `objectsWithOutgoingActiveConnection` y detectan si un generador está "alimentando" otro módulo. Ahora se ignoran explícitamente las conexiones cuyo `to_module_id` es "-1" al construir ese conjunto.
+- Gracias a este filtro, las líneas radiales desde los generadores al centro de la mesa siguen ocultándose únicamente cuando el generador está enviando señal a otro módulo visible (por ejemplo, `Oscillator → Filter`), pero no cuando solo existe la conexión implícita `Oscillator → Output`. Las auto-conexiones al master quedan, por tanto, invisibles a efectos de esta heurística y la UI conserva exactamente el mismo comportamiento visual que antes en lo referente a qué módulos muestran línea directa hacia el centro.
+- La lógica de input que replica estas reglas para hit-testing y gestos de corte sobre las líneas centro→módulo también se ha actualizado para ignorar las conexiones con destino "-1", de forma que las auto-conexiones al master no se puedan seleccionar ni mutear por accidente a través de los gestos de corte pensados para líneas entre módulos visibles.
+
+### Test de auto-conexión a Output en el modelo de escena
+- En `tests/scene_tests.cpp` se ha añadido un caso de prueba que carga un patch mínimo con dos tangibles: un `Output` de id `-1` y un `Oscillator` de id `46`. Tras invocar `LoadReactablePatchFromString`, el test comprueba que la escena resultante contiene exactamente dos módulos, dos objetos y **una** conexión no-hardlink de `46/out` hacia `-1/in`.
+- Este test complementa el ya existente que valida la creación de conexiones de tipo hardlink desde un `Delay` hacia `Output` a partir de etiquetas `<hardlink to="-1" />`, asegurando que ambos mecanismos coexisten correctamente (el loader no duplica conexiones cuando ya hay un hardlink y la auto-conexión solo añade rutas cuando no existían previamente).
+
 ## 2025-12-13
 
 ### Activación inmediata del filtro al crear conexiones
@@ -141,6 +157,12 @@
   - Recorre todos los objetos `Sampleplay` dentro del área musical que no estén muteados.
   - Para cada módulo toma el instrumento activo (`SampleInstrument` con `bank` y `program` desde el SF2), deriva una nota MIDI desde el parámetro `midifreq` (redondeando a entero) y calcula una `velocity` normalizada en función de `amp`, `base_level`, `level_range` y el volumen global, con un ligero refuerzo en los beats fuertes (`strongBeat`).
   - Llama a `audioEngine_.triggerSampleplayNote(bank, program, midiKey, velocity01)` para disparar la nota correspondiente en FluidSynth, y marca el id del módulo en `modulesWithActiveAudio_` para que la capa de pintura pueda seguir resaltando sus conexiones como “activas”.
+
+### Ajuste de mute master y rendimiento de audio
+- Se ha desacoplado el estado visual de mute del master (`masterMuted_`, derivado del tangible `Output` con atributo `muted`) de la ruta real de audio en `MainComponent_Audio.cpp`. Antes, si el patch `.rtp` marcaba el Output como muteado, tanto los osciladores como el audio de Sampleplay quedaban silenciados completamente, lo que hacía que escenas que venían con el master en `muted=1` no reprodujeran nada aunque el resto de módulos estuvieran activos.
+- La ganancia global de Sampleplay (`sampleplayOutputGain`) ahora solo depende del volumen global y de la presencia de al menos un `SampleplayModule` no muteado dentro del área musical; el flag `masterMuted_` ya no fuerza `sampleplayOutputGain = 0`. El mute del master sigue afectando únicamente a la representación visual del nodo central (alpha de color y pulsos), manteniendo compatibilidad con patches antiguos sin introducir silencios inesperados.
+- De forma análoga, el cálculo del nivel por voz para generadores (`OscillatorModule` y similares) ya no incluye `masterMuted_` en la condición que fuerza `outputLevel = 0.0F`; solo se considera el estado de mute de la cadena (módulo fuente, módulo destino y conexión) y el “hold” temporal introducido por los gestos de click-and-hold sobre líneas. Esto garantiza que el audio de los generadores no desaparezca simplemente porque el Output tangible venga marcado como muteado en el patch.
+- Se han eliminado los logs de depuración de filtros en `MainComponent_Audio.cpp` que se emitían en builds de depuración (`!NDEBUG`) para cada cadena `Oscillator → Filter` en cada tick del `timerCallback`. Estos logs resultaban útiles para diagnosticar el cutoff/Q del filtro, pero generaban un volumen de salida elevado que degradaba notablemente el rendimiento en builds de desarrollo; al retirarlos, el bucle de audio vuelve a ejecutarse sin coste extra de logging.
 - La lógica provisional anterior de Sampleplay en `MainComponent_Audio.cpp` que generaba un tono senoidal simple sincronizado al tempo (gate de `beatPhase_ < 0.25` y uso de voces del `AudioEngine`) se ha eliminado: ahora el audio de Sampleplay proviene exclusivamente del motor de SoundFont (FluidSynth) y ya no ocupa voces procedurales del oscilador. La UI de Sampleplay (título de instrumento, click derecho para ciclar instrumentos) se mantiene sin cambios.
 
 ### Módulo Sampleplay: instrumentos, SoundFont y tono básico al tempo
@@ -205,6 +227,18 @@
 - El binario `rectai-tracker` se ha estructurado para soportar dos modos de ejecución diferenciados:
   - Modo `--mode=synthetic` (por defecto), que conserva el comportamiento anterior: envía un único objeto sintético `/rectai/object` con `trackingId=1` y `logicalId="osc1"` moviéndose horizontalmente.
   - Modo `--mode=live`, que inicializa un nuevo `rectai::tracker::TrackerEngine` y pasa cada frame capturado para que devuelva una lista de `TrackedObject` con coordenadas normalizadas y ángulo en radianes.
+
+### Validación de `default.rtp` y logs de depuración
+
+- Se añade un test específico en `tests/scene_tests.cpp` que carga el `default.rtp` real usando `rectai::ui::loadFile("Resources/default.rtp")` + `LoadReactablePatchFromFile` y comprueba:
+  - Presencia de los módulos clave: Output (`"-1"`), Volume (`"1"`), Tempo (`"2"`), Oscillator (`"46"`).
+  - Que el master no arranca muteado (`metadata.master_muted == false`).
+  - Que el Volume de `default.rtp` (volume="90") se normaliza a ~0.9 en el modelo.
+  - Que el Oscillator `46` tiene un `gain` por defecto > 0 para poder sonar al colocarlo en la mesa.
+  - Que existe una conexión auto-creada de `"46"` → `"-1"` (`out`→`in`) en `Scene::connections()`.
+- Se añaden logs ligeros de depuración para investigar la ausencia de sonido y la desaparición de la línea entre Oscillator y Output:
+- En `MainComponent_Audio::timerCallback()` se registra, una vez por tick, el primer generador activo con: id, frecuencia en Hz, nivel calculado, nivel de salida tras volumen global, estado de mute de la cadena y módulo downstream (si lo hay).
+- En `MainComponent_Paint.cpp`, dentro del bucle que dibuja las líneas radiales centro→objeto, se añade un log por módulo de audio dentro del área musical indicando: `logical_id`, si es generador y si `objectsWithOutgoingActiveConnection` lo marca como alimentando otro módulo. Esto sirve para entender por qué una radial (Oscillator→master) puede ocultarse después de uno o pocos frames.
 - Se ha introducido un pequeño modelo de tracking en `tracker/src/TrackerTypes.h` (`TrackedObject` + alias `TrackedObjectList`) y un esqueleto de `TrackerEngine` en `tracker/src/TrackerEngine.{h,cpp}` con API:
   - `bool initialise(int cameraIndex, int requestedWidth, int requestedHeight, std::string& errorMessage)` para preparar parámetros internos.
   - `TrackedObjectList processFrame(const cv::Mat& frame) const` para extraer objetos de cada frame (por ahora implementación placeholder sin detección real).

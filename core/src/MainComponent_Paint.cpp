@@ -389,6 +389,13 @@ void MainComponent::paint(juce::Graphics& g)
 
     std::unordered_set<std::int64_t> objectsWithOutgoingActiveConnection;
     for (const auto& conn : scene_.connections()) {
+        // Ignore connections that target the invisible Output/master module
+        // (id "-1"). Auto-wired master connections should not be treated as
+        // "outgoing" for the purpose of hiding generator → master lines.
+        if (conn.to_module_id == "-1") {
+            continue;
+        }
+
         const auto fromIdIt = moduleToObjectId.find(conn.from_module_id);
         const auto toIdIt = moduleToObjectId.find(conn.to_module_id);
         if (fromIdIt == moduleToObjectId.end() ||
@@ -502,6 +509,25 @@ void MainComponent::paint(juce::Graphics& g)
                 moduleForConnection->is<rectai::SampleplayModule>();
 
             const float visualLevel = getModuleVisualLevel(moduleForConnection);
+
+#if !defined(NDEBUG)
+            // Debug: track why radial lines may or may not be drawn
+            // for generators, especially when investigating cases
+            // where the Oscillator → master line appears only
+            // briefly. Log only for audio modules inside the music
+            // area to keep noise low.
+            if (moduleForConnection != nullptr &&
+                isInsideMusicArea(object) && isAudioModule) {
+                juce::String msg("[rectai-core][paint-debug] radial id=");
+                msg << object.logical_id().c_str()
+                    << " isGen=" << (isGenerator ? "1" : "0")
+                    << " hasConn="
+                    << (hasActiveOutgoingConnection ? "1" : "0")
+                    << " globalCtl="
+                    << (isGlobalController ? "1" : "0");
+                juce::Logger::writeToLog(msg);
+            }
+#endif  // !defined(NDEBUG)
 
             // Only modules that actually carry audio (produce or
             // consume audio) draw a radial line to the master. Pure
