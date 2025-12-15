@@ -568,6 +568,11 @@ void MainComponent::timerCallback()
         // check whether a valid audio connection should exist according
         // to module policies and the geometric cone. If so, ensure that
         // a non-hardlink connection (standard out->in) is present.
+        //
+        // Generator modules are handled separately so that their
+        // dynamic connections can follow the "closest Filter" rule
+        // while still respecting the global limit of a single
+        // non-hardlink outgoing connection per module.
         for (std::size_t i = 0; i < inside.size(); ++i) {
             const auto* objA = inside[i].second;
 
@@ -586,10 +591,21 @@ void MainComponent::timerCallback()
                 }
                 auto* moduleB = modItB->second.get();
 
+                // Dynamic connections whose source or destination is a
+                // GeneratorModule are handled in a dedicated pass below
+                // so that generators can always target the closest
+                // compatible Filter while keeping a single dynamic
+                // outgoing connection. Skip those pairs here.
+                if (moduleA->type() == rectai::ModuleType::kGenerator ||
+                    moduleB->type() == rectai::ModuleType::kGenerator) {
+                    continue;
+                }
+
                 // Decide connection direction based on existing
                 // connection policies.
                 rectai::Connection connection;
-                if(!generateConnectionFromModules(*moduleA, *moduleB, false, connection)) {
+                if (!generateConnectionFromModules(*moduleA, *moduleB,
+                                                   false, connection)) {
                     continue;
                 }
                 const rectai::ObjectInstance* fromObj = nullptr;
@@ -607,8 +623,8 @@ void MainComponent::timerCallback()
                 }
 
                 // Respect the geometric cone for dynamic (non-hardlink)
-                // connections. Hardlinks remain always active regardless
-                // of this predicate.
+                // connections. Hardlinks remain active regardless of
+                // this predicate.
                 if (!isConnectionGeometricallyActive(*fromObj, *toObj)) {
                     continue;
                 }
@@ -629,6 +645,151 @@ void MainComponent::timerCallback()
 
                 (void)scene_.AddConnection(connection);
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Generator dynamic connections: prefer closest Filter.
+    // ------------------------------------------------------------------
+    {
+        const auto& connections = scene_.connections();
+
+        // Index existing non-hardlink connections by source module so
+        // we can adjust a generator's single dynamic route to its
+        // closest compatible downstream module.
+        std::unordered_map<std::string, std::vector<rectai::Connection>>
+            dynamicByFrom;
+        for (const auto& conn : connections) {
+            if (conn.is_hardlink) {
+                continue;
+            }
+
+            // Skip implicit/master connections.
+            if (conn.to_module_id == "-1") {
+                continue;
+            }
+
+            dynamicByFrom[conn.from_module_id].push_back(conn);
+        }
+
+        // For each generator inside the musical area, pick the
+        // closest compatible downstream module, preferring Filters
+        // when available, and rewrite its single dynamic connection
+        // to point to that module. Hardlinks are left untouched.
+        for (const auto& [objId, obj] : objects) {
+            const auto modIt = modules.find(obj.logical_id());
+            if (modIt == modules.end() || modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* srcModule = modIt->second.get();
+            if (srcModule->type() != rectai::ModuleType::kGenerator) {
+                continue;
+            }
+
+            if (!isInsideMusicArea(obj)) {
+                continue;
+            }
+
+            const rectai::AudioModule* bestModule = nullptr;
+            std::string bestModuleId;
+            float bestDistSq = std::numeric_limits<float>::max();
+            bool bestIsFilter = false;
+
+            // Scan all other objects inside the musical area as
+            // potential downstream modules.
+            for (const auto& [otherObjId, otherObj] : objects) {
+                if (otherObjId == objId) {
+                    continue;
+                }
+
+                if (!isInsideMusicArea(otherObj)) {
+                    continue;
+                }
+
+                const auto destModIt = modules.find(otherObj.logical_id());
+                if (destModIt == modules.end() ||
+                    destModIt->second == nullptr) {
+                    continue;
+                }
+
+                auto* destModule = destModIt->second.get();
+
+                // Ignore Output/master and global controllers as
+                // downstream targets for the generator dynamic link.
+                if (destModule->id() == "-1" ||
+                    destModule->is_global_controller()) {
+                    continue;
+                }
+
+                if (!srcModule->CanConnectTo(*destModule)) {
+                    continue;
+                }
+
+                if (!isConnectionGeometricallyActive(obj, otherObj)) {
+                    continue;
+                }
+
+                const bool destIsFilter =
+                    (destModule->type() == rectai::ModuleType::kFilter);
+                const float dx = otherObj.x() - obj.x();
+                const float dy = otherObj.y() - obj.y();
+                const float distSq = dx * dx + dy * dy;
+
+                if (bestModule == nullptr ||
+                    (destIsFilter && !bestIsFilter) ||
+                    (destIsFilter == bestIsFilter &&
+                     distSq < bestDistSq)) {
+                    bestModule = destModule;
+                    bestModuleId = destModule->id();
+                    bestDistSq = distSq;
+                    bestIsFilter = destIsFilter;
+                }
+            }
+
+            auto dynIt = dynamicByFrom.find(srcModule->id());
+            const rectai::Connection* existingConn = nullptr;
+            if (dynIt != dynamicByFrom.end() && !dynIt->second.empty()) {
+                existingConn = &dynIt->second.front();
+            }
+
+            // If there is no suitable downstream module in range,
+            // drop any existing dynamic non-master connections from
+            // this generator so that it can later reattach when a
+            // compatible target becomes available.
+            if (bestModule == nullptr) {
+                if (dynIt != dynamicByFrom.end()) {
+                    for (const auto& c : dynIt->second) {
+                        (void)scene_.RemoveConnection(c);
+                    }
+                }
+                continue;
+            }
+
+            // If the existing dynamic connection already points to
+            // the best downstream module using the standard audio
+            // ports, keep it.
+            if (existingConn != nullptr &&
+                !existingConn->is_hardlink &&
+                existingConn->to_module_id == bestModuleId &&
+                existingConn->from_port_name == "out" &&
+                existingConn->to_port_name == "in") {
+                continue;
+            }
+
+            // Remove any previous dynamic connections (non-hardlink
+            // and non-master) from this generator so that
+            // Scene::AddConnection can enforce the single
+            // non-hardlink-outgoing invariant.
+            if (dynIt != dynamicByFrom.end()) {
+                for (const auto& c : dynIt->second) {
+                    (void)scene_.RemoveConnection(c);
+                }
+            }
+
+            rectai::Connection newConn{srcModule->id(), "out",
+                                       bestModuleId, "in", false};
+            (void)scene_.AddConnection(newConn);
         }
     }
 
@@ -803,25 +964,30 @@ void MainComponent::timerCallback()
             srcMuted = hasMasterRoute && masterRouteMuted;
         }
 
-        // Try to find a downstream audio module that this generator feeds
-        // according to spatial rules and connection state.
-        const rectai::AudioModule* downstreamModule = nullptr;
-        std::int64_t downstreamObjId = 0;
-        bool downstreamInside = false;
-        bool connectionMuted = false;
-        std::string downstreamConnectionKey;
+        // Build all downstream routes from this generator according to
+        // the current connection graph, respecting the musical area,
+        // geometric cone for dynamic connections and connection-level
+        // mute state. Each route will be mapped to a separate voice so
+        // that hardlinks and multiple downstream modules can all carry
+        // audio.
+        struct GeneratorRoute {
+            const rectai::AudioModule* module{nullptr};
+            std::int64_t objId{0};
+            bool inside{false};
+            bool connectionMuted{false};
+            std::string connectionKey;
+        };
 
-        // Prefer Filter modules when several downstream connections exist.
-        // This matches the expectation that placing a Filter next to a
-        // generator should shape that generator's sound, even if the
-        // generator also feeds other modules such as Volume or Output.
+        std::vector<GeneratorRoute> routes;
+        routes.reserve(4U);
+
         for (const auto& conn : scene_.connections()) {
             // Skip auto-wired connections from generators to the
             // invisible Output/master module (id "-1"). The current
             // runtime does not model the Output module as an explicit
             // processing node in the audio graph, so treating it as a
             // downstream target here would change behaviour compared to
-            // escenas sin auto-wiring (generadores directos al master).
+            // scenes without auto-wiring (generators direct to master).
             if (conn.to_module_id == "-1") {
                 continue;
             }
@@ -861,84 +1027,23 @@ void MainComponent::timerCallback()
 
             auto* candidate = modDestIt->second.get();
 
-            // If we do not have a downstream module yet, or this one
-            // is a Filter and the previous one was not, select it.
-            const bool isFilterCandidate =
-                (candidate->type() == rectai::ModuleType::kFilter);
-            const bool hasFilterAlready =
-                (downstreamModule != nullptr &&
-                 downstreamModule->type() == rectai::ModuleType::kFilter);
-
-            if (downstreamModule == nullptr ||
-                (isFilterCandidate && !hasFilterAlready)) {
-                downstreamModule = candidate;
-                downstreamObjId = objIt->first;
-                downstreamInside = true;
-
-                const std::string key = makeConnectionKey(conn);
-                downstreamConnectionKey = key;
-                connectionMuted =
-                    mutedConnections_.find(key) !=
-                    mutedConnections_.end();
-
-                // If we just selected a Filter, we can stop searching:
-                // this is the highest-priority downstream for per-voice
-                // filtering.
-                if (isFilterCandidate) {
-                    break;
-                }
-            }
+            GeneratorRoute route;
+            route.module = candidate;
+            route.objId = objIt->first;
+            route.inside = true;
+            route.connectionKey = makeConnectionKey(conn);
+            route.connectionMuted =
+                mutedConnections_.find(route.connectionKey) !=
+                mutedConnections_.end();
+            routes.push_back(std::move(route));
         }
 
-        bool chainMuted = srcMuted;
-        bool downstreamMutedToMaster = false;
-        float gainParam = module->GetParameterOrDefault(
-            "gain", module->default_parameter_value("gain"));
-
-        if (downstreamModule != nullptr && downstreamInside) {
-            // A downstream module can also be effectively muted if all of
-            // its routes to the master Output (-1) are muted. When the
-            // generator feeds such a module (for example two Oscillators
-            // both feeding a Filter whose radial line is muted), the
-            // entire chain must be considered silent even if the
-            // generator's own radial is unmuted.
-            {
-                bool hasMasterRoute = false;
-                bool masterRouteMuted = true;
-
-                for (const auto& conn : scene_.connections()) {
-                    if (conn.from_module_id != downstreamModule->id() ||
-                        conn.to_module_id != "-1") {
-                        continue;
-                    }
-
-                    hasMasterRoute = true;
-                    const std::string key = makeConnectionKey(conn);
-                    const bool connIsMuted =
-                        mutedConnections_.find(key) !=
-                        mutedConnections_.end();
-                    if (!connIsMuted) {
-                        masterRouteMuted = false;
-                        break;
-                    }
-                }
-
-                downstreamMutedToMaster =
-                    hasMasterRoute && masterRouteMuted;
-            }
-
-            chainMuted = srcMuted || connectionMuted ||
-                         downstreamMutedToMaster;
-
-            // For most audio modules, let the downstream module's gain
-            // control the chain level. Filters are treated specially:
-            // their right-hand control represents resonance (Q), not
-            // output volume, so it should not affect the overall level
-            // used here.
-            if (downstreamModule->type() != rectai::ModuleType::kFilter) {
-                gainParam = downstreamModule->GetParameterOrDefault(
-                    "gain", gainParam);
-            }
+        // If a generator has no explicit downstream routes (for
+        // example only the implicit auto-wired connection to the
+        // master), we still treat it as a single direct chain so that
+        // its own level and mute state drive one voice.
+        if (routes.empty()) {
+            routes.emplace_back();
         }
 
         const float freqParam = module->GetParameterOrDefault(
@@ -948,21 +1053,7 @@ void MainComponent::timerCallback()
             module->frequency_range_hz() * static_cast<double>(freqParam);
 
         const float baseLevel = module->base_level();
-        const float extra = module->level_range() * gainParam;
-        // Ensure that a gain parameter of 0.0 corresponds to true
-        // silence, rather than the minimum base level.
-        const float calculatedLevel =
-            (gainParam <= 0.0F) ? 0.0F : (baseLevel + extra);
-        
-        // Check if this chain is being held for temporary mute visualization.
-        // During hold, we still want to process audio (for waveform capture)
-        // but with zero output level.
-        const bool isBeingHeld = activeConnectionHold_.has_value() &&
-                                 ((activeConnectionHold_->is_object_line && 
-                                   activeConnectionHold_->object_id == objId) ||
-                                  (!activeConnectionHold_->is_object_line && 
-                                   downstreamModule != nullptr && downstreamInside &&
-                                   downstreamConnectionKey == activeConnectionHold_->connection_key));
+        const float levelRange = module->level_range();
 
         int waveformIndex = 0;  // 0 = sine by default.
         if (const auto* oscModule =
@@ -980,120 +1071,214 @@ void MainComponent::timerCallback()
             }
         }
 
-        // Process voice if level would be > 0 OR if it's being held
-        // for visualization.
-        if ((calculatedLevel > 0.0F || isBeingHeld) &&
-            voiceIndex < AudioEngine::kMaxVoices) {
-            voices[voiceIndex].frequency = frequency;
-            // Output level: 0 if muted/held, otherwise normal level.
-            const float outputLevel = (chainMuted || isBeingHeld)
-                                         ? 0.0F
-                                         : (calculatedLevel * globalVolumeGain);
-            voices[voiceIndex].level = outputLevel;
-            voices[voiceIndex].waveform = waveformIndex;
+        for (const auto& route : routes) {
+            const auto* downstreamModule = route.module;
+            const bool downstreamInside = route.inside;
+
+            bool downstreamMutedToMaster = false;
+            float gainParam = module->GetParameterOrDefault(
+                "gain", module->default_parameter_value("gain"));
+
+            if (downstreamModule != nullptr && downstreamInside) {
+                // A downstream module can also be effectively muted if
+                // all of its routes to the master Output (-1) are
+                // muted. When the generator feeds such a module (for
+                // example two Oscillators both feeding a Filter whose
+                // radial line is muted), the entire chain must be
+                // considered silent even if the generator's own radial
+                // is unmuted.
+                {
+                    bool hasMasterRoute = false;
+                    bool masterRouteMuted = true;
+
+                    for (const auto& conn : scene_.connections()) {
+                        if (conn.from_module_id !=
+                                downstreamModule->id() ||
+                            conn.to_module_id != "-1") {
+                            continue;
+                        }
+
+                        hasMasterRoute = true;
+                        const std::string key = makeConnectionKey(conn);
+                        const bool connIsMuted =
+                            mutedConnections_.find(key) !=
+                            mutedConnections_.end();
+                        if (!connIsMuted) {
+                            masterRouteMuted = false;
+                            break;
+                        }
+                    }
+
+                    downstreamMutedToMaster =
+                        hasMasterRoute && masterRouteMuted;
+                }
+
+                // For most audio modules, let the downstream module's
+                // gain control the chain level. Filters are treated
+                // specially: their right-hand control represents
+                // resonance (Q), not output volume, so it should not
+                // affect the overall level used here.
+                if (downstreamModule->type() !=
+                    rectai::ModuleType::kFilter) {
+                    gainParam = downstreamModule->GetParameterOrDefault(
+                        "gain", gainParam);
+                }
+            }
+
+            bool chainMuted = srcMuted || route.connectionMuted ||
+                               downstreamMutedToMaster;
+
+            const float extra = levelRange * gainParam;
+            // Ensure that a gain parameter of 0.0 corresponds to true
+            // silence, rather than the minimum base level.
+            const float calculatedLevel =
+                (gainParam <= 0.0F) ? 0.0F : (baseLevel + extra);
+
+            // Check if this chain is being held for temporary mute
+            // visualization. During hold, we still want to process
+            // audio (for waveform capture) but with zero output level.
+            const bool isBeingHeld = activeConnectionHold_.has_value() &&
+                                     ((activeConnectionHold_->is_object_line &&
+                                       activeConnectionHold_->object_id ==
+                                           objId) ||
+                                      (!activeConnectionHold_->is_object_line &&
+                                       !route.connectionKey.empty() &&
+                                       route.connectionKey ==
+                                           activeConnectionHold_
+                                               ->connection_key));
+
+            // Process voice if level would be > 0 OR if it's being held
+            // for visualization.
+            if ((calculatedLevel > 0.0F || isBeingHeld) &&
+                voiceIndex < AudioEngine::kMaxVoices) {
+                voices[voiceIndex].frequency = frequency;
+                // Output level: 0 if muted/held, otherwise normal
+                // level.
+                const float outputLevel =
+                    (chainMuted || isBeingHeld)
+                        ? 0.0F
+                        : (calculatedLevel * globalVolumeGain);
+                voices[voiceIndex].level = outputLevel;
+                voices[voiceIndex].waveform = waveformIndex;
 
 #if !defined(NDEBUG)
-            // Lightweight debug log to validate generator audio state
-            // without flooding the log: only log the first active
-            // generator per timer tick.
-            if (!loggedGeneratorDebug) {
-                juce::String msg("[rectai-core][audio-debug] gen=");
-                msg << module->id().c_str() << " freqHz=" << frequency
-                    << " level=" << calculatedLevel
-                    << " out=" << outputLevel
-                    << " muted=" << (chainMuted ? "1" : "0");
-                if (downstreamModule != nullptr && downstreamInside) {
-                    msg << " downstream=" << downstreamModule->id().c_str();
-                } else {
-                    msg << " downstream=none";
+                // Lightweight debug log to validate generator audio
+                // state without flooding the log: only log the first
+                // active generator per timer tick.
+                if (!loggedGeneratorDebug) {
+                    juce::String msg("[rectai-core][audio-debug] gen=");
+                    msg << module->id().c_str() << " freqHz="
+                        << frequency << " level=" << calculatedLevel
+                        << " out=" << outputLevel
+                        << " muted=" << (chainMuted ? "1" : "0");
+                    if (downstreamModule != nullptr && downstreamInside) {
+                        msg << " downstream="
+                            << downstreamModule->id().c_str();
+                    } else {
+                        msg << " downstream=none";
+                    }
+                    juce::Logger::writeToLog(msg);
+                    loggedGeneratorDebug = true;
                 }
-                juce::Logger::writeToLog(msg);
-                loggedGeneratorDebug = true;
-            }
 #endif  // !defined(NDEBUG)
 
-            const int assignedVoice = voiceIndex;
-            ++voiceIndex;
+                const int assignedVoice = voiceIndex;
+                ++voiceIndex;
 
-            // Configure optional per-voice filter when the generator
-            // feeds a FilterModule. The filter cutoff is controlled
-            // by the filter module's own `freq` parameter (left bar),
-            // and resonance by its `q` parameter (right bar). For
-            // now we always use the low-pass mode, but other modes
-            // are implemented in the audio engine for future use.
-            int filterMode = 0;
-            double filterCutoffHz = 0.0;
-            float filterQ = 0.7071F;
+                // Configure optional per-voice filter when the
+                // generator feeds a FilterModule. The filter cutoff is
+                // controlled by the filter module's own `freq`
+                // parameter (left bar), and resonance by its `q`
+                // parameter (right bar). For now we always use the
+                // low-pass mode, but other modes are implemented in
+                // the audio engine for future use.
+                int filterMode = 0;
+                double filterCutoffHz = 0.0;
+                float filterQ = 0.7071F;
 
-            if (downstreamModule != nullptr && downstreamInside &&
-                downstreamModule->type() == rectai::ModuleType::kFilter) {
-                const auto* filterModule =
-                    dynamic_cast<const rectai::FilterModule*>(
-                        downstreamModule);
-
-                float filterFreqParam =
-                    downstreamModule->GetParameterOrDefault(
-                        "freq", downstreamModule->default_parameter_value(
-                                    "freq"));
-                // Frequency controls are modelled como parámetros
-                // normalizados en [0,1]. Algunos patches .rtp pueden
-                // traer valores heredados fuera de ese rango; si se
-                // usan directamente, el mapeo base+range produciría
-                // cutoffs absurdamente altos (≈186 kHz) que hacen que
-                // el filtro sea prácticamente transparente. Aseguramos
-                // aquí que el valor usado para el cálculo esté siempre
-                // en el rango esperado.
-                filterFreqParam =
-                    juce::jlimit(0.0F, 1.0F, filterFreqParam);
-                const double fb = downstreamModule->base_frequency_hz();
-                const double fr = downstreamModule->frequency_range_hz();
-                filterCutoffHz = fb + fr *
-                                        static_cast<double>(filterFreqParam);
-
-                const float qParam = downstreamModule->GetParameterOrDefault(
-                    "q", downstreamModule->default_parameter_value("q"));
-                const float minQ = 0.5F;
-                const float maxQ = 10.0F;
-                filterQ = minQ + (maxQ - minQ) * qParam;
-
-                // Map FilterModule::Mode to AudioEngine filter mode.
-                if (filterModule != nullptr) {
-                    using Mode = rectai::FilterModule::Mode;
-                    const auto mode = filterModule->mode();
-                    if (mode == Mode::kLowPass) {
-                        filterMode = 1;
-                    } else if (mode == Mode::kBandPass) {
-                        filterMode = 2;
-                    } else if (mode == Mode::kHighPass) {
-                        filterMode = 3;
-                    }
-                } else {
-                    // Default to low-pass if we do not know the mode.
-                    filterMode = 1;
-                }
-            }
-
-            audioEngine_.setVoiceFilter(assignedVoice, filterMode,
-                                        filterCutoffHz, filterQ);
-            audioEngine_.setVoiceWaveform(assignedVoice, waveformIndex);
-
-            // Mark generator and, when present, its downstream module as
-            // visually active so the paint layer can render waveforms on
-            // those paths. For visuals consider only mutes at source or
-            // on the direct connection; a mute on the downstream module's
-            // radial (e.g. Filter→Master) should still allow Osc→Filter
-            // to display a waveform even though the chain is silent at
-            // the master.
-            const bool visualChainMuted = srcMuted || connectionMuted;
-            if (!visualChainMuted) {
-                modulesWithActiveAudio_.insert(module->id());
-                moduleVoiceIndex_[module->id()] = assignedVoice;
                 if (downstreamModule != nullptr && downstreamInside &&
-                    !connectionMuted) {
-                    modulesWithActiveAudio_.insert(
-                        downstreamModule->id());
-                    moduleVoiceIndex_[downstreamModule->id()] =
-                        assignedVoice;
+                    downstreamModule->type() ==
+                        rectai::ModuleType::kFilter) {
+                    const auto* filterModule =
+                        dynamic_cast<const rectai::FilterModule*>(
+                            downstreamModule);
+
+                    float filterFreqParam =
+                        downstreamModule->GetParameterOrDefault(
+                            "freq",
+                            downstreamModule->default_parameter_value(
+                                "freq"));
+                    // Frequency controls are modelled as normalised
+                    // parameters in [0,1]. Some .rtp patches may
+                    // contain legacy values outside that range; if
+                    // used directly, the base+range mapping would
+                    // yield extremely high cutoffs (≈186 kHz) that
+                    // make the filter effectively transparent. Clamp
+                    // the value here so the cutoff stays in the
+                    // expected range.
+                    filterFreqParam =
+                        juce::jlimit(0.0F, 1.0F, filterFreqParam);
+                    const double fb =
+                        downstreamModule->base_frequency_hz();
+                    const double fr =
+                        downstreamModule->frequency_range_hz();
+                    filterCutoffHz = fb +
+                                     fr *
+                                         static_cast<double>(
+                                             filterFreqParam);
+
+                    const float qParam =
+                        downstreamModule->GetParameterOrDefault(
+                            "q", downstreamModule->default_parameter_value(
+                                      "q"));
+                    const float minQ = 0.5F;
+                    const float maxQ = 10.0F;
+                    filterQ = minQ + (maxQ - minQ) * qParam;
+
+                    // Map FilterModule::Mode to AudioEngine filter
+                    // mode.
+                    if (filterModule != nullptr) {
+                        using Mode = rectai::FilterModule::Mode;
+                        const auto mode = filterModule->mode();
+                        if (mode == Mode::kLowPass) {
+                            filterMode = 1;
+                        } else if (mode == Mode::kBandPass) {
+                            filterMode = 2;
+                        } else if (mode == Mode::kHighPass) {
+                            filterMode = 3;
+                        }
+                    } else {
+                        // Default to low-pass if we do not know the
+                        // mode.
+                        filterMode = 1;
+                    }
+                }
+
+                audioEngine_.setVoiceFilter(assignedVoice, filterMode,
+                                            filterCutoffHz, filterQ);
+                audioEngine_.setVoiceWaveform(assignedVoice,
+                                              waveformIndex);
+
+                // Mark generator and, when present, its downstream
+                // module as visually active so the paint layer can
+                // render waveforms on those paths. For visuals
+                // consider only mutes at source or on the direct
+                // connection; a mute on the downstream module's radial
+                // (e.g. Filter→Master) should still allow Osc→Filter
+                // to display a waveform even though the chain is
+                // silent at the master.
+                const bool visualChainMuted =
+                    srcMuted || route.connectionMuted;
+                if (!visualChainMuted) {
+                    modulesWithActiveAudio_.insert(module->id());
+                    moduleVoiceIndex_[module->id()] = assignedVoice;
+                    if (downstreamModule != nullptr && downstreamInside &&
+                        !route.connectionMuted) {
+                        modulesWithActiveAudio_.insert(
+                            downstreamModule->id());
+                        moduleVoiceIndex_[downstreamModule->id()] =
+                            assignedVoice;
+                    }
                 }
             }
         }

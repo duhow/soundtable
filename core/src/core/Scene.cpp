@@ -157,6 +157,22 @@ bool Scene::AddConnection(const Connection& connection)
     return false;
   }
 
+  // Enforce a single non-hardlink (dynamic) outgoing connection per
+  // module. Hardlink connections are exempt from this limit so that
+  // modules can maintain multiple explicit hardwired routes in
+  // addition to at most one dynamic connection.
+  if (!connection.is_hardlink) {
+    const auto existingDynamicOut = std::find_if(
+        connections_.cbegin(), connections_.cend(),
+        [&connection](const Connection& c) {
+          return !c.is_hardlink &&
+                 c.from_module_id == connection.from_module_id;
+        });
+    if (existingDynamicOut != connections_.cend()) {
+      return false;
+    }
+  }
+
   // Ensure there is no identical connection already present.
   const auto it = std::find_if(
       connections_.cbegin(), connections_.cend(),

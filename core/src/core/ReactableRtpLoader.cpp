@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <unordered_map>
 
@@ -840,6 +841,98 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
                             .to_port_name = "in",
                             .is_hardlink = true};
       (void)scene.AddConnection(connection);
+    }
+  }
+
+  // Auto-connect Oscillator modules to the closest Filter module when
+  // possible. This uses the ObjectInstance positions (normalized [0,1]
+  // coordinates) to pick the nearest Filter tangible for each Oscillator.
+  // The Scene model enforces at most one non-hardlink outgoing connection
+  // per module, so each Oscillator will route dynamically to a single
+  // Filter when available.
+  {
+    // Map module id -> ObjectInstance for distance computations.
+    std::unordered_map<std::string, const ObjectInstance*> module_to_object;
+    module_to_object.reserve(scene.objects().size());
+
+    for (const auto& [tracking_id, obj] : scene.objects()) {
+      (void)tracking_id;
+      module_to_object.emplace(obj.logical_id(), &obj);
+    }
+
+    // Collect Filter module ids and keep a pointer to their AudioModule.
+    struct FilterEntry {
+      std::string id;
+      const AudioModule* module{nullptr};
+    };
+
+    std::vector<FilterEntry> filters;
+    filters.reserve(scene.modules().size());
+
+    for (const auto& [module_id, module_ptr] : scene.modules()) {
+      if (module_ptr == nullptr) {
+        continue;
+      }
+
+      const auto* filter =
+          dynamic_cast<const FilterModule*>(module_ptr.get());
+      if (filter == nullptr) {
+        continue;
+      }
+
+      filters.push_back(FilterEntry{module_id, filter});
+    }
+
+    if (!filters.empty()) {
+      for (const auto& [module_id, module_ptr] : scene.modules()) {
+        if (module_ptr == nullptr) {
+          continue;
+        }
+
+        const auto* osc =
+            dynamic_cast<const OscillatorModule*>(module_ptr.get());
+        if (osc == nullptr) {
+          continue;
+        }
+
+        const auto objIt = module_to_object.find(module_id);
+        if (objIt == module_to_object.end() || objIt->second == nullptr) {
+          continue;
+        }
+
+        const ObjectInstance* const oscObj = objIt->second;
+
+        float bestDistSq = std::numeric_limits<float>::max();
+        const FilterEntry* bestFilter = nullptr;
+
+        for (const auto& entry : filters) {
+          const auto objFilterIt =
+              module_to_object.find(entry.id);
+          if (objFilterIt == module_to_object.end() ||
+              objFilterIt->second == nullptr) {
+            continue;
+          }
+
+          const ObjectInstance* const filterObj = objFilterIt->second;
+          const float dx = oscObj->x() - filterObj->x();
+          const float dy = oscObj->y() - filterObj->y();
+          const float distSq = dx * dx + dy * dy;
+
+          if (distSq < bestDistSq && osc->CanConnectTo(*entry.module)) {
+            bestDistSq = distSq;
+            bestFilter = &entry;
+          }
+        }
+
+        if (bestFilter != nullptr) {
+          Connection connection{.from_module_id = module_id,
+                                .from_port_name = "out",
+                                .to_module_id = bestFilter->id,
+                                .to_port_name = "in",
+                                .is_hardlink = false};
+          (void)scene.AddConnection(connection);
+        }
+      }
     }
   }
 
