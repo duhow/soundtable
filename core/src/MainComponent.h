@@ -28,6 +28,7 @@ public:
     void mouseWheelMove(const juce::MouseEvent& event,
                         const juce::MouseWheelDetails& wheel) override;
 
+    void rotationTrackingUpdate(std::unordered_map<std::int64_t, float>* rotationDeltaDegrees);
     void timerCallback() override;
 
 private:

@@ -367,25 +367,19 @@ void MainComponent::updateConnectionVisualSources()
     }
 }
 
-void MainComponent::timerCallback()
+void MainComponent::rotationTrackingUpdate(std::unordered_map<std::int64_t, float>* rotationDeltaDegrees)
 {
-    // Map scene state to audio parameters using AudioModule metadata.
-    // Multiple generator modules can be active at once; we map each
-    // active generator to an independent AudioEngine voice so that
-    // multiple oscillators can sound simultaneously.
-    const auto& objects = scene_.objects();
-    const auto& modules = scene_.modules();
-
     // ------------------------------------------------------------------
     // Rotation tracking shared by frequency and tempo controllers.
     // We keep a per-object map of the last known angle in degrees and
     // derive a wrapped delta in [-180, 180] every frame so that
     // crossing the 0/360 boundary does not create large jumps.
+    const auto& objects = scene_.objects();
+    const auto& modules = scene_.modules();
+
     const float radToDeg = 180.0F / juce::MathConstants<float>::pi;
 
-    std::unordered_map<std::int64_t, float> rotationDeltaDegrees;
-    rotationDeltaDegrees.reserve(objects.size());
-
+    rotationDeltaDegrees->reserve(objects.size());
     for (const auto& [objId, obj] : objects) {
         const float currentDeg = obj.angle_radians() * radToDeg;
 
@@ -402,7 +396,7 @@ void MainComponent::timerCallback()
             }
         }
 
-        rotationDeltaDegrees.emplace(objId, diff);
+        rotationDeltaDegrees->emplace(objId, diff);
         lastObjectAngleDegrees_[objId] = currentDeg;
     }
 
@@ -416,13 +410,29 @@ void MainComponent::timerCallback()
             ++it;
         }
     }
+}
+
+void MainComponent::timerCallback()
+{
+    // Map scene state to audio parameters using AudioModule metadata.
+    // Multiple generator modules can be active at once; we map each
+    // active generator to an independent AudioEngine voice so that
+    // multiple oscillators can sound simultaneously.
+    const auto& objects = scene_.objects();
+    const auto& modules = scene_.modules();
+
+    std::unordered_map<std::int64_t, float> rotationDeltaDegrees;
+    rotationTrackingUpdate(&rotationDeltaDegrees);
 
     // ------------------------------------------------------------------
-    // Rotation 3 frequency mapping.
-    // For modules that expose frequency control and have a tangible
-    // object on the table, use their per-frame rotation delta to add a
-    // normalised contribution to the module's `freq` parameter. A full
-    // revolution corresponds to a ffreq of 71.0.
+    // Rotation gestures → module parameters.
+    // For each tangible object with a rotation delta we:
+    //   - adjust `freq` on any AudioModule that uses frequency control
+    //     (typical generators/filters), except when the object is docked.
+    //   - adjust global tempo/BPM when the module is a TempoModule.
+    //   - adjust global master volume when the module is a VolumeModule.
+    // All three mappings share the same rotation sense: clockwise
+    // increases the controlled value, counter-clockwise decreases it.
     for (const auto& [objId, obj] : objects) {
         const auto modIt = modules.find(obj.logical_id());
         if (modIt == modules.end() || modIt->second == nullptr) {
@@ -430,17 +440,6 @@ void MainComponent::timerCallback()
         }
 
         auto* module = modIt->second.get();
-        if (!module->uses_frequency_control()) {
-            continue;
-        }
-
-        // Ignore docked modules (toolbar/dock area), but allow
-        // rotation-based modulation anywhere else on the table so
-        // that fiducials just outside the musical circle still
-        // influence their associated module.
-        if (obj.docked()) {
-            continue;
-        }
 
         const auto deltaIt = rotationDeltaDegrees.find(objId);
         if (deltaIt == rotationDeltaDegrees.end()) {
@@ -449,125 +448,98 @@ void MainComponent::timerCallback()
 
         const float diff = deltaIt->second;
 
-        // Invert sign so that counter-clockwise rotation reduces the
-        // frequency parameter and clockwise rotation increases it.
-        const float deltaFreq = -diff / 360.0F;  // [-0.5, 0.5]
+        // ------------------------------------------------------------------
+        // 1) Rotation → per-module frequency (`freq` parameter).
+        // Applies to any Module that exposes frequency control and
+        // has a tangible object on the table (Oscillator). A full
+        // revolution corresponds to a normalised delta of one unit.
+        if (module->uses_frequency_control() && !obj.docked()) {
+            // Invert sign so that counter-clockwise rotation reduces the
+            // frequency parameter and clockwise rotation increases it.
+            const float deltaFreq = -diff / 360.0F;  // [-0.5, 0.5]
 
-        if (std::fabs(deltaFreq) <=
-            std::numeric_limits<float>::epsilon()) {
-            continue;
+            if (std::fabs(deltaFreq) <=
+                std::numeric_limits<float>::epsilon()) {
+                continue;
+            }
+
+            const float currentFreq = module->GetParameterOrDefault(
+                "freq", module->default_parameter_value("freq"));
+            const float newFreq = juce::jlimit(
+                0.0F, 1.0F, currentFreq + deltaFreq);
+
+            scene_.SetModuleParameter(obj.logical_id(), "freq",
+                                      newFreq);
         }
 
-        const float currentFreq = module->GetParameterOrDefault(
-            "freq", module->default_parameter_value("freq"));
-        const float newFreq = juce::jlimit(0.0F, 1.0F,
-                                           currentFreq + deltaFreq);
+        // ------------------------------------------------------------------
+        // 2) Rotation → global tempo (BPM).
+        // When the module is a TempoModule, its rotation controls the
+        // session BPM: every 5 degrees of rotation add or subtract 1 BPM.
+        if (auto* tempoModule =
+                dynamic_cast<rectai::TempoModule*>(module)) {
+            (void)tempoModule;  // type tag only; BPM lives in MainComponent.
 
-        scene_.SetModuleParameter(obj.logical_id(), "freq", newFreq);
-    }
+            if (std::fabs(diff) <=
+                std::numeric_limits<float>::epsilon()) {
+                continue;
+            }
 
-    // ------------------------------------------------------------------
-    // Rotation 3 tempo (global BPM) mapping.
-    // The Tempo module is treated as a global transport controller:
-    // every 5 b0 of rotation increase or decrease 1 BPM. The value is
-    // stored as a double in `bpm_` but rendered as an integer.
-    for (const auto& [objId, obj] : objects) {
-        const auto modIt = modules.find(obj.logical_id());
-        if (modIt == modules.end() || modIt->second == nullptr) {
-            continue;
+            // Match the control sense used for frequency so
+            // clockwise/counter-clockwise behaviour stays
+            // consistent across controllers.
+            const double deltaBpm =
+                static_cast<double>(-diff / 5.0F);
+            if (std::fabs(deltaBpm) <=
+                std::numeric_limits<double>::epsilon()) {
+                continue;
+            }
+
+            double newBpm = bpm_ + deltaBpm;
+            if (newBpm < 40.0) {
+                newBpm = 40.0;
+            } else if (newBpm > 400.0) {
+                newBpm = 400.0;
+            }
+
+            bpm_ = newBpm;
+
+            // Remember when the BPM was last modified so that the visual
+            // BPM label can be shown briefly and then faded out when there
+            // are no further tempo changes.
+            bpmLastChangeSeconds_ =
+                juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+            // Keep the logical Tempo module parameter in sync with the
+            // session BPM so that future serialisation and loaders can
+            // observe the updated tempo.
+            scene_.SetModuleParameter(module->id(), "tempo",
+                                        static_cast<float>(bpm_));
         }
 
-        auto* module = modIt->second.get();
-        const auto* tempoModule =
-            dynamic_cast<const rectai::TempoModule*>(module);
-        if (tempoModule == nullptr) {
-            continue;
+        // ------------------------------------------------------------------
+        // 3) Rotation → global volume (master).
+        // When the module is a VolumeModule, its rotation behaves as a
+        // session-wide output controller that only affects the
+        // normalised `volume` parameter.
+        if (auto* volumeModule =
+                dynamic_cast<rectai::VolumeModule*>(module)) {
+            // Match the control sense used for frequency and tempo so
+            // clockwise/counter-clockwise behaviour remains consistent.
+            const float deltaVolume = -diff / 360.0F;  // [-0.5, 0.5]
+            if (std::fabs(deltaVolume) <=
+                std::numeric_limits<float>::epsilon()) {
+                continue;
+            }
+
+            const float currentVolume =
+                volumeModule->GetParameterOrDefault("volume", 0.9F);
+            const float newVolume = juce::jlimit(0.0F, 1.0F,
+                                                 currentVolume + deltaVolume);
+
+            scene_.SetModuleParameter(volumeModule->id(), "volume",
+                                      newVolume);
         }
-
-        const auto deltaIt = rotationDeltaDegrees.find(objId);
-        if (deltaIt == rotationDeltaDegrees.end()) {
-            continue;
-        }
-
-        const float diff = deltaIt->second;
-        if (std::fabs(diff) <= std::numeric_limits<float>::epsilon()) {
-            continue;
-        }
-
-        // Match the control sense used for frequency: inverting the
-        // sign keeps clockwise/counter-clockwise behaviour consistent
-        // across controllers.
-        const double deltaBpm = static_cast<double>(-diff / 5.0F);
-        if (std::fabs(deltaBpm) <=
-            std::numeric_limits<double>::epsilon()) {
-            continue;
-        }
-
-        double newBpm = bpm_ + deltaBpm;
-        if (newBpm < 40.0) {
-            newBpm = 40.0;
-        } else if (newBpm > 400.0) {
-            newBpm = 400.0;
-        }
-
-        bpm_ = newBpm;
-
-        // Remember when the BPM was last modified so that the visual
-        // BPM label can be shown briefly and then faded out when there
-        // are no further tempo changes.
-        bpmLastChangeSeconds_ =
-            juce::Time::getMillisecondCounterHiRes() / 1000.0;
-
-        // Keep the logical Tempo module parameter in sync with the
-        // session BPM so that future serialisation and loaders can
-        // observe the updated tempo.
-        scene_.SetModuleParameter(module->id(), "tempo",
-                                  static_cast<float>(bpm_));
-    }
-
-    // ------------------------------------------------------------------
-    // Rotation → global volume (master) mapping.
-    // Volume modules act as session-wide output controllers: their
-    // rotation gesture only modifies the `volume` parameter, leaving
-    // dynamics/FX parameters untouched.
-    for (const auto& [objId, obj] : objects) {
-        const auto modIt = modules.find(obj.logical_id());
-        if (modIt == modules.end() || modIt->second == nullptr) {
-            continue;
-        }
-
-        auto* module = modIt->second.get();
-        auto* volumeModule =
-            dynamic_cast<rectai::VolumeModule*>(module);
-        if (volumeModule == nullptr) {
-            continue;
-        }
-
-        const auto deltaIt = rotationDeltaDegrees.find(objId);
-        if (deltaIt == rotationDeltaDegrees.end()) {
-            continue;
-        }
-
-        const float diff = deltaIt->second;
-        if (std::fabs(diff) <= std::numeric_limits<float>::epsilon()) {
-            continue;
-        }
-
-        // Match the control sense used for frequency and tempo so
-        // clockwise/counter-clockwise behaviour remains consistent.
-        const float deltaVolume = -diff / 360.0F;  // [-0.5, 0.5]
-        if (std::fabs(deltaVolume) <=
-            std::numeric_limits<float>::epsilon()) {
-            continue;
-        }
-
-        const float currentVolume = volumeModule->GetParameterOrDefault(
-            "volume", 0.9F);
-        const float newVolume = juce::jlimit(0.0F, 1.0F,
-                                             currentVolume + deltaVolume);
-
-        scene_.SetModuleParameter(volumeModule->id(), "volume",
-                                  newVolume);
     }
 
     // ------------------------------------------------------------------
