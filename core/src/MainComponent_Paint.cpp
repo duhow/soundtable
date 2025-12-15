@@ -224,44 +224,59 @@ void MainComponent::paint(juce::Graphics& g)
     // backed by FluidSynth can display a waveform on their lines to
     // the master and between modules, even though they do not occupy
     // an AudioEngine voice slot.
-    float sampleplayWaveform[kWaveformPoints]{};
-    float sampleplayNorm = 0.0F;
-    float sampleplayRms = 0.0F;
-    int sampleplayPeriodSamples = 0;
+    // Separate mono snapshots for Sampleplay output so that modules
+    // backed by FluidSynth can display both the original and the
+    // filtered waveform depending on context (Sampleplay → X vs
+    // Filter → Master) even though they do not occupy an AudioEngine
+    // voice slot.
+    float sampleplayWaveformRaw[kWaveformPoints]{};
+    float sampleplayWaveformFiltered[kWaveformPoints]{};
+    float sampleplayNormRaw = 0.0F;
+    float sampleplayNormFiltered = 0.0F;
+    float sampleplayRmsRaw = 0.0F;
+    float sampleplayRmsFiltered = 0.0F;
 
-    audioEngine_.getSampleplayWaveformSnapshot(sampleplayWaveform,
+    audioEngine_.getSampleplayWaveformSnapshot(sampleplayWaveformRaw,
                                                kWaveformPoints, 0.05);
+    audioEngine_.getSampleplayFilteredWaveformSnapshot(
+        sampleplayWaveformFiltered, kWaveformPoints, 0.05);
 
     {
-        float maxAbs = 0.0F;
-        float sumSquares = 0.0F;
+        float maxAbsRaw = 0.0F;
+        float sumSquaresRaw = 0.0F;
+        float maxAbsFiltered = 0.0F;
+        float sumSquaresFiltered = 0.0F;
         for (int i = 0; i < kWaveformPoints; ++i) {
-            const float s = sampleplayWaveform[i];
-            maxAbs = std::max(maxAbs, std::abs(s));
-            sumSquares += s * s;
+            const float sRaw = sampleplayWaveformRaw[i];
+            const float sFiltered = sampleplayWaveformFiltered[i];
+            maxAbsRaw = std::max(maxAbsRaw, std::abs(sRaw));
+            sumSquaresRaw += sRaw * sRaw;
+            maxAbsFiltered =
+                std::max(maxAbsFiltered, std::abs(sFiltered));
+            sumSquaresFiltered += sFiltered * sFiltered;
         }
-        sampleplayNorm =
-            maxAbs > 1.0e-4F ? 1.0F / maxAbs : 0.0F;
+        sampleplayNormRaw =
+            maxAbsRaw > 1.0e-4F ? 1.0F / maxAbsRaw : 0.0F;
+        sampleplayNormFiltered =
+            maxAbsFiltered > 1.0e-4F ? 1.0F / maxAbsFiltered : 0.0F;
 
         if (kWaveformPoints > 0) {
-            const float meanSquare = sumSquares /
-                                     static_cast<float>(
-                                         kWaveformPoints);
-            sampleplayRms =
-                meanSquare > 0.0F ? std::sqrt(meanSquare) : 0.0F;
+            const float meanSquareRaw = sumSquaresRaw /
+                                        static_cast<float>(
+                                            kWaveformPoints);
+            sampleplayRmsRaw =
+                meanSquareRaw > 0.0F ? std::sqrt(meanSquareRaw) : 0.0F;
+
+            const float meanSquareFiltered = sumSquaresFiltered /
+                                             static_cast<float>(
+                                                 kWaveformPoints);
+            sampleplayRmsFiltered = meanSquareFiltered > 0.0F
+                                        ? std::sqrt(meanSquareFiltered)
+                                        : 0.0F;
         } else {
-            sampleplayRms = 0.0F;
+            sampleplayRmsRaw = 0.0F;
+            sampleplayRmsFiltered = 0.0F;
         }
-
-        if (sampleplayNorm > 0.0F) {
-            sampleplayPeriodSamples =
-                estimateWaveformPeriod(sampleplayWaveform,
-                                       kWaveformPoints);
-        }
-
-        // Currently we map the full Sampleplay buffer once along
-        // the line, so the estimated period is not yet used.
-        juce::ignoreUnused(sampleplayPeriodSamples);
     }
 
     auto isAudioConnection = [&modules](const rectai::Connection& conn) {
@@ -551,6 +566,11 @@ void MainComponent::paint(juce::Graphics& g)
                 moduleForConnection != nullptr &&
                 moduleForConnection->is<rectai::SampleplayModule>();
 
+            const bool isFilterModule =
+                moduleForConnection != nullptr &&
+                moduleForConnection->type() ==
+                    rectai::ModuleType::kFilter;
+
             // Modules that expose a true volume-like control (right
             // arc) keep using their parameter to drive waveform
             // height. Modules without such a control (for example,
@@ -620,12 +640,9 @@ void MainComponent::paint(juce::Graphics& g)
 
             const bool lineCarriesAudio =
                 // Sampleplay modules use the dedicated Sampleplay
-                // waveform buffer instead of per-voice history and
+                // waveform buffers instead of per-voice history and
                 // do not rely on modulesWithActiveAudio_ to decide
-                // whether their radial line carries sound. The
-                // visual waveform will still only be drawn when the
-                // Sampleplay buffer actually contains a non-zero
-                // signal (sampleplayNorm > 0).
+                // whether their radial line carries sound.
                 isSampleplayModule ||
                 modulesWithActiveAudio_.find(object.logical_id()) !=
                     modulesWithActiveAudio_.end();
@@ -731,27 +748,108 @@ void MainComponent::paint(juce::Graphics& g)
                 }
             }
 
-            if (lineCarriesAudio && !isRadialMuted && !isMarkedForCut) {
-                // Sampleplay modules do not occupy an AudioEngine
-                // voice slot, so their waveform comes from the
-                // dedicated Sampleplay history buffer instead of the
-                // per-voice buffers used by generators.
-                if (isSampleplayModule && sampleplayNorm > 0.0F) {
-                    g.setColour(
-                        juce::Colours::white.withAlpha(baseAlpha));
-                    const float waveformAmplitude =
-                        15.0F * visualLevel;
-                    const float waveformThickness = 1.4F;
-                    const int samplesToUse = kWaveformPoints;
-                    drawWaveformOnLine(
-                        line.getEnd(), line.getStart(),
-                        waveformAmplitude, waveformThickness,
-                        sampleplayWaveform, samplesToUse,
-                        sampleplayNorm, segmentsForWaveform,
-                        /*tiled=*/false);
-                    continue;
-                }
+            // Detect if this module (typically a Filter) is being
+            // driven directly by a Sampleplay module via an active
+            // audio connection. In that case, we can reuse the
+            // Sampleplay waveform for its radial even though it does
+            // not occupy a generator voice.
+            bool hasSampleplayUpstream = false;
+            if (isFilterModule) {
+                for (const auto& conn : scene_.connections()) {
+                    if (!isAudioConnection(conn) ||
+                        conn.to_module_id != object.logical_id()) {
+                        continue;
+                    }
 
+                    const auto modItFrom =
+                        modules.find(conn.from_module_id);
+                    if (modItFrom == modules.end() ||
+                        modItFrom->second == nullptr ||
+                        !modItFrom->second
+                             ->is<rectai::SampleplayModule>()) {
+                        continue;
+                    }
+
+                    const auto fromObjIdIt =
+                        moduleToObjectId.find(conn.from_module_id);
+                    const auto toObjIdIt =
+                        moduleToObjectId.find(conn.to_module_id);
+                    if (fromObjIdIt == moduleToObjectId.end() ||
+                        toObjIdIt == moduleToObjectId.end()) {
+                        continue;
+                    }
+
+                    const auto fromObjIt =
+                        objects.find(fromObjIdIt->second);
+                    const auto toObjIt =
+                        objects.find(toObjIdIt->second);
+                    if (fromObjIt == objects.end() ||
+                        toObjIt == objects.end()) {
+                        continue;
+                    }
+
+                    const auto& fromObj = fromObjIt->second;
+                    const auto& toObj = toObjIt->second;
+                    if (!isInsideMusicArea(fromObj) ||
+                        !isInsideMusicArea(toObj)) {
+                        continue;
+                    }
+
+                    if (!conn.is_hardlink &&
+                        !isConnectionGeometricallyActive(fromObj,
+                                                         toObj)) {
+                        continue;
+                    }
+
+                    const std::string key = makeConnectionKey(conn);
+                    const bool connIsMuted =
+                        mutedConnections_.find(key) !=
+                        mutedConnections_.end();
+                    if (connIsMuted) {
+                        continue;
+                    }
+
+                    hasSampleplayUpstream = true;
+                    break;
+                }
+            }
+
+            const bool sampleplayRadialActive =
+                !isRadialMuted && !isMarkedForCut &&
+                ((isSampleplayModule && sampleplayNormRaw > 0.0F) ||
+                 (isFilterModule && hasSampleplayUpstream &&
+                  sampleplayNormFiltered > 0.0F));
+
+            if (sampleplayRadialActive) {
+                // Sampleplay modules use the original (pre-filter)
+                // waveform for their radial, mientras que los
+                // filtros alimentados por Sampleplay usan la señal
+                // ya filtrada para que su línea Filter → Master
+                // refleje el audio procesado.
+                g.setColour(
+                    juce::Colours::white.withAlpha(baseAlpha));
+                const float waveformAmplitude = 15.0F *
+                                                (isSampleplayModule
+                                                     ? visualLevel
+                                                     : 1.0F);
+                const float waveformThickness = 1.4F;
+                const int samplesToUse = kWaveformPoints;
+                const float* waveformSamples =
+                    isSampleplayModule ? sampleplayWaveformRaw
+                                       : sampleplayWaveformFiltered;
+                const float waveformNorm =
+                    isSampleplayModule ? sampleplayNormRaw
+                                       : sampleplayNormFiltered;
+                drawWaveformOnLine(
+                    line.getEnd(), line.getStart(),
+                    waveformAmplitude, waveformThickness,
+                    waveformSamples, samplesToUse,
+                    waveformNorm, segmentsForWaveform,
+                    /*tiled=*/false);
+                continue;
+            }
+
+            if (lineCarriesAudio && !isRadialMuted && !isMarkedForCut) {
                 const auto voiceIt =
                     moduleVoiceIndex_.find(object.logical_id());
                 const int voiceIndex =
@@ -900,13 +998,11 @@ void MainComponent::paint(juce::Graphics& g)
 
                 sourceMutedToMaster = hasMasterRoute && masterRouteMuted;
             }
-
-            const bool isMutedConnection =
+            const bool explicitlyMuted =
                 mutedConnections_.find(connKey) !=
-                    mutedConnections_.end() ||
-                sourceMutedToMaster;
+                mutedConnections_.end();
 
-            const bool audioConn =
+            const bool audioConnEndpointsActive =
                 isAudioConnection(conn) &&
                 (modulesWithActiveAudio_.find(conn.from_module_id) !=
                      modulesWithActiveAudio_.end() ||
@@ -929,8 +1025,27 @@ void MainComponent::paint(juce::Graphics& g)
             }
 
             const bool involvesSampleplay =
-                fromModulePtr->is<rectai::SampleplayModule>() ||
-                toModulePtr->is<rectai::SampleplayModule>();
+                (fromModulePtr != nullptr &&
+                 fromModulePtr->is<rectai::SampleplayModule>()) ||
+                (toModulePtr != nullptr &&
+                 toModulePtr->is<rectai::SampleplayModule>());
+
+            // For connections that involve Sampleplay, consider only
+            // explicit mutes. El mute "a nivel de módulo" hacia el
+            // master (sourceMutedToMaster) no debe apagar su conexión
+            // Sampleplay → Filter.
+            const bool isMutedConnection =
+                explicitlyMuted ||
+                (!involvesSampleplay && sourceMutedToMaster);
+
+            // Connections that involve Sampleplay rely on the
+            // dedicated Sampleplay buffer and per-connection taps
+            // instead of the generator-based active set. Consider
+            // them audio-bearing whenever they are not muted.
+            const bool audioConn =
+                isAudioConnection(conn) &&
+                (!involvesSampleplay ? audioConnEndpointsActive
+                                     : !explicitlyMuted);
 
               const float fromLevel = getModuleVisualLevel(fromModulePtr);
               const float toLevel = getModuleVisualLevel(toModulePtr);
@@ -968,18 +1083,34 @@ void MainComponent::paint(juce::Graphics& g)
                 // audio engine, which already encodes whether this
                 // connection observes a pre/post voice or Sampleplay
                 // signal.
-                float connectionWaveform[kWaveformPoints]{};
-                audioEngine_.getConnectionWaveformSnapshot(
-                    connKey, connectionWaveform, kWaveformPoints, 0.05);
+                float tempWave[kWaveformPoints]{};
+                float norm = 0.0F;
 
-                float maxAbs = 0.0F;
-                for (int i = 0; i < kWaveformPoints; ++i) {
-                    maxAbs = std::max(maxAbs, std::abs(connectionWaveform[i]));
+                if (involvesSampleplay) {
+                    // Para conexiones que implican Sampleplay, usa
+                    // directamente la waveform global original
+                    // (pre‑filtro) para que Sampleplay → X se vea
+                    // igual que la radial Sampleplay → Master.
+                    std::copy(std::begin(sampleplayWaveformRaw),
+                              std::end(sampleplayWaveformRaw),
+                              std::begin(tempWave));
+                    norm = sampleplayNormRaw;
+                } else {
+                    audioEngine_.getConnectionWaveformSnapshot(
+                        connKey, tempWave, kWaveformPoints, 0.05);
+
+                    float maxAbs = 0.0F;
+                    for (int i = 0; i < kWaveformPoints; ++i) {
+                        maxAbs = std::max(maxAbs, std::abs(tempWave[i]));
+                    }
+
+                    if (maxAbs > 1.0e-4F) {
+                        norm = 1.0F / maxAbs;
+                    }
                 }
 
                 bool drewWave = false;
-                if (maxAbs > 1.0e-4F) {
-                    const float norm = 1.0F / maxAbs;
+                if (norm > 0.0F) {
                     g.setColour(activeColour);
                     const float waveformAmplitude =
                         (conn.is_hardlink ? 10.0F : 10.0F) * connectionLevel;
@@ -990,15 +1121,16 @@ void MainComponent::paint(juce::Graphics& g)
                     const int segmentsForWaveform =
                         static_cast<int>(lineLength / 5.0F);
                     const int periodSamples =
-                        estimateWaveformPeriod(connectionWaveform,
+                        estimateWaveformPeriod(tempWave,
                                                kWaveformPoints);
 
-                    drawWaveformOnLine(
-                        p1, splitPoint, waveformAmplitude,
-                        waveformThickness, connectionWaveform,
-                        periodSamples, norm,
-                        juce::jmax(1, segmentsForWaveform),
-                        /*tiled=*/true);
+                        const bool tiled = !involvesSampleplay;
+                        drawWaveformOnLine(
+                            p1, splitPoint, waveformAmplitude,
+                        waveformThickness, tempWave,
+                            periodSamples, norm,
+                            juce::jmax(1, segmentsForWaveform),
+                            /*tiled=*/tiled);
                     drewWave = true;
                 }
 
@@ -1032,31 +1164,42 @@ void MainComponent::paint(juce::Graphics& g)
                 bool drewWave = false;
 
                 if (audioConn) {
-                    float connectionWaveform[kWaveformPoints]{};
-                    audioEngine_.getConnectionWaveformSnapshot(
-                        connKey, connectionWaveform, kWaveformPoints,
-                        0.05);
+                    float tempWave[kWaveformPoints]{};
+                    float norm = 0.0F;
 
-                    float maxAbs = 0.0F;
-                    for (int i = 0; i < kWaveformPoints; ++i) {
-                        maxAbs = std::max(
-                            maxAbs, std::abs(connectionWaveform[i]));
+                    if (involvesSampleplay) {
+                        std::copy(std::begin(sampleplayWaveformRaw),
+                                  std::end(sampleplayWaveformRaw),
+                                  std::begin(tempWave));
+                        norm = sampleplayNormRaw;
+                    } else {
+                        audioEngine_.getConnectionWaveformSnapshot(
+                            connKey, tempWave, kWaveformPoints, 0.05);
+
+                        float maxAbs = 0.0F;
+                        for (int i = 0; i < kWaveformPoints; ++i) {
+                            maxAbs = std::max(maxAbs, std::abs(tempWave[i]));
+                        }
+
+                        if (maxAbs > 1.0e-4F) {
+                            norm = 1.0F / maxAbs;
+                        }
                     }
 
-                    if (maxAbs > 1.0e-4F) {
-                        const float norm = 1.0F / maxAbs;
+                    if (norm > 0.0F) {
                         const float waveformAmplitude =
                             10.0F * connectionLevel;
                         const float waveformThickness = 1.2F;
                         const int periodSamples =
-                            estimateWaveformPeriod(connectionWaveform,
+                            estimateWaveformPeriod(tempWave,
                                                    kWaveformPoints);
 
+                        const bool tiled = !involvesSampleplay;
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
-                            waveformThickness, connectionWaveform,
+                            waveformThickness, tempWave,
                             periodSamples, norm, 64,
-                            /*tiled=*/true);
+                            /*tiled=*/tiled);
                         drewWave = true;
                     }
                 }
@@ -1074,30 +1217,41 @@ void MainComponent::paint(juce::Graphics& g)
                         10.0F * connectionLevel;
                     const float waveformThickness = 1.2F;
 
-                    float connectionWaveform[kWaveformPoints]{};
-                    audioEngine_.getConnectionWaveformSnapshot(
-                        connKey, connectionWaveform, kWaveformPoints,
-                        0.05);
+                    float tempWave[kWaveformPoints]{};
+                    float norm = 0.0F;
 
-                    float maxAbs = 0.0F;
-                    for (int i = 0; i < kWaveformPoints; ++i) {
-                        maxAbs = std::max(
-                            maxAbs, std::abs(connectionWaveform[i]));
+                    if (involvesSampleplay) {
+                        std::copy(std::begin(sampleplayWaveformRaw),
+                                  std::end(sampleplayWaveformRaw),
+                                  std::begin(tempWave));
+                        norm = sampleplayNormRaw;
+                    } else {
+                        audioEngine_.getConnectionWaveformSnapshot(
+                            connKey, tempWave, kWaveformPoints, 0.05);
+
+                        float maxAbs = 0.0F;
+                        for (int i = 0; i < kWaveformPoints; ++i) {
+                            maxAbs = std::max(maxAbs, std::abs(tempWave[i]));
+                        }
+
+                        if (maxAbs > 1.0e-4F) {
+                            norm = 1.0F / maxAbs;
+                        }
                     }
 
-                    if (maxAbs > 1.0e-4F) {
-                        const float norm = 1.0F / maxAbs;
+                    if (norm > 0.0F) {
                         const int periodSamples =
-                            estimateWaveformPeriod(connectionWaveform,
+                            estimateWaveformPeriod(tempWave,
                                                    kWaveformPoints);
 
                         g.setColour(
                             juce::Colours::white.withAlpha(0.8F));
+                        const bool tiled = !involvesSampleplay;
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
-                            waveformThickness, connectionWaveform,
+                            waveformThickness, tempWave,
                             periodSamples, norm, 72,
-                            /*tiled=*/true);
+                            /*tiled=*/tiled);
                         drewWave = true;
                     }
                 }

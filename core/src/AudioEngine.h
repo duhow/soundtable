@@ -112,12 +112,21 @@ public:
                                           double windowSeconds);
 
     // Copies a downsampled snapshot of the recent mono output from
-    // the Sampleplay (SoundFont) path into `dst`, representing
-    // approximately `windowSeconds` of audio. This is used so that
-    // Sampleplay modules can display their own waveform on lines even
-    // though they do not occupy an AudioEngine voice.
+    // the Sampleplay (SoundFont) path *before* the dedicated
+    // Sampleplay filter into `dst`, representing approximately
+    // `windowSeconds` of audio. This is used so that Sampleplay
+    // modules can display their own "original" waveform on lines
+    // even though they do not occupy an AudioEngine voice.
     void getSampleplayWaveformSnapshot(float* dst, int numPoints,
                                        double windowSeconds);
+
+    // Copies a downsampled snapshot of the recent mono output from
+    // the Sampleplay path *after* the dedicated Sampleplay filter
+    // into `dst`. Downstream visuals such as Filter → Master
+    // radials can use this to reflect the processed SoundFont
+    // signal.
+    void getSampleplayFilteredWaveformSnapshot(float* dst, int numPoints,
+                                               double windowSeconds);
 
     // Configure filter parameters for a given voice. This can be
     // called from the UI thread; the audio thread will consume the
@@ -144,6 +153,13 @@ public:
     // all Sampleplay audio immediately (used e.g. when the
     // Sampleplay module line to the master bus is muted).
     void setSampleplayOutputGain(float gain);
+
+    // Configures an optional filter applied to the global
+    // Sampleplay (SoundFont) path before it is mixed with the
+    // oscillator voices. The API mirrors the per-voice filter
+    // configuration used for generators: mode 0 = bypass, 1 =
+    // low-pass, 2 = band-pass, 3 = high-pass.
+    void setSampleplayFilter(int mode, double cutoffHz, float q);
 
     // Per-connection waveform taps --------------------------------------
 
@@ -249,11 +265,16 @@ private:
                                        [kWaveformHistorySize]{};
 
     // Rolling mono buffer containing only the Sampleplay (SoundFont)
-    // contribution before it is mixed with oscillator voices. This
-    // allows Sampleplay modules to render their own waveform on
-    // connections even though they do not map to an AudioEngine
-    // voice index.
+    // contribution after global gain and *before* the dedicated
+    // Sampleplay filter is applied. This represents the "original"
+    // SoundFont signal used for connections and Sampleplay radials.
     float sampleplayWaveformBuffer_[kWaveformHistorySize]{};
+
+    // Rolling mono buffer containing the Sampleplay path *after* the
+    // dedicated Sampleplay filter so that downstream visuals (e.g.
+    // Filter → Master radials) can reflect the processed signal while
+    // connections Sampleplay → X still display the original waveform.
+    float sampleplayFilteredWaveformBuffer_[kWaveformHistorySize]{};
 
     // Global gain applied to the Sampleplay (SoundFont) path before it
     // is mixed with the procedural oscillators. This allows the UI to
@@ -275,6 +296,15 @@ private:
     // before mixing it with the oscillator voices.
     std::vector<float> sampleplayLeft_;
     std::vector<float> sampleplayRight_;
+
+    // Optional filter applied to the Sampleplay stereo path. This
+    // allows modules such as Filter to affect SoundFont audio even
+    // though it does not occupy a generator voice slot.
+    std::atomic<int> sampleplayFilterMode_{0};
+    std::atomic<double> sampleplayFilterCutoffHz_{0.0};
+    std::atomic<float> sampleplayFilterQ_{0.7071F};
+    juce::dsp::StateVariableTPTFilter<float> sampleplayFilterL_{};
+    juce::dsp::StateVariableTPTFilter<float> sampleplayFilterR_{};
 
     // Connection-level waveform taps. Each tap is configured from
     // the UI thread via a stable connection key and attached to a

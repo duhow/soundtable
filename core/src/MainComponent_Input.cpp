@@ -729,11 +729,11 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
             const auto& currPoint = touchTrail_[touchTrail_.size() - 1];
             const float detectionThreshold = 15.0F;
 
-            // Check intersections with object-to-center lines. This must
-            // match the modules that actually draw a radial line to the
-            // master in paint(): only modules that produce/consume audio,
-            // excluding global controllers and MIDI/control-only modules
-            // such as the Sequencer.
+            // Check intersections con las líneas objeto-centro. Debe
+            // corresponderse con los módulos que realmente dibujan una
+            // radial hacia el master en paint(): sólo módulos que
+            // producen/consumen audio, excluyendo controladores globales
+            // y módulos sólo MIDI/control como el Sequencer.
             for (const auto& [id, object] : objects) {
                 if (object.logical_id() == "-1" || object.docked() ||
                     !isInsideMusicArea(object)) {
@@ -760,11 +760,14 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                     continue;
                 }
 
-                // Skip generators that are feeding another module.
-                const bool isGenerator =
+                // Skip generator-like modules that are feeding another
+                // module. Cualquier módulo no "settings" que tenga una
+                // conexión saliente activa oculta su radial directa al
+                // master y, por tanto, no debe poder cortarse.
+                const bool isGeneratorLike =
                     moduleForLine != nullptr &&
-                    moduleForLine->type() ==
-                        rectai::ModuleType::kGenerator;
+                    moduleForLine->type() !=
+                        rectai::ModuleType::kSettings;
                 
                 bool hasActiveOutgoingConnection = false;
                 for (const auto& conn : scene_.connections()) {
@@ -795,7 +798,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                     }
                 }
 
-                if (isGenerator && hasActiveOutgoingConnection) {
+                if (isGeneratorLike && hasActiveOutgoingConnection) {
                     continue;
                 }
 
@@ -1182,7 +1185,7 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
 
         // If we have just unmuted the master route for this module,
         // clear any stored per-connection mute state for all edges
-        // originating from it, including conexiones que ya no estén
+        // originating from it, incluyendo conexiones que ya no estén
         // presentes en la Scene pero cuyo estado mute persista en
         // mutedConnections_. Esto modela un "reset global de mute"
         // para el generador: una vez que el usuario des-silencia la

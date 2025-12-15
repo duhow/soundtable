@@ -74,6 +74,17 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
                                          0x01010101u;
     }
 
+    // Prepare Sampleplay filters (stereo, implemented as two
+    // independent mono filters sharing parameters).
+    sampleplayFilterL_.reset();
+    sampleplayFilterR_.reset();
+    sampleplayFilterL_.prepare(spec);
+    sampleplayFilterR_.prepare(spec);
+    sampleplayFilterMode_.store(0, std::memory_order_relaxed);
+    sampleplayFilterCutoffHz_.store(0.0,
+                                    std::memory_order_relaxed);
+    sampleplayFilterQ_.store(0.7071F, std::memory_order_relaxed);
+
     // Resize Sampleplay scratch buffers to fit the maximum expected
     // block size and inform the internal synth about the current
     // sample rate.
@@ -94,6 +105,9 @@ void AudioEngine::audioDeviceStopped()
     for (int v = 0; v < kMaxVoices; ++v) {
         filters_[v].reset();
     }
+
+    sampleplayFilterL_.reset();
+    sampleplayFilterR_.reset();
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext(
@@ -157,7 +171,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     // Apply global Sampleplay gain so the UI can implement an
     // immediate stop/mute of all SoundFont audio (for example when
     // the Sampleplay module line to the master is muted).
-    const float spGain = sampleplayOutputGain_.load(std::memory_order_relaxed);
+    const float spGain =
+        sampleplayOutputGain_.load(std::memory_order_relaxed);
     if (spGain < 0.999F) {
         const float clamped = juce::jlimit(0.0F, 1.0F, spGain);
         for (int i = 0; i < numSamples; ++i) {
@@ -172,6 +187,35 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         const int writeIndex = baseWriteIndex + sample;
         const int bufIndex =
             historySize > 0 ? (writeIndex % historySize) : 0;
+
+        // Optionally run the Sampleplay stereo path through a
+        // StateVariableTPTFilter so that downstream Filter modules
+        // can affect SoundFont audio when connected. We keep the
+        // pre-filter mono sample (raw) and the post-filter mono
+        // sample in separate history buffers so that connections
+        // Sampleplay → X can display the original SoundFont
+        // waveform while radials aguas abajo reflejan la señal ya
+        // procesada.
+        const int spFilterMode =
+            sampleplayFilterMode_.load(std::memory_order_relaxed);
+        const std::size_t spIdx =
+            static_cast<std::size_t>(sample);
+        const float rawSampleplayL =
+            sampleplayLeft_[spIdx];  // after global gain
+        const float rawSampleplayR =
+            sampleplayRight_[spIdx];
+
+        float filteredSampleplayL = rawSampleplayL;
+        float filteredSampleplayR = rawSampleplayR;
+        if (spFilterMode != 0) {
+            filteredSampleplayL =
+                sampleplayFilterL_.processSample(0, rawSampleplayL);
+            filteredSampleplayR =
+                sampleplayFilterR_.processSample(0, rawSampleplayR);
+        }
+
+        sampleplayLeft_[spIdx] = filteredSampleplayL;
+        sampleplayRight_[spIdx] = filteredSampleplayR;
 
         if (voiceCount > 0) {
             for (int v = 0; v < voiceCount; ++v) {
@@ -291,14 +335,21 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // already well behaved; we clip after mixing both.
             oscMixed = juce::jlimit(-0.9F, 0.9F, oscMixed);
 
-            // Store Sampleplay-only contribution for visualisation
-            // before mixing with oscillator voices.
-            const float sampleplayMono =
-                sampleplayLeft_[static_cast<std::size_t>(sample)];
-            sampleplayWaveformBuffer_[bufIndex] = sampleplayMono;
+            // Store Sampleplay-only contributions for visualisation:
+            // - sampleplayWaveformBuffer_: original (pre-filter)
+            // - sampleplayFilteredWaveformBuffer_: processed
+            const float sampleplayMonoRaw = rawSampleplayL;
+            const float sampleplayMonoFiltered = filteredSampleplayL;
+            sampleplayWaveformBuffer_[bufIndex] = sampleplayMonoRaw;
+            sampleplayFilteredWaveformBuffer_[bufIndex] =
+                sampleplayMonoFiltered;
 
             // Update any connection taps attached to the Sampleplay
-            // path.
+            // path using the **original** (pre-filter) mono
+            // waveform. Esto permite que la conexión Sampleplay →
+            // Filter dibuje siempre la waveform "original" del
+            // SoundFont, incluso cuando el filtro global de
+            // Sampleplay está activo.
             for (int t = 0; t < tapCount; ++t) {
                 const int tapKind =
                     connectionTaps_[t].kind.load(
@@ -306,18 +357,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 if (tapKind == static_cast<int>(
                                    ConnectionTapSourceKind::kSampleplay)) {
                     connectionWaveformBuffers_[t][bufIndex] =
-                        sampleplayMono;
+                        sampleplayMonoRaw;
                 }
             }
 
             const float leftOut = juce::jlimit(
                 -0.9F, 0.9F,
-                sampleplayLeft_[static_cast<std::size_t>(sample)] +
-                    oscMixed);
+                filteredSampleplayL + oscMixed);
             const float rightOut = juce::jlimit(
                 -0.9F, 0.9F,
-                sampleplayRight_[static_cast<std::size_t>(sample)] +
-                    oscMixed);
+                filteredSampleplayR + oscMixed);
 
             // Store the mixed mono signal (left channel) for
             // waveform visualisation.
@@ -349,9 +398,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 sampleplayRight_[static_cast<std::size_t>(sample)]);
 
             waveformBuffer_[bufIndex] = leftOut;
-            const float sampleplayMono =
-                sampleplayLeft_[static_cast<std::size_t>(sample)];
-            sampleplayWaveformBuffer_[bufIndex] = sampleplayMono;
+            const float sampleplayMonoRaw = rawSampleplayL;
+            const float sampleplayMonoFiltered = filteredSampleplayL;
+            sampleplayWaveformBuffer_[bufIndex] =
+                sampleplayMonoRaw;
+            sampleplayFilteredWaveformBuffer_[bufIndex] =
+                sampleplayMonoFiltered;
 
             // No oscillator voices are active: clear per-voice
             // histories so that visualisation for generator-based
@@ -362,7 +414,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             }
 
             // Update any connection taps attached to the Sampleplay
-            // path.
+            // path usando la señal original (pre-filter).
             for (int t = 0; t < tapCount; ++t) {
                 const int tapKind =
                     connectionTaps_[t].kind.load(
@@ -370,7 +422,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 if (tapKind == static_cast<int>(
                                    ConnectionTapSourceKind::kSampleplay)) {
                     connectionWaveformBuffers_[t][bufIndex] =
-                        sampleplayMono;
+                        sampleplayMonoRaw;
                 }
             }
 
@@ -458,6 +510,64 @@ void AudioEngine::setSampleplayOutputGain(const float gain)
 {
     const float clamped = juce::jlimit(0.0F, 1.0F, gain);
     sampleplayOutputGain_.store(clamped, std::memory_order_relaxed);
+}
+
+void AudioEngine::setSampleplayFilter(const int mode,
+                                      const double cutoffHz,
+                                      const float q)
+{
+    const int clampedMode = juce::jlimit(0, 3, mode);
+
+    // Resonance must be strictly > 0 for the JUCE filter; clamp to
+    // a musically useful range as with per-voice filters.
+    const float qClamped = juce::jlimit(0.1F, 15.0F, q);
+
+    const double sr = sampleRate_ > 0.0 ? sampleRate_ : 44100.0;
+    const double nyquist = 0.5 * sr;
+    double fc = cutoffHz;
+    if (fc <= 0.0) {
+        fc = 0.0;
+    }
+    if (fc >= nyquist) {
+        fc = nyquist * 0.99;
+    }
+
+    sampleplayFilterMode_.store(clampedMode,
+                                std::memory_order_relaxed);
+    sampleplayFilterCutoffHz_.store(fc,
+                                    std::memory_order_relaxed);
+    sampleplayFilterQ_.store(qClamped, std::memory_order_relaxed);
+
+    // If the filter is disabled or has an invalid cutoff, leave it
+    // effectively bypassed. We avoid resetting here to preserve
+    // continuity when parameters are toggled.
+    if (clampedMode == 0 || fc <= 0.0) {
+        return;
+    }
+
+    using FilterType = juce::dsp::StateVariableTPTFilterType;
+
+    switch (clampedMode) {
+        case 1:  // Low-pass
+            sampleplayFilterL_.setType(FilterType::lowpass);
+            sampleplayFilterR_.setType(FilterType::lowpass);
+            break;
+        case 2:  // Band-pass
+            sampleplayFilterL_.setType(FilterType::bandpass);
+            sampleplayFilterR_.setType(FilterType::bandpass);
+            break;
+        case 3:  // High-pass
+            sampleplayFilterL_.setType(FilterType::highpass);
+            sampleplayFilterR_.setType(FilterType::highpass);
+            break;
+        default:
+            return;
+    }
+
+    sampleplayFilterL_.setCutoffFrequency(static_cast<float>(fc));
+    sampleplayFilterR_.setCutoffFrequency(static_cast<float>(fc));
+    sampleplayFilterL_.setResonance(qClamped);
+    sampleplayFilterR_.setResonance(qClamped);
 }
 
 void AudioEngine::clearAllConnectionWaveformTaps()
@@ -820,6 +930,53 @@ void AudioEngine::getSampleplayWaveformSnapshot(float* dst,
         const int bufIndex =
             (startIndex + offset + historySize) % historySize;
         dst[i] = sampleplayWaveformBuffer_[bufIndex];
+    }
+
+    for (int i = points; i < numPoints; ++i) {
+        dst[i] = dst[points - 1];
+    }
+}
+
+void AudioEngine::getSampleplayFilteredWaveformSnapshot(
+    float* dst, const int numPoints, const double windowSeconds)
+{
+    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0) {
+        return;
+    }
+
+    const int historySize = kWaveformHistorySize;
+    const int writeIndex =
+        waveformWriteIndex_.load(std::memory_order_relaxed);
+    const int availableSamples =
+        std::min(historySize, std::max(writeIndex, 0));
+
+    if (availableSamples <= 0) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    double window = windowSeconds;
+    if (window <= 0.0) {
+        window = 0.05;  // Default to ~50 ms.
+    }
+
+    int windowSamples = static_cast<int>(window * sampleRate_);
+    windowSamples =
+        std::max(1, std::min(windowSamples, availableSamples));
+
+    const int startIndex =
+        (writeIndex - windowSamples + historySize * 4) % historySize;
+
+    const int points = std::min(numPoints, windowSamples);
+    const float denom = static_cast<float>(std::max(points - 1, 1));
+
+    for (int i = 0; i < points; ++i) {
+        const float t = static_cast<float>(i) / denom;
+        const int offset = static_cast<int>(
+            t * static_cast<float>(windowSamples - 1));
+        const int bufIndex =
+            (startIndex + offset + historySize) % historySize;
+        dst[i] = sampleplayFilteredWaveformBuffer_[bufIndex];
     }
 
     for (int i = points; i < numPoints; ++i) {

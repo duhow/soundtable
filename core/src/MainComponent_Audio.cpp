@@ -1109,6 +1109,141 @@ void MainComponent::timerCallback()
 
     audioEngine_.setSampleplayOutputGain(sampleplayOutputGain);
 
+    // Configure an optional filter on the global Sampleplay path
+    // when there is an active Sampleplay → Filter connection. Since
+    // all Sampleplay modules share a single FluidSynth instance, we
+    // approximate the desired routing by selecting the closest
+    // compatible Filter connected to any Sampleplay module and
+    // applying its parameters to a dedicated Sampleplay filter in
+    // the AudioEngine.
+    int sampleplayFilterMode = 0;
+    double sampleplayFilterCutoffHz = 0.0;
+    float sampleplayFilterQ = 0.7071F;
+    {
+        const rectai::FilterModule* bestFilter = nullptr;
+        float bestDistSq = std::numeric_limits<float>::max();
+
+        for (const auto& [objId, obj] : objects) {
+            const auto modIt = modules.find(obj.logical_id());
+            if (modIt == modules.end() || modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* srcModule = modIt->second.get();
+            if (!srcModule->is<rectai::SampleplayModule>()) {
+                continue;
+            }
+
+            if (!isInsideMusicArea(obj)) {
+                continue;
+            }
+
+            // Scan audio edges for Sampleplay → Filter connections
+            // that are active (inside area, respect cone for
+            // dynamic links and not muted at connection level).
+            for (const auto& edge : audioEdges) {
+                if (edge.from_module_id != srcModule->id() ||
+                    edge.to_module_id == "-1") {
+                    continue;
+                }
+
+                const auto destModIt = modules.find(edge.to_module_id);
+                if (destModIt == modules.end() ||
+                    destModIt->second == nullptr) {
+                    continue;
+                }
+
+                auto* candidateFilter =
+                    dynamic_cast<rectai::FilterModule*>(
+                        destModIt->second.get());
+                if (candidateFilter == nullptr) {
+                    continue;
+                }
+
+                const auto toObjIdIt =
+                    moduleToObjectId.find(edge.to_module_id);
+                if (toObjIdIt == moduleToObjectId.end()) {
+                    continue;
+                }
+
+                const auto objIt = objects.find(toObjIdIt->second);
+                if (objIt == objects.end()) {
+                    continue;
+                }
+
+                const auto& destObj = objIt->second;
+                if (!isInsideMusicArea(destObj)) {
+                    continue;
+                }
+
+                if (!edge.is_hardlink &&
+                    !isConnectionGeometricallyActive(obj, destObj)) {
+                    continue;
+                }
+
+                rectai::Connection tmpConn{
+                    edge.from_module_id,
+                    edge.from_port_name,
+                    edge.to_module_id,
+                    edge.to_port_name,
+                    edge.is_hardlink};
+                const std::string key = makeConnectionKey(tmpConn);
+                const bool connIsMuted =
+                    mutedConnections_.find(key) !=
+                    mutedConnections_.end();
+                if (connIsMuted) {
+                    continue;
+                }
+
+                const float dx = destObj.x() - obj.x();
+                const float dy = destObj.y() - obj.y();
+                const float distSq = dx * dx + dy * dy;
+
+                if (bestFilter == nullptr || distSq < bestDistSq) {
+                    bestFilter = candidateFilter;
+                    bestDistSq = distSq;
+                }
+            }
+        }
+
+        if (bestFilter != nullptr) {
+            using Mode = rectai::FilterModule::Mode;
+
+            float filterFreqParam = bestFilter->GetParameterOrDefault(
+                "freq",
+                bestFilter->default_parameter_value("freq"));
+            filterFreqParam =
+                juce::jlimit(0.0F, 1.0F, filterFreqParam);
+            const double fb = bestFilter->base_frequency_hz();
+            const double fr = bestFilter->frequency_range_hz();
+            sampleplayFilterCutoffHz =
+                fb + fr * static_cast<double>(filterFreqParam);
+
+            const float qParam = bestFilter->GetParameterOrDefault(
+                "q",
+                bestFilter->default_parameter_value("q"));
+            const float minQ = 0.5F;
+            const float maxQ = 10.0F;
+            sampleplayFilterQ =
+                minQ + (maxQ - minQ) * qParam;
+
+            const auto mode = bestFilter->mode();
+            if (mode == Mode::kLowPass) {
+                sampleplayFilterMode = 1;
+            } else if (mode == Mode::kBandPass) {
+                sampleplayFilterMode = 2;
+            } else if (mode == Mode::kHighPass) {
+                sampleplayFilterMode = 3;
+            } else {
+                sampleplayFilterMode = 0;
+            }
+        }
+    }
+
+    audioEngine_.setSampleplayFilter(sampleplayFilterMode,
+                                     sampleplayFilterCutoffHz,
+                                     sampleplayFilterQ);
+
     struct VoiceParams {
         double frequency{0.0};
         float level{0.0F};
