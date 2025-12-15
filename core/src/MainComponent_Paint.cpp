@@ -60,13 +60,21 @@ void MainComponent::paint(juce::Graphics& g)
     // ---------------------------------------------------------------------
     // Background: solid table colour (#001a80) with a soft outer
     // border that fades to black so the edge blends into the
-    // surrounding black background.
+    // surrounding black background. When the audio device could not
+    // be initialised due to having no output channels, the table is
+    // rendered in red (#801a1a) to signal the degraded audio state.
     // ---------------------------------------------------------------------
     const float tableRadius =
         0.45F * std::min(bounds.getWidth(), bounds.getHeight());
 
-    const juce::Colour tableColour =
-        juce::Colour::fromRGB(0x00, 0x1a, 0x80);  // #001a80
+    const bool hasAudioInitError =
+        audioEngine_.hasInitialisationError();
+
+    const juce::Colour tableColour = hasAudioInitError
+                                         ? juce::Colour::fromRGB(
+                                               0x80, 0x1a, 0x1a)  // #801a1a
+                                         : juce::Colour::fromRGB(
+                                               0x00, 0x1a, 0x80);  // #001a80
 
     // Draw a subtle outer ring that transitions from the table
     // colour to black, creating a smooth fade with the background.

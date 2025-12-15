@@ -46,6 +46,24 @@ public:
         int numSamples,
         const juce::AudioIODeviceCallbackContext& context) override;
 
+    // Returns true when the audio device could not provide any
+    // output channels during initialisation (for example when the
+    // system has no active audio device). The UI can use this to
+    // reflect a degraded audio state.
+    [[nodiscard]] bool hasNoOutputChannels() const noexcept
+    {
+        return noOutputChannels_;
+    }
+
+    // Returns true when there was any error while initialising the
+    // audio device manager. This includes the "no channels" case but
+    // also other failures (invalid device configuration, missing
+    // backend, etc.).
+    [[nodiscard]] bool hasInitialisationError() const noexcept
+    {
+        return initError_;
+    }
+
     // Control API (voice 0 convenience wrappers)
     void setFrequency(double frequency);
     void setLevel(float level);
@@ -170,4 +188,16 @@ private:
     // before mixing it with the oscillator voices.
     std::vector<float> sampleplayLeft_;
     std::vector<float> sampleplayRight_;
+
+    // Set to true when the audio device initialisation succeeded but
+    // reported zero output channels (e.g. "no channels"). Used by
+    // the UI layer to change the table colour when audio is
+    // unavailable.
+    bool noOutputChannels_{false};
+
+    // Set to true when any error is reported by
+    // initialiseWithDefaultDevices during construction. This is a
+    // coarse indicator that audio is not in a healthy state and is
+    // used primarily for visual feedback in the UI.
+    bool initError_{false};
 };

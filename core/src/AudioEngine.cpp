@@ -14,6 +14,15 @@ AudioEngine::AudioEngine()
     if (audioError.isNotEmpty()) {
         juce::Logger::writeToLog("[rectai-core] Failed to initialise audio: " +
                                  audioError);
+
+        // Detect the specific case where JUCE reports that there are
+        // no available output channels (for example, when the system
+        // has no active audio device). The UI can surface this state
+        // by changing the table colour.
+        initError_ = true;
+        if (audioError.containsIgnoreCase("no channels")) {
+            noOutputChannels_ = true;
+        }
     } else {
         deviceManager_.addAudioCallback(this);
         juce::Logger::writeToLog("[rectai-core] Audio engine initialised.");
