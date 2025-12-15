@@ -392,9 +392,10 @@ void MainComponent::paint(juce::Graphics& g)
     std::unordered_set<std::int64_t> objectsWithOutgoingActiveConnection;
     for (const auto& conn : scene_.connections()) {
         // Ignore connections that target the invisible Output/master module
-        // (id "-1"). Auto-wired master connections should not be treated as
-        // "outgoing" for the purpose of hiding generator → master lines.
-        if (conn.to_module_id == "-1") {
+        // (id MASTER_OUTPUT_ID). Auto-wired master connections should not be
+        // treated as "outgoing" for the purpose of hiding generator →
+        // master lines.
+        if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
             continue;
         }
 
@@ -475,7 +476,7 @@ void MainComponent::paint(juce::Graphics& g)
         // master bus.
         // -----------------------------------------------------------------
         for (const auto& [id, object] : objects) {
-            if (object.logical_id() == "-1") {
+            if (object.logical_id() == rectai::MASTER_OUTPUT_ID) {
                 continue;  // Output (master) is not drawn as a module.
             }
 
@@ -669,14 +670,15 @@ void MainComponent::paint(juce::Graphics& g)
             }
 
             // A radial line is visually muted when its implicit
-            // connection to the master Output (-1) is muted at the
-            // connection level. We derive that state by checking for
-            // a module -> "-1" connection in mutedConnections_.
+            // connection to the master Output (MASTER_OUTPUT_ID) is
+            // muted at the connection level. We derive that state by
+            // checking for a module -> MASTER_OUTPUT_ID connection in
+            // mutedConnections_.
             bool isRadialMuted = false;
             {
                 for (const auto& conn : scene_.connections()) {
                     if (conn.from_module_id != object.logical_id() ||
-                        conn.to_module_id != "-1") {
+                        conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -776,7 +778,7 @@ void MainComponent::paint(juce::Graphics& g)
                     for (const auto& conn : scene_.connections()) {
                         if (conn.from_module_id !=
                                 object.logical_id() ||
-                            conn.to_module_id != "-1") {
+                            conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
                             continue;
                         }
 
@@ -976,7 +978,7 @@ void MainComponent::paint(juce::Graphics& g)
 
                 for (const auto& mconn : scene_.connections()) {
                     if (mconn.from_module_id != conn.from_module_id ||
-                        mconn.to_module_id != "-1") {
+                        mconn.to_module_id != rectai::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -1275,9 +1277,10 @@ void MainComponent::paint(juce::Graphics& g)
         return activeBase;
     };
 
-    for (const auto& entry : objects) {
-        const auto& object = entry.second;
-        if (object.docked() || object.logical_id() == "-1") {
+        for (const auto& entry : objects) {
+            const auto& object = entry.second;
+            if (object.docked() ||
+                object.logical_id() == rectai::MASTER_OUTPUT_ID) {
             continue;
         }
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
@@ -1286,11 +1289,12 @@ void MainComponent::paint(juce::Graphics& g)
         // A module body is considered muted for colouring purposes
         // when all its effective routes to the master are muted at
         // connection level. This is approximated by checking whether
-        // its implicit module -> Output (-1) connection is muted.
+        // its implicit module -> Output (MASTER_OUTPUT_ID) connection
+        // is muted.
         bool isBodyMuted = false;
         for (const auto& conn : scene_.connections()) {
             if (conn.from_module_id != object.logical_id() ||
-                conn.to_module_id != "-1") {
+                conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -1765,7 +1769,7 @@ void MainComponent::paint(juce::Graphics& g)
     // ---------------------------------------------------------------------
     for (const auto& entry : objects) {
         const auto& object = entry.second;
-        if (object.docked() || object.logical_id() == "-1") {
+        if (object.docked() || object.logical_id() == rectai::MASTER_OUTPUT_ID) {
             continue;
         }
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
@@ -1895,11 +1899,12 @@ void MainComponent::paint(juce::Graphics& g)
 
                 // Dock capsules reuse the same body colour logic as
                 // modules on the table: derive mute from the
-                // implicit module -> Output (-1) connection.
+                // implicit module -> Output (MASTER_OUTPUT_ID)
+                // connection.
                 bool isBodyMuted = false;
                 for (const auto& conn : scene_.connections()) {
                     if (conn.from_module_id != obj->logical_id() ||
-                        conn.to_module_id != "-1") {
+                        conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
                         continue;
                     }
 

@@ -939,7 +939,7 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
   // Auto-connect audio-capable modules to the Output (master) module when
   // present. Reactable patches use a tangible with id -1 to represent the
   // master output; in the Scene model this becomes an OutputModule with
-  // module id "-1" that should act as the common sink for chains. The
+  // module id -1 (MASTER_OUTPUT_ID) that should act as the common sink for chains. The
   // Output tangible itself remains invisible in the UI, but other modules are
   // allowed to connect to it logically via Scene::connections.
   const auto masterMappingIt = tangible_to_module_id.find(-1);

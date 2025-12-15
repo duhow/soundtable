@@ -150,9 +150,10 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
         }
 
         // Treat the Sampleplay module as muted when all its
-        // effective routes to the master Output (-1) are muted at
-        // connection level. This is driven by the implicit
-        // module -> "-1" connection created by the loader.
+        // effective routes to the master Output (MASTER_OUTPUT_ID)
+        // are muted at connection level. This is driven by the
+        // implicit module -> MASTER_OUTPUT_ID connection created by
+        // the loader.
         bool mutedToMaster = false;
         {
             bool hasMasterRoute = false;
@@ -163,7 +164,7 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
 
             for (const auto& edge : audioEdges) {
                 if (edge.from_module_id != module->id() ||
-                    edge.to_module_id != "-1") {
+                    edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -767,7 +768,7 @@ void MainComponent::timerCallback()
                 // Avoid proposing explicit dynamic connections towards
                 // the invisible Output/master; esas rutas ya las
                 // gestiona el loader como auto-wiring.
-                if (connection.to_module_id == "-1") {
+                if (connection.to_module_id == rectai::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -848,7 +849,7 @@ void MainComponent::timerCallback()
             }
 
             // Skip implicit/master connections.
-            if (conn.to_module_id == "-1") {
+            if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -905,7 +906,7 @@ void MainComponent::timerCallback()
 
                 // Ignore Output/master and global controllers as
                 // downstream targets for the generator dynamic link.
-                if (destModule->id() == "-1" ||
+                if (destModule->id() == rectai::MASTER_OUTPUT_ID ||
                     destModule->is_global_controller()) {
                     continue;
                 }
@@ -1066,15 +1067,15 @@ void MainComponent::timerCallback()
                 continue;
             }
 
-            // Find the implicit connection Sampleplay -> Output (-1)
-            // using the audio graph so we only consider audio
-            // routes.
+            // Find the implicit connection Sampleplay ->
+            // Output (MASTER_OUTPUT_ID) using the audio graph so we
+            // only consider audio routes.
             bool routeToMasterMuted = true;  // Assume muted until a
                                              // non-muted route is
                                              // found.
             for (const auto& edge : audioEdges) {
                 if (edge.from_module_id != module->id() ||
-                    edge.to_module_id != "-1") {
+                    edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -1273,11 +1274,12 @@ void MainComponent::timerCallback()
             continue;
         }
 
-        // A generator is considered muted at source when all its
-        // effective routes to the master are muted at connection
-        // level. This is modelled as the auto-wired connection from
-        // the generator to the invisible Output (-1); muting that
-        // connection is equivalent to muting the radial line.
+            // A generator is considered muted at source when all its
+            // effective routes to the master are muted at connection
+            // level. This is modelled as the auto-wired connection from
+            // the generator to the invisible Output (MASTER_OUTPUT_ID);
+            // muting that connection is equivalent to muting the radial
+            // line.
         bool srcMuted = false;
         {
             bool hasMasterRoute = false;
@@ -1285,7 +1287,7 @@ void MainComponent::timerCallback()
 
             for (const auto& edge : audioEdges) {
                 if (edge.from_module_id != module->id() ||
-                    edge.to_module_id != "-1") {
+                    edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -1333,12 +1335,13 @@ void MainComponent::timerCallback()
 
         for (const auto& edge : audioEdges) {
             // Skip auto-wired connections from generators to the
-            // invisible Output/master module (id "-1"). The current
-            // runtime does not model the Output module as an explicit
-            // processing node in the audio graph, so treating it as a
-            // downstream target here would change behaviour compared to
-            // scenes without auto-wiring (generators direct to master).
-            if (edge.to_module_id == "-1") {
+            // invisible Output/master module (id MASTER_OUTPUT_ID).
+            // The current runtime does not model the Output module as
+            // an explicit processing node in the audio graph, so
+            // treating it as a downstream target here would change
+            // behaviour compared to scenes without auto-wiring
+            // (generators direct to master).
+            if (edge.to_module_id == rectai::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -1414,17 +1417,7 @@ void MainComponent::timerCallback()
         int waveformIndex = 0;  // 0 = sine by default.
         if (const auto* oscModule =
                 dynamic_cast<const rectai::OscillatorModule*>(module)) {
-            using Waveform = rectai::OscillatorModule::Waveform;
-            const auto wf = oscModule->waveform();
-            if (wf == Waveform::kSaw) {
-                waveformIndex = 1;
-            } else if (wf == Waveform::kSquare) {
-                waveformIndex = 2;
-            } else if (wf == Waveform::kNoise) {
-                waveformIndex = 3;
-            } else {
-                waveformIndex = 0;
-            }
+            waveformIndex = oscModule->waveform_index();
         }
 
         for (const auto& route : routes) {
@@ -1922,7 +1915,8 @@ void MainComponent::timerCallback()
                         dynamic_cast<const rectai::SampleplayModule*>(
                             dstModule)) {
                     // Respect the destination module's route to the
-                    // master: if all Sampleplay → Output (-1)
+                    // master: if all Sampleplay → Output
+                    // (MASTER_OUTPUT_ID)
                     // connections are muted, do not trigger notes
                     // for this step.
                     bool dstMutedToMaster = false;
@@ -1933,7 +1927,7 @@ void MainComponent::timerCallback()
                         for (const auto& aedge : audioEdges) {
                             if (aedge.from_module_id !=
                                     sampleModule->id() ||
-                                aedge.to_module_id != "-1") {
+                                aedge.to_module_id != rectai::MASTER_OUTPUT_ID) {
                                 continue;
                             }
 

@@ -8,6 +8,9 @@
 
 namespace rectai {
 
+// Canonical id used for the invisible master Output module.
+inline constexpr const char* MASTER_OUTPUT_ID = "-1";
+
 // --- Shared data structures derived from the Reactable .rtp schema ---
 
 // Generic envelope used by multiple module types (Filter, Delay, Loop, etc.).
@@ -100,6 +103,10 @@ class OscillatorModule : public AudioModule {
          void set_waveform_from_subtype(const std::string& subtype);
          void cycle_waveform();
          [[nodiscard]] std::string subtype_string() const;
+         [[nodiscard]] int waveform_index() const
+         {
+                  return static_cast<int>(waveform_);
+         }
 
  private:
          Envelope envelope_{};

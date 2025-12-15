@@ -329,7 +329,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
         auto filter1 =
             std::make_unique<rectai::FilterModule>("filter1");
         auto output =
-            std::make_unique<rectai::OutputModule>("-1");
+            std::make_unique<rectai::OutputModule>(rectai::MASTER_OUTPUT_ID);
 
         (void)scene_.AddModule(std::move(osc1));
         (void)scene_.AddModule(std::move(filter1));
@@ -348,7 +348,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
             rectai::Connection c2{
                 .from_module_id = "filter1",
                 .from_port_name = "out",
-                .to_module_id = "-1",
+                .to_module_id = rectai::MASTER_OUTPUT_ID,
                 .to_port_name = "in",
                 .is_hardlink = false};
             (void)scene_.AddConnection(c2);
@@ -360,21 +360,21 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
             rectai::Connection c3{
                 .from_module_id = "osc1",
                 .from_port_name = "out",
-                .to_module_id = "-1",
+                .to_module_id = rectai::MASTER_OUTPUT_ID,
                 .to_port_name = "in",
                 .is_hardlink = false};
             (void)scene_.AddConnection(c3);
         }
 
         // Normalized positions on the table. The Output tangible is
-        // represented as an object with logical_id "-1" but remains
+        // represented as an object with logical_id MASTER_OUTPUT_ID but remains
         // invisible in the UI (MainComponent_Paint filters it out).
         scene_.UpsertObject(
             rectai::ObjectInstance(1, "osc1", 0.3F, 0.5F, 0.0F));
         scene_.UpsertObject(rectai::ObjectInstance(
             2, "filter1", 0.7F, 0.5F, 0.0F));
         scene_.UpsertObject(rectai::ObjectInstance(
-            -1, "-1", 0.5F, 0.1F, 0.0F));
+            -1, rectai::MASTER_OUTPUT_ID, 0.5F, 0.1F, 0.0F));
     }
 
     // After the scene has been populated, attempt to resolve and load

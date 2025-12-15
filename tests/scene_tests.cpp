@@ -251,7 +251,7 @@ int main()
         const Connection& c = connections.front();
         assert(c.from_module_id == "10");
         assert(c.from_port_name == "out");
-        assert(c.to_module_id == "-1");
+        assert(c.to_module_id == rectai::MASTER_OUTPUT_ID);
         assert(c.to_port_name == "in");
         // Connections derived from <hardlink> should be marked as
         // hardlinks in the Scene model.
@@ -293,7 +293,7 @@ int main()
         const Connection& c2 = connections2.front();
         assert(c2.from_module_id == "46");
         assert(c2.from_port_name == "out");
-        assert(c2.to_module_id == "-1");
+        assert(c2.to_module_id == rectai::MASTER_OUTPUT_ID);
         assert(c2.to_port_name == "in");
         assert(!c2.is_hardlink);
     }
@@ -398,7 +398,7 @@ int main()
         auto sample = std::make_unique<SampleplayModule>("sp1");
         auto filter1 = std::make_unique<FilterModule>("filter1");
         auto filter2 = std::make_unique<FilterModule>("filter2");
-        auto output = std::make_unique<OutputModule>("-1");
+        auto output = std::make_unique<OutputModule>(rectai::MASTER_OUTPUT_ID);
 
         assert(s.AddModule(std::move(sample)));
         assert(s.AddModule(std::move(filter1)));
@@ -427,7 +427,7 @@ int main()
         // must still be accepted.
         Connection toMaster{.from_module_id = "sp1",
                             .from_port_name = "out",
-                            .to_module_id = "-1",
+                            .to_module_id = rectai::MASTER_OUTPUT_ID,
                             .to_port_name = "in",
                             .is_hardlink = false};
         assert(s.AddConnection(toMaster));
@@ -506,7 +506,7 @@ int main()
 
         auto osc = std::make_unique<OscillatorModule>("osc1");
         auto filter = std::make_unique<FilterModule>("filter1");
-        auto output = std::make_unique<OutputModule>("-1");
+        auto output = std::make_unique<OutputModule>(rectai::MASTER_OUTPUT_ID);
 
         assert(s.AddModule(std::move(osc)));
         assert(s.AddModule(std::move(filter)));
@@ -525,7 +525,7 @@ int main()
         // per-module dynamic limit.
         Connection toMaster{.from_module_id = "osc1",
                             .from_port_name = "out",
-                            .to_module_id = "-1",
+                            .to_module_id = rectai::MASTER_OUTPUT_ID,
                             .to_port_name = "in",
                             .is_hardlink = false};
         assert(s.AddConnection(toMaster));

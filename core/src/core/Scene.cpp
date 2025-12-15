@@ -4,6 +4,9 @@
 
 namespace rectai {
 
+// Canonical id used for the invisible master Output module.
+inline constexpr const char* MASTER_OUTPUT_ID = "-1";
+
 ObjectInstance::ObjectInstance(const std::int64_t tracking_id,
                                std::string logical_id, const float x,
                                const float y, const float angle_radians,
@@ -159,17 +162,19 @@ bool Scene::AddConnection(const Connection& connection)
 
   // Enforce that a module can have at most one non-hardlink (dynamic)
   // outgoing connection **to other modules**, while still allowing an
-  // additional non-hardlink connection to the master Output (-1). This
+  // additional non-hardlink connection to the master Output
+  // (MASTER_OUTPUT_ID). This
   // keeps the "single dynamic route" invariant for spatial routing
   // (e.g. Osc → closest Filter) without blocking the implicit
   // module→Output(-1) auto-wiring used to model radial lines and
   // connection-level mute to the master.
-  if (!connection.is_hardlink && connection.to_module_id != "-1") {
+    if (!connection.is_hardlink &&
+      connection.to_module_id != rectai::MASTER_OUTPUT_ID) {
     const auto existingOut = std::find_if(
         connections_.cbegin(), connections_.cend(),
         [&connection](const Connection& c) {
           return c.from_module_id == connection.from_module_id &&
-                 c.to_module_id != "-1";
+                 c.to_module_id != rectai::MASTER_OUTPUT_ID;
         });
     if (existingOut != connections_.cend()) {
       return false;

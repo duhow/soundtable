@@ -117,7 +117,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     // module.
     if (isRightClick) {
         for (const auto& [id, object] : objects) {
-            if (object.logical_id() == "-1" || object.docked()) {
+            if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+                object.docked()) {
                 continue;
             }
 
@@ -188,7 +189,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     const float sliderMargin = 6.0F;
 
     for (const auto& [id, object] : objects) {
-        if (object.logical_id() == "-1") {
+        if (object.logical_id() == rectai::MASTER_OUTPUT_ID) {
             continue;
         }
 
@@ -339,8 +340,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     }
 
     // Next, try to select an object by clicking on its circle.
-    for (const auto& [id, object] : objects) {
-        if (object.logical_id() == "-1" || object.docked()) {
+        for (const auto& [id, object] : objects) {
+            if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+                object.docked()) {
             continue;
         }
         const auto cx = bounds.getX() + object.x() * bounds.getWidth();
@@ -476,9 +478,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         std::unordered_set<std::int64_t> objectsWithOutgoingActiveConnection;
         for (const auto& conn : scene_.connections()) {
             // Ignore connections targeting the invisible Output/master
-            // module (id "-1") so that auto-wired master links do not
-            // affect centre-line hit-testing.
-            if (conn.to_module_id == "-1") {
+            // module (id MASTER_OUTPUT_ID) so that auto-wired master
+            // links do not affect centre-line hit-testing.
+            if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -573,7 +575,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         // clickable here (i.e. only modules that carry audio and not pure
         // control/MIDI modules such as the Sequencer).
         for (const auto& [id, object] : objectsLocal) {
-            if (object.logical_id() == "-1" || object.docked()) {
+            if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+                object.docked()) {
                 continue;
             }
 
@@ -735,7 +738,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
             // producen/consumen audio, excluyendo controladores globales
             // y módulos sólo MIDI/control como el Sequencer.
             for (const auto& [id, object] : objects) {
-                if (object.logical_id() == "-1" || object.docked() ||
+                if (object.logical_id() == rectai::MASTER_OUTPUT_ID || object.docked() ||
                     !isInsideMusicArea(object)) {
                     continue;
                 }
@@ -774,7 +777,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                     // Skip auto-wired connections from generators to the
                     // invisible Output/master module so that only real
                     // module-to-module chains influence centre-line cuts.
-                    if (conn.to_module_id == "-1") {
+                    if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -1167,7 +1170,7 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
         // toggle its mute state.
         for (const auto& conn : connections) {
             if (conn.from_module_id != moduleId ||
-                conn.to_module_id != "-1") {
+                conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -1212,7 +1215,8 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
     // that specific connection key. Additionally, when this is the only
     // active outgoing connection from the source module (ignoring the
     // implicit module→master auto-wire), we mirror the mute state onto
-    // the module→Output(-1) connection so that the mute persists when
+    // the module→Output(MASTER_OUTPUT_ID) connection so that the mute
+    // persists when
     // the topology changes between module→module and module→master.
     for (const auto& connKey : touchCutConnections_) {
         const bool wasMuted =
@@ -1252,7 +1256,7 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
                     // Output/master module so they do not influence the
                     // "only one connection" rule from the user's
                     // perspective.
-                    if (conn.to_module_id == "-1") {
+                    if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -1295,13 +1299,14 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
 
         // When muting (not unmuting) the only active outgoing
         // connection from a module, mirror that mute state onto its
-        // implicit module→Output(-1) connection so that the module
+        // implicit module→Output(MASTER_OUTPUT_ID) connection so that
+        // the module
         // stays muted even if the downstream module is later
         // disconnected and the path reverts to module→master.
         if (matchedConn != nullptr && hasSingleActiveConnection) {
             for (const auto& conn : connections) {
                 if (conn.from_module_id != srcModuleId ||
-                    conn.to_module_id != "-1") {
+                    conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
