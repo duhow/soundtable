@@ -564,10 +564,21 @@ void MainComponent::timerCallback()
 
         const auto& existingConnections = scene_.connections();
 
+        // Score table for dynamic connections between non-generator
+        // modules. For cada módulo origen conservamos solo el candidato
+        // con mejor puntuación (más cercano dentro del cono).
+        struct DynamicCandidate {
+            rectai::Connection connection;
+            float score{0.0F};
+        };
+
+        std::unordered_map<std::string, DynamicCandidate> bestByFrom;
+
         // For each unordered pair of objects inside the musical area,
-        // check whether a valid audio connection should exist according
-        // to module policies and the geometric cone. If so, ensure that
-        // a non-hardlink connection (standard out->in) is present.
+        // compute a score for a potential audio connection according to
+        // module policies, the geometric cone and distance. Only the
+        // best-scoring candidate per source module will be materialised
+        // as an actual dynamic connection.
         //
         // Generator modules are handled separately so that their
         // dynamic connections can follow the "closest Filter" rule
@@ -608,6 +619,14 @@ void MainComponent::timerCallback()
                                                    false, connection)) {
                     continue;
                 }
+
+                // Avoid proposing explicit dynamic connections towards
+                // the invisible Output/master; esas rutas ya las
+                // gestiona el loader como auto-wiring.
+                if (connection.to_module_id == "-1") {
+                    continue;
+                }
+
                 const rectai::ObjectInstance* fromObj = nullptr;
                 const rectai::ObjectInstance* toObj = nullptr;
 
@@ -643,8 +662,28 @@ void MainComponent::timerCallback()
                     continue;
                 }
 
-                (void)scene_.AddConnection(connection);
+                // Score candidate: modules more near to each other get
+                // higher score (distancia menor).
+                const float dx = toObj->x() - fromObj->x();
+                const float dy = toObj->y() - fromObj->y();
+                const float distSq = dx * dx + dy * dy;
+                const float score = -distSq;
+
+                auto it = bestByFrom.find(connection.from_module_id);
+                if (it == bestByFrom.end() || score > it->second.score) {
+                    bestByFrom[connection.from_module_id] =
+                        DynamicCandidate{connection, score};
+                }
             }
+        }
+
+        // Materialise only the best-scoring candidate per source
+        // module. Scene::AddConnection seguirá aplicando las
+        // invariantes globales (máx. una conexión dinámica saliente,
+        // no duplicar conexiones, etc.).
+        for (const auto& [fromId, candidate] : bestByFrom) {
+            (void)fromId;
+            (void)scene_.AddConnection(candidate.connection);
         }
     }
 

@@ -339,8 +339,7 @@ int main()
     }
 
     // Non-hardlink connections per module: at most one outgoing
-    // dynamic connection is allowed, but multiple hardlinks are
-    // permitted from the same source.
+    // dynamic connection is allowed.
     {
         Scene s;
 
@@ -370,8 +369,38 @@ int main()
                       .is_hardlink = false};
         assert(!s.AddConnection(d2));
 
-        // Hardlink connections from osc1 to multiple targets are
-        // allowed and must coexist with the single dynamic link.
+        const auto& conns = s.connections();
+        std::size_t dynamicCount = 0;
+        std::size_t hardlinkCount = 0;
+        for (const auto& c : conns) {
+            if (c.from_module_id != "osc1") {
+                continue;
+            }
+            if (c.is_hardlink) {
+                ++hardlinkCount;
+            } else {
+                ++dynamicCount;
+            }
+        }
+
+        assert(dynamicCount == 1U);
+        assert(hardlinkCount == 0U);
+    }
+
+    // Hardlink connections from the same source module are not
+    // counted towards the dynamic limit and multiple distinct
+    // hardlinks are permitted.
+    {
+        Scene s;
+
+        auto osc = std::make_unique<OscillatorModule>("osc1");
+        auto filter1 = std::make_unique<FilterModule>("filter1");
+        auto filter2 = std::make_unique<FilterModule>("filter2");
+
+        assert(s.AddModule(std::move(osc)));
+        assert(s.AddModule(std::move(filter1)));
+        assert(s.AddModule(std::move(filter2)));
+
         Connection h1{.from_module_id = "osc1",
                       .from_port_name = "out",
                       .to_module_id = "filter1",
@@ -400,7 +429,63 @@ int main()
             }
         }
 
-        assert(dynamicCount == 1U);
+        assert(dynamicCount == 0U);
+        assert(hardlinkCount == 2U);
+    }
+
+    // When a module already has a hardlink, it must not be allowed
+    // to add a new dynamic connection; only further hardlinks are
+    // permitted.
+    {
+        Scene s;
+
+        auto osc = std::make_unique<OscillatorModule>("osc1");
+        auto filter1 = std::make_unique<FilterModule>("filter1");
+        auto filter2 = std::make_unique<FilterModule>("filter2");
+
+        assert(s.AddModule(std::move(osc)));
+        assert(s.AddModule(std::move(filter1)));
+        assert(s.AddModule(std::move(filter2)));
+
+        Connection h1{.from_module_id = "osc1",
+                      .from_port_name = "out",
+                      .to_module_id = "filter1",
+                      .to_port_name = "in",
+                      .is_hardlink = true};
+        assert(s.AddConnection(h1));
+
+        // After the first hardlink, a dynamic connection from the
+        // same source must be rejected.
+        Connection d1{.from_module_id = "osc1",
+                      .from_port_name = "out",
+                      .to_module_id = "filter2",
+                      .to_port_name = "in",
+                      .is_hardlink = false};
+        assert(!s.AddConnection(d1));
+
+        // Additional hardlinks from the same source remain valid.
+        Connection h2{.from_module_id = "osc1",
+                      .from_port_name = "out",
+                      .to_module_id = "filter2",
+                      .to_port_name = "in",
+                      .is_hardlink = true};
+        assert(s.AddConnection(h2));
+
+        const auto& conns = s.connections();
+        std::size_t dynamicCount = 0;
+        std::size_t hardlinkCount = 0;
+        for (const auto& c : conns) {
+            if (c.from_module_id != "osc1") {
+                continue;
+            }
+            if (c.is_hardlink) {
+                ++hardlinkCount;
+            } else {
+                ++dynamicCount;
+            }
+        }
+
+        assert(dynamicCount == 0U);
         assert(hardlinkCount == 2U);
     }
 
