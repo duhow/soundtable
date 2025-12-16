@@ -386,6 +386,14 @@
 - En `MainComponent_Audio.cpp` se ha ajustado el cálculo de `calculatedLevel` para que un parámetro de ganancia normalizado igual a `0.0` produzca un nivel efectivo de `0.0` (silencio real), en lugar de mantener siempre un mínimo basado en `base_level_`.
 - El mapeo pasa de `calculatedLevel = base_level + level_range * gainParam` a una versión que devuelve 0 cuando `gainParam <= 0.0` y solo aplica el offset `base_level` para valores de ganancia mayores que 0, de forma que poner el slider de ganancia al mínimo realmente apaga el oscilador en audio (aunque se siga generando la forma de onda interna para visualización).
 
+## 2025-12-16
+
+### Barra lateral de Tempo ligada al BPM global
+- El módulo `TempoModule` aprovecha ahora la misma barra lateral izquierda de "frecuencia" que usan los generadores, pero reinterpretada como control de tempo: cuando el tangible de Tempo está en la mesa (o en el dock), se muestra una barra vertical a su izquierda cuya posición refleja el BPM global normalizado en el rango [40, 400].
+- En `MainComponent_Paint.cpp`, la frecuencia normalizada de los controles laterales se calcula, para `TempoModule`, a partir del valor global `bpm_` en lugar de leer un parámetro `freq`; además, la barra se fuerza a mostrarse aunque el módulo no marque `uses_frequency_control()` para no interferir con el mapeo genérico de frecuencia de otros módulos.
+- En `MainComponent_Input.cpp`, tanto el click como el drag sobre la barra izquierda de un `TempoModule` actualizan el BPM global (`bpm_`) y sincronizan el parámetro lógico `tempo` del propio módulo, reutilizando la misma geometría de slider que el resto de tangibles pero mapeando la posición vertical a un BPM en el intervalo [40, 400]. También se actualiza `bpmLastChangeSeconds_` para que la etiqueta numérica de BPM siga mostrándose y haciendo fade tras interacciones con el slider, igual que ocurre con los gestos de rotación.
+ - Además, la rueda del ratón sobre el nodo de Tempo en la mesa ajusta ahora el BPM global en pasos de ±1 por notch, o en pasos de ±5 cuando la tecla Shift está pulsada, manteniendo siempre el parámetro `tempo` del `TempoModule` sincronizado y respetando el mismo rango [40, 400].
+
 ## 2025-12-11
 
 ### Corrección de estiramiento de formas de onda según distancia

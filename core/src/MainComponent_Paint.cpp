@@ -1379,14 +1379,29 @@ void MainComponent::paint(juce::Graphics& g)
             moduleEntryIt != modules.end()) {
             moduleForObject = moduleEntryIt->second.get();
         }
+
+        const bool isTempoModule =
+            (moduleForObject != nullptr &&
+             moduleForObject->is<rectai::TempoModule>());
+
         float freqValue = 0.5F;
         float gainValue = 0.5F;
         bool showFreqControl = false;
         bool showGainControl = false;
         if (moduleForObject != nullptr) {
-            freqValue = moduleForObject->GetParameterOrDefault(
-                "freq",
-                moduleForObject->default_parameter_value("freq"));
+            if (isTempoModule) {
+                const double minBpm = 40.0;
+                const double maxBpm = 400.0;
+                const double clampedBpm =
+                    juce::jlimit(minBpm, maxBpm, bpm_);
+                const double norm =
+                    (clampedBpm - minBpm) / (maxBpm - minBpm);
+                freqValue = static_cast<float>(norm);
+            } else {
+                freqValue = moduleForObject->GetParameterOrDefault(
+                    "freq",
+                    moduleForObject->default_parameter_value("freq"));
+            }
 
             if (const auto* volumeModule =
                     dynamic_cast<const rectai::VolumeModule*>(
@@ -1411,7 +1426,9 @@ void MainComponent::paint(juce::Graphics& g)
                     moduleForObject->default_parameter_value("gain"));
             }
 
-            showFreqControl = moduleForObject->uses_frequency_control();
+            showFreqControl =
+                moduleForObject->uses_frequency_control() ||
+                isTempoModule;
             showGainControl = moduleForObject->uses_gain_control();
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);

@@ -16,6 +16,77 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
 {
     const auto bounds = getLocalBounds().toFloat();
 
+    // When the cursor is over the Tempo module, use the mouse wheel
+    // to adjust the global BPM in 1-unit steps instead of scrolling
+    // the dock. This provides a quick tempo nudge gesture that
+    // complements rotation and the side control bar.
+    {
+        const auto& objects = scene_.objects();
+        const auto& modules = scene_.modules();
+
+        const float tempoRadius = 30.0F;
+        for (const auto& [id, object] : objects) {
+            juce::ignoreUnused(id);
+
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt == modules.end() || modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* module = modIt->second.get();
+            auto* tempoModule =
+                dynamic_cast<rectai::TempoModule*>(module);
+            if (tempoModule == nullptr) {
+                continue;
+            }
+
+            if (object.docked()) {
+                // For now, only support wheel-based tempo changes
+                // when the Tempo tangible is on the table surface.
+                continue;
+            }
+
+            const float cx = bounds.getX() +
+                             object.x() * bounds.getWidth();
+            const float cy = bounds.getY() +
+                             object.y() * bounds.getHeight();
+
+            const float dx = static_cast<float>(event.position.x) - cx;
+            const float dy = static_cast<float>(event.position.y) - cy;
+            const float distSq = dx * dx + dy * dy;
+            if (distSq > tempoRadius * tempoRadius) {
+                continue;
+            }
+
+            const float wheelDelta = static_cast<float>(wheel.deltaY);
+            if (wheelDelta == 0.0F) {
+                return;
+            }
+
+            const double baseStep = event.mods.isShiftDown() ? 5.0 : 1.0;
+            const double step = (wheelDelta > 0.0F) ? baseStep : -baseStep;
+            double newBpm = bpm_ + step;
+            newBpm = juce::jlimit(40.0, 400.0, newBpm);
+
+            if (newBpm == bpm_) {
+                return;
+            }
+
+            bpm_ = newBpm;
+            bpmLastChangeSeconds_ =
+                juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+            // Keep the logical Tempo module parameter in sync with
+            // the global BPM so that serialisation and other
+            // consumers observe the updated tempo value.
+            scene_.SetModuleParameter(tempoModule->id(), "tempo",
+                                      static_cast<float>(bpm_));
+
+            repaint();
+            return;
+        }
+    }
+
     // Limit mouse wheel scrolling to the dock area only.
     auto dockBounds = bounds;
     const float dockWidth = calculateDockWidth(dockBounds.getWidth());
@@ -209,16 +280,29 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         const auto modIt = modules.find(object.logical_id());
         const rectai::AudioModule* moduleForObject =
             (modIt != modules.end()) ? modIt->second.get() : nullptr;
+        const bool isTempoModule =
+            (moduleForObject != nullptr &&
+             moduleForObject->is<rectai::TempoModule>());
         bool freqEnabled = false;
         bool gainEnabled = false;
         float freqValue = 0.5F;
         float gainValue = 0.5F;
         if (moduleForObject != nullptr) {
-            freqEnabled = moduleForObject->uses_frequency_control();
+            if (isTempoModule) {
+                const double minBpm = 40.0;
+                const double maxBpm = 400.0;
+                const double clampedBpm =
+                    juce::jlimit(minBpm, maxBpm, bpm_);
+                const double norm =
+                    (clampedBpm - minBpm) / (maxBpm - minBpm);
+                freqValue = static_cast<float>(norm);
+            } else {
+                freqValue = moduleForObject->GetParameterOrDefault(
+                    "freq",
+                    moduleForObject->default_parameter_value("freq"));
+            }
+
             gainEnabled = moduleForObject->uses_gain_control();
-            freqValue = moduleForObject->GetParameterOrDefault(
-                "freq",
-                moduleForObject->default_parameter_value("freq"));
 
             if (const auto* volumeModule =
                     dynamic_cast<const rectai::VolumeModule*>(
@@ -236,6 +320,10 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                     "gain",
                     moduleForObject->default_parameter_value("gain"));
             }
+
+            freqEnabled =
+                moduleForObject->uses_frequency_control() ||
+                isTempoModule;
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
         gainValue = juce::jlimit(0.0F, 1.0F, gainValue);
@@ -309,7 +397,23 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             const float value = juce::jmap(clampedY, sliderBottom, sliderTop,
                                            0.0F, 1.0F);
 
-            scene_.SetModuleParameter(object.logical_id(), "freq", value);
+            if (isTempoModule) {
+                const double minBpm = 40.0;
+                const double maxBpm = 400.0;
+                const double newBpm =
+                    minBpm + (maxBpm - minBpm) *
+                                 static_cast<double>(value);
+                bpm_ = juce::jlimit(minBpm, maxBpm, newBpm);
+
+                bpmLastChangeSeconds_ =
+                    juce::Time::getMillisecondCounterHiRes() /
+                    1000.0;
+
+                scene_.SetModuleParameter(object.logical_id(), "tempo",
+                                          static_cast<float>(bpm_));
+            } else {
+                scene_.SetModuleParameter(object.logical_id(), "freq", value);
+            }
 
             repaint();
             return;
@@ -1008,7 +1112,28 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                                        0.0F, 1.0F);
 
         if (sideControlKind_ == SideControlKind::kFreq) {
-            scene_.SetModuleParameter(object.logical_id(), "freq", value);
+            const auto& modulesForFreq = scene_.modules();
+            const auto modItFreq =
+                modulesForFreq.find(object.logical_id());
+            if (modItFreq != modulesForFreq.end() &&
+                modItFreq->second != nullptr &&
+                modItFreq->second->is<rectai::TempoModule>()) {
+                const double minBpm = 40.0;
+                const double maxBpm = 400.0;
+                const double newBpm =
+                    minBpm + (maxBpm - minBpm) *
+                                 static_cast<double>(value);
+                bpm_ = juce::jlimit(minBpm, maxBpm, newBpm);
+
+                bpmLastChangeSeconds_ =
+                    juce::Time::getMillisecondCounterHiRes() /
+                    1000.0;
+
+                scene_.SetModuleParameter(object.logical_id(), "tempo",
+                                          static_cast<float>(bpm_));
+            } else {
+                scene_.SetModuleParameter(object.logical_id(), "freq", value);
+            }
         } else if (sideControlKind_ == SideControlKind::kGain) {
             const auto& modules = scene_.modules();
             const auto modIt = modules.find(object.logical_id());
