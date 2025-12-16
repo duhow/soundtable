@@ -1961,6 +1961,7 @@ void MainComponent::timerCallback()
             const auto& preset = seqModule->preset(presetIndex);
             const auto& step =
                 preset.steps[static_cast<std::size_t>(stepIndex)];
+            const int seqVersion = seqModule->version();
 
             // Si el paso está desactivado, no disparamos notas y,
             // opcionalmente, forzamos silencio explícito en los
@@ -2066,7 +2067,7 @@ void MainComponent::timerCallback()
                 // vector SequencerStep::pitches ya está preparado para
                 // modos futuros.
                 rectai::MidiNoteEvent noteEvent;
-                noteEvent.channel = 0;  // único canal lógico por ahora.
+                noteEvent.channel = 0;  // Single logical channel for now.
                 noteEvent.note = juce::jlimit(0, 127, step.pitch);
                 noteEvent.velocity01 =
                     juce::jlimit(0.0F, 1.0F, step.velocity01);
@@ -2156,9 +2157,26 @@ void MainComponent::timerCallback()
                     effectiveVelocity = juce::jlimit(0.0F, 1.0F,
                                                      effectiveVelocity);
 
+                    int midiKey = noteEvent.note;
+                    // In Sequencer v1 (pulse mode) we do not send
+                    // melodic information: the audible note comes
+                    // from the destination module configuration
+                    // (`midifreq` in Sampleplay). For v2+ the
+                    // sequencer can override pitch using
+                    // `SequencerStep::pitch`.
+                    if (seqVersion == 1) {
+                        const float midiNote =
+                            sampleModule->GetParameterOrDefault(
+                                "midifreq", 87.0F);
+                        midiKey = juce::jlimit(
+                            0, 127,
+                            static_cast<int>(std::floor(
+                                static_cast<double>(midiNote))));
+                    }
+
                     audioEngine_.triggerSampleplayNote(
                         activeInst->bank, activeInst->program,
-                        noteEvent.note, effectiveVelocity);
+                        midiKey, effectiveVelocity);
 
                     modulesWithActiveAudio_.insert(
                         sampleModule->id());
@@ -2170,24 +2188,33 @@ void MainComponent::timerCallback()
                 // cambios en el siguiente tick.
                 if (auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
                         dstModule)) {
-                    const double targetHz = 440.0 *
-                                             std::pow(2.0,
-                                                      (static_cast<double>(
-                                                           noteEvent.note) -
-                                                       69.0) /
-                                                          12.0);
+                    // In Sequencer v1 (pulse mode) we keep the
+                    // Oscillator's pitch as configured on the
+                    // destination module (midifreq/freq). Only in
+                    // v2+ the Sequencer is allowed to drive
+                    // oscillator frequency from `step.pitch`.
+                    if (seqVersion >= 2) {
+                        const double targetHz =
+                            440.0 *
+                            std::pow(2.0,
+                                     (static_cast<double>(
+                                          noteEvent.note) -
+                                      69.0) /
+                                         12.0);
 
-                    const double baseHz = oscModule->base_frequency_hz();
-                    const double rangeHz =
-                        oscModule->frequency_range_hz();
-                    if (rangeHz > 0.0) {
-                        const double norm =
-                            (targetHz - baseHz) / rangeHz;
-                        const float freqParam = juce::jlimit(
-                            0.0F, 1.0F,
-                            static_cast<float>(norm));
-                        scene_.SetModuleParameter(oscModule->id(),
-                                                  "freq", freqParam);
+                        const double baseHz =
+                            oscModule->base_frequency_hz();
+                        const double rangeHz =
+                            oscModule->frequency_range_hz();
+                        if (rangeHz > 0.0) {
+                            const double norm =
+                                (targetHz - baseHz) / rangeHz;
+                            const float freqParam = juce::jlimit(
+                                0.0F, 1.0F,
+                                static_cast<float>(norm));
+                            scene_.SetModuleParameter(
+                                oscModule->id(), "freq", freqParam);
+                        }
                     }
 
                     if (sequencerControlsVolume_) {

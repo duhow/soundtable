@@ -220,6 +220,13 @@ class SequencerModule : public AudioModule {
 
         explicit SequencerModule(const std::string& id);
 
+        // Reactable Sequencer version as declared in the .rtp
+        // tangible. When the attribute `version` is not present we
+        // treat it as version 1 (legacy pulse-based mode). Version 2
+        // and above are reserved for future melodic/advanced modes.
+        [[nodiscard]] int version() const { return version_; }
+        void set_version(int version) { version_ = version; }
+
         [[nodiscard]] const std::vector<SequenceTrack>& tracks() const
         {
                 return tracks_;
@@ -263,6 +270,7 @@ class SequencerModule : public AudioModule {
                 Mode mode_{Mode::kMonophonic};
                 int current_preset_{0};  // 0..kNumPresets-1
                 std::array<SequencerPreset, kNumPresets> presets_{};
+                int version_{1};
 };
 
 // Delay / echo module.

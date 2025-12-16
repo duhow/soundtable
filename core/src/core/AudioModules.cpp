@@ -406,27 +406,36 @@ void SequencerModule::SyncPresetsFromTracks()
         }
       }
 
-      // Pitch from per-step frequency when available; fallback to middle C.
-      int pitch = 60;  // C4
-      if (stepIndex < static_cast<int>(track.step_frequencies.size())) {
-        const float freq =
-            track.step_frequencies[static_cast<std::size_t>(stepIndex)];
-        if (freq > 0.0F) {
-          const double ratio = static_cast<double>(freq) / 440.0;
-          if (ratio > 0.0) {
-            const double midi =
-                69.0 + 12.0 * std::log(ratio) / std::log(2.0);
-            pitch = static_cast<int>(std::lround(midi));
+      // Pitch handling depends on the Sequencer version. In version 1
+      // the module behaves as a pulse generator and does not encode
+      // melodic information; all active steps use a fixed MIDI note
+      // (C4) so that downstream modules can trigger envelopes or
+      // gates without caring about pitch. From version 2 onwards we
+      // derive the pitch from per-step frequencies when available.
+
+      int pitch = 60;  // Default to C4 for pulse-only mode.
+      if (version_ >= 2) {
+        if (stepIndex < static_cast<int>(track.step_frequencies.size())) {
+          const float freq =
+              track.step_frequencies[static_cast<std::size_t>(stepIndex)];
+          if (freq > 0.0F) {
+            const double ratio = static_cast<double>(freq) / 440.0;
+            if (ratio > 0.0) {
+              const double midi =
+                  69.0 + 12.0 * std::log(ratio) / std::log(2.0);
+              pitch = static_cast<int>(std::lround(midi));
+            }
           }
+        }
+
+        // Clamp to a sensible MIDI range when deriving notes.
+        if (pitch < 0) {
+          pitch = 0;
+        } else if (pitch > 127) {
+          pitch = 127;
         }
       }
 
-      // Clamp to a sensible MIDI range.
-      if (pitch < 0) {
-        pitch = 0;
-      } else if (pitch > 127) {
-        pitch = 127;
-      }
       step.pitch = pitch;
 
       // For now, represent the step's pitch as a single-entry

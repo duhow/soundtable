@@ -12,6 +12,7 @@
 // Very small tests for the Scene/Module/Connection model.
 // They run as a normal binary and are integrated with CTest.
 
+using rectai::AudioModule;
 using rectai::Connection;
 using rectai::FilterModule;
 using rectai::ObjectInstance;
@@ -20,6 +21,9 @@ using rectai::OutputModule;
 using rectai::ReactablePatchMetadata;
 using rectai::Scene;
 using rectai::SampleplayModule;
+using rectai::SequencerModule;
+using rectai::SequencerPreset;
+using rectai::SequencerStep;
 using rectai::TempoModule;
 using rectai::TonalizerModule;
 using rectai::VolumeModule;
@@ -207,6 +211,88 @@ int main()
 
         // Clean up the temporary file; ignore errors.
         (void)std::remove(kSf2Path);
+    }
+
+    // Sequencer v1: pulse-based loading from .rtp.
+    {
+        // Minimal Reactable patch with a single Sequencer tangible
+        // in legacy (version 1) mode. The sequencer sends pulses
+        // based on `steps` and `volumes`; melodic information from
+        // `step_frequencies` should be ignored for version 1.
+        const char* kRtpSequencerV1 =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
+            "<reactablepatch>\n"
+            "  <tangibles>\n"
+            "    <tangible type=\"Sequencer\" id=\"6\" x=\"0.0\" y=\"0.0\" angle=\"0\" color=\"000000ff\" docked=\"0\" muted=\"0\" point=\"0\" subtype=\"sequencer\" current_track=\"0\" autoseq_on=\"0\" noteedit_on=\"0\" duration=\"0.75\" num_tracks=\"6\" offset=\"0\">\n"
+            "      <sequence rows=\"1,1,1,1,1,1,1,1,1,1,1,1,1\" speed=\"1\" speed_type=\"binary\" step_frequencies=\"0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\" steps=\"1,0,0,1,0,0,0,1,0,1,0,0,1,0,0,0\" tenori0=\"0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\" volumes=\"1,1,1,0.25,1,1,1,0.75,1,0.1,1,1,0.6,1,1,1\" />\n"
+            "    </tangible>\n"
+            "  </tangibles>\n"
+            "</reactablepatch>\n";
+
+        Scene loaded_scene;
+        ReactablePatchMetadata metadata;
+        std::string error;
+        const bool ok = rectai::LoadReactablePatchFromString(
+            kRtpSequencerV1, loaded_scene, &metadata, &error);
+        assert(ok);
+        assert(error.empty());
+
+        // One Sequencer module and one object should have been created.
+        assert(loaded_scene.modules().size() == 1U);
+        assert(loaded_scene.objects().size() == 1U);
+
+        const auto& modules_seq = loaded_scene.modules();
+        const auto module_it_seq = modules_seq.find("6");
+        assert(module_it_seq != modules_seq.end());
+        const AudioModule* baseModule = module_it_seq->second.get();
+        assert(baseModule != nullptr);
+
+        const auto* seqModule = dynamic_cast<const SequencerModule*>(baseModule);
+        assert(seqModule != nullptr);
+
+        // Version attribute is absent in the tangible, so the
+        // Sequencer must default to version 1 (pulse mode).
+        assert(seqModule->version() == 1);
+
+        // Tracks loaded from <sequence> must be reflected into the
+        // fixed-size presets via SyncPresetsFromTracks(). In v1 the
+        // enabled steps and their velocities come from `steps` and
+        // `volumes`, and melodic information is ignored (constant
+        // pitch for all pulses).
+        const auto& tracks = seqModule->tracks();
+        assert(!tracks.empty());
+
+        const SequencerPreset& preset0 = seqModule->preset(0);
+        // Index 0, 3, 7, 9 y 12 están a 1 en `steps`.
+        const int expectedEnabledIndices[] = {0, 3, 7, 9, 12};
+        for (int i = 0; i < SequencerPreset::kNumSteps; ++i) {
+            const SequencerStep& step =
+                preset0.steps[static_cast<std::size_t>(i)];
+
+            bool shouldBeEnabled = false;
+            for (int enabledIndex : expectedEnabledIndices) {
+                if (i == enabledIndex) {
+                    shouldBeEnabled = true;
+                    break;
+                }
+            }
+
+            if (shouldBeEnabled) {
+                assert(step.enabled);
+                // Volúmenes deben respetarse y estar en [0,1].
+                assert(step.velocity01 >= 0.0F && step.velocity01 <= 1.0F);
+            } else {
+                assert(!step.enabled);
+                // En v1 los pasos deshabilitados exponen velocidad 0.
+                assert(step.velocity01 == 0.0F);
+            }
+
+            // En versión 1 todos los pasos comparten el mismo pitch
+            // por diseño (no hay melodía codificada en
+            // step_frequencies). Esto garantiza que el sequencer se
+            // comporte como generador de pulsos.
+            assert(step.pitch == 60);
+        }
     }
 
     // Colours parsed from .rtp (RGB y RGB+alpha).

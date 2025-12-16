@@ -495,11 +495,20 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
       module = std::move(lfo);
     } else if (type == "Sequencer") {
       auto seq = std::make_unique<SequencerModule>(module_id);
+      // Reactable Sequencer tangibles may declare a version
+      // attribute. When absent we treat it as version 1 (legacy
+      // pulse-based behaviour where the sequencer emits triggers
+      // based on `steps`/`volumes` without encoding melodic
+      // information). Future patches can use version>=2 for
+      // melodic/advanced modes.
+      const int sequencer_version = ParseInt(attrs, "version", 1);
+      seq->set_version(sequencer_version);
       // Copy tangible-level numeric attributes.
       for (const auto& [key, value] : attrs) {
         if (key == "type" || key == "id" || key == "x" || key == "y" ||
             key == "angle" || key == "color" || key == "docked" ||
-            key == "muted" || key == "point" || key == "subtype") {
+            key == "muted" || key == "point" || key == "subtype" ||
+            key == "version") {
           continue;
         }
         try {
