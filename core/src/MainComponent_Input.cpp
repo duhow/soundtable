@@ -270,10 +270,24 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 juce::AffineTransform::rotation(-rotationAngle, cx, cy));
         }
 
-        auto isOnControlBar = [sliderTop, sliderBottom](float hx,
-                                                        juce::Point<float> p) {
-            // Treat the side control as a vertical bar around the
-            // handle's x position, spanning the full slider height.
+        auto isOnFreqControlBar = [sliderTop, sliderBottom](float hx,
+                                                            juce::Point<float> p) {
+            // Treat the side control as a vertical bar that extends
+            // further towards the outside of the table (screen left),
+            // while keeping the inner edge close to the node so that
+            // the centre area remains available to grab the module.
+            const float halfWidthRight = 14.0F;
+            const float extraLeft = 7.0F;
+            const float leftBoundary = hx - (halfWidthRight + extraLeft);
+            const float rightBoundary = hx + halfWidthRight;
+            const bool withinX = (p.x >= leftBoundary && p.x <= rightBoundary);
+            const bool withinY = (p.y >= sliderTop && p.y <= sliderBottom);
+            return withinX && withinY;
+        };
+
+        auto isOnGainControlBar = [sliderTop, sliderBottom](float hx,
+                                                            juce::Point<float> p) {
+            // Gain keeps a symmetric clickable area around its handle.
             const float halfWidth = 14.0F;
             const float dx = std::abs(p.x - hx);
             const bool withinX = dx <= halfWidth;
@@ -282,7 +296,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         };
 
         // Clicking anywhere on the frequency bar.
-        if (freqEnabled && isOnControlBar(freqHandleX, click)) {
+        if (freqEnabled && isOnFreqControlBar(freqHandleX, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kFreq;
 
@@ -297,7 +311,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         }
 
         // Clicking anywhere on the gain bar.
-        if (gainEnabled && isOnControlBar(gainHandleX, click)) {
+        if (gainEnabled && isOnGainControlBar(gainHandleX, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kGain;
 

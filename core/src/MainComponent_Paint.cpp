@@ -1443,19 +1443,27 @@ void MainComponent::paint(juce::Graphics& g)
                     freqArc.lineTo(x, y);
                 }
             }
-            g.setColour(juce::Colours::white.withAlpha(0.7F));
-            g.strokePath(freqArc, juce::PathStrokeType(3.0F));
 
             const float handleY = juce::jmap(freqValue, 0.0F, 1.0F,
                                              sliderBottom, sliderTop);
-            const float dy = handleY - cy;
-            const float inside = ringRadius * ringRadius - dy * dy;
-            if (inside >= 0.0F) {
-                const float dx = std::sqrt(inside);
-                const float handleX = cx - dx;
-                g.setColour(juce::Colours::white);
-                g.fillEllipse(handleX - 6.0F, handleY - 6.0F, 12.0F, 12.0F);
-            }
+
+            // Draw the full bar path as a darker background.
+            g.setColour(juce::Colours::white.withAlpha(0.35F));
+            g.strokePath(freqArc, juce::PathStrokeType(7.0F));
+
+            // Draw the filled portion by clipping the same arc from
+            // the bottom of the bar up to the current value.
+            juce::Graphics::ScopedSaveState clipGuard(g);
+            const float clipPaddingX = 6.0F;
+            juce::Rectangle<int> filledClip(
+                static_cast<int>(cx - ringRadius - clipPaddingX),
+                static_cast<int>(handleY),
+                static_cast<int>(ringRadius * 2.0F + clipPaddingX * 2.0F),
+                static_cast<int>(sliderBottom - handleY + 4.0F));
+            g.reduceClipRegion(filledClip);
+
+            g.setColour(juce::Colours::white.withAlpha(1.0F));
+            g.strokePath(freqArc, juce::PathStrokeType(7.0F));
         }
 
         // Right control (Gain): curved bar following the right semi-circle.
