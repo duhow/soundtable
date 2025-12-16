@@ -59,6 +59,16 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
         phase = 0.0;
     }
 
+    // Reset per-voice envelope runtime state so that any stale
+    // ADSR phases from a previous device configuration do not leak
+    // into the new session.
+    for (int v = 0; v < kMaxVoices; ++v) {
+        voiceEnvPhase_[v] = EnvelopePhase::kIdle;
+        voiceEnvValue_[v] = 0.0;
+        voiceEnvTimeInPhase_[v] = 0.0;
+        voicePrevTargetLevel_[v] = 0.0;
+    }
+
     const juce::uint32 maxBlockSize =
         (device != nullptr && device->getCurrentBufferSizeSamples() > 0)
             ? static_cast<juce::uint32>(
@@ -253,7 +263,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             for (int v = 0; v < voiceCount; ++v) {
                 const double freq =
                     voices_[v].frequency.load(std::memory_order_relaxed);
-                const float level =
+                const float targetLevel =
                     voices_[v].level.load(std::memory_order_relaxed);
 
                 const int waveformIndex =
@@ -356,8 +366,115 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     }
                 }
                 
-                // Apply level scaling for audio output.
-                const float scaledOutput = s * level;
+                // Evaluate the simple ADSR-style envelope for this
+                // voice based on transitions of the target level.
+                double envAmp = 1.0;
+                {
+                    const double lastTarget = voicePrevTargetLevel_[v];
+                    const double lvl = static_cast<double>(targetLevel);
+                    const bool wasOn = lastTarget > 1.0e-4;
+                    const bool isOn = lvl > 1.0e-4;
+
+                    if (!wasOn && isOn) {
+                        // Note-on: restart envelope at attack.
+                        voiceEnvPhase_[v] = EnvelopePhase::kAttack;
+                        voiceEnvTimeInPhase_[v] = 0.0;
+                        voiceEnvValue_[v] = 0.0;
+                    } else if (wasOn && !isOn) {
+                        // Note-off: enter release from current
+                        // envelope level.
+                        voiceEnvPhase_[v] = EnvelopePhase::kRelease;
+                        voiceEnvTimeInPhase_[v] = 0.0;
+                    }
+
+                    voicePrevTargetLevel_[v] = lvl;
+
+                    // Advance envelope one sample based on the
+                    // configured attack/release times. For now we
+                    // treat decay/duration as future extensions and
+                    // implement a simple AR envelope that ramps up
+                    // on note-on and ramps down on note-off.
+                    const double sr = sampleRate_ > 0.0 ? sampleRate_
+                                                         : 44100.0;
+                    const double dt = (sr > 0.0) ? (1.0 / sr) : 0.0;
+
+                    auto phase = voiceEnvPhase_[v];
+                    double value = voiceEnvValue_[v];
+                    double tInPhase = voiceEnvTimeInPhase_[v];
+
+                    const float attackMs = voices_[v].attackMs.load(
+                        std::memory_order_relaxed);
+                    const float releaseMs = voices_[v].releaseMs.load(
+                        std::memory_order_relaxed);
+
+                    const double attackSeconds =
+                        std::max(0.0, static_cast<double>(attackMs) /
+                                            1000.0);
+                    const double releaseSeconds =
+                        std::max(0.0, static_cast<double>(releaseMs) /
+                                            1000.0);
+
+                    switch (phase) {
+                        case EnvelopePhase::kIdle:
+                            value = 0.0;
+                            break;
+                        case EnvelopePhase::kAttack: {
+                            if (attackSeconds <= 0.0) {
+                                value = 1.0;
+                                phase = EnvelopePhase::kSustain;
+                                tInPhase = 0.0;
+                            } else {
+                                tInPhase += dt;
+                                const double norm =
+                                    std::min(1.0, tInPhase /
+                                                        attackSeconds);
+                                value = norm;
+                                if (norm >= 1.0) {
+                                    phase = EnvelopePhase::kSustain;
+                                    tInPhase = 0.0;
+                                }
+                            }
+                            break;
+                        }
+                        case EnvelopePhase::kDecay:
+                            // Not used yet; kept for future
+                            // refinement when mapping full ADSR.
+                            phase = EnvelopePhase::kSustain;
+                            value = 1.0;
+                            tInPhase = 0.0;
+                            break;
+                        case EnvelopePhase::kSustain:
+                            value = 1.0;
+                            break;
+                        case EnvelopePhase::kRelease: {
+                            if (releaseSeconds <= 0.0) {
+                                value = 0.0;
+                                phase = EnvelopePhase::kIdle;
+                                tInPhase = 0.0;
+                            } else {
+                                tInPhase += dt;
+                                const double norm =
+                                    std::min(1.0, tInPhase /
+                                                        releaseSeconds);
+                                value = std::max(0.0, 1.0 - norm);
+                                if (norm >= 1.0) {
+                                    phase = EnvelopePhase::kIdle;
+                                    tInPhase = 0.0;
+                                }
+                            }
+                            break;
+                        }
+                    }
+
+                    voiceEnvPhase_[v] = phase;
+                    voiceEnvValue_[v] = value;
+                    voiceEnvTimeInPhase_[v] = tInPhase;
+                    envAmp = value;
+                }
+
+                const double level = static_cast<double>(targetLevel);
+                const float scaledOutput =
+                    s * static_cast<float>(level * envAmp);
                 oscMixed += scaledOutput;
             }
 
@@ -395,18 +512,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // master does not pause the loops. When the selected slot
             // changes, its playback position is realigned from the
             // global loop beat counter so that switching samples keeps
-            // them phase-locked to the transport.
+            // them phase-locked to the transport. The per-instance
+            // gain is further shaped by a simple AR envelope derived
+            // from the Reactable Envelope (attack/release times).
             if (loopSnapshot && !loopSnapshot->empty()) {
                 for (auto& pair : *loopSnapshot) {
                     auto& instance = pair.second;
                     const int slotIndex = instance.selectedIndex.load(
                         std::memory_order_relaxed);
-                    const float loopGain = instance.gain.load(
+                    const float loopGainTarget = instance.gain.load(
                         std::memory_order_relaxed);
-                    if (loopGain <= 0.0F) {
-                        // Still advance phases below so playback
-                        // state remains in sync even when muted.
-                    }
 
                     if (slotIndex < 0 ||
                         slotIndex >= static_cast<int>(
@@ -533,11 +648,132 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const float l = l0 + (l1 - l0) * frac;
                         const float r = r0 + (r1 - r0) * frac;
 
-                        if (loopGain > 0.0F) {
-                            const float g = juce::jlimit(0.0F, 1.0F,
-                                                         loopGain);
-                            leftOut += l * g;
-                            rightOut += r * g;
+                        // Evaluate AR envelope for this Loop
+                        // instance based on transitions of the
+                        // target gain.
+                        double envAmp = 1.0;
+                        {
+                            const double lastTarget =
+                                instance.prevTargetGain;
+                            const double tgt = static_cast<double>(
+                                loopGainTarget);
+                            const bool wasOn = lastTarget > 1.0e-4;
+                            const bool isOn = tgt > 1.0e-4;
+
+                            if (!wasOn && isOn) {
+                                instance.envPhase =
+                                    EnvelopePhase::kAttack;
+                                instance.envTimeInPhase = 0.0;
+                                instance.envValue = 0.0;
+                            } else if (wasOn && !isOn) {
+                                instance.envPhase =
+                                    EnvelopePhase::kRelease;
+                                instance.envTimeInPhase = 0.0;
+                            }
+
+                            instance.prevTargetGain = tgt;
+
+                            const double sr =
+                                sampleRate_ > 0.0 ? sampleRate_
+                                                  : 44100.0;
+                            const double dt =
+                                (sr > 0.0) ? (1.0 / sr) : 0.0;
+
+                            auto phase = instance.envPhase;
+                            double value = instance.envValue;
+                            double tInPhase =
+                                instance.envTimeInPhase;
+
+                            const float attackMs =
+                                instance.attackMs.load(
+                                    std::memory_order_relaxed);
+                            const float releaseMs =
+                                instance.releaseMs.load(
+                                    std::memory_order_relaxed);
+
+                            const double attackSeconds =
+                                std::max(
+                                    0.0,
+                                    static_cast<double>(attackMs) /
+                                        1000.0);
+                            const double releaseSeconds =
+                                std::max(
+                                    0.0,
+                                    static_cast<double>(releaseMs) /
+                                        1000.0);
+
+                            switch (phase) {
+                                case EnvelopePhase::kIdle:
+                                    value = 0.0;
+                                    break;
+                                case EnvelopePhase::kAttack: {
+                                    if (attackSeconds <= 0.0) {
+                                        value = 1.0;
+                                        phase = EnvelopePhase::kSustain;
+                                        tInPhase = 0.0;
+                                    } else {
+                                        tInPhase += dt;
+                                        const double norm =
+                                            std::min(1.0,
+                                                     tInPhase /
+                                                         attackSeconds);
+                                        value = norm;
+                                        if (norm >= 1.0) {
+                                            phase =
+                                                EnvelopePhase::kSustain;
+                                            tInPhase = 0.0;
+                                        }
+                                    }
+                                    break;
+                                }
+                                case EnvelopePhase::kDecay:
+                                    // Reserved for future full ADSR
+                                    // mapping.
+                                    phase = EnvelopePhase::kSustain;
+                                    value = 1.0;
+                                    tInPhase = 0.0;
+                                    break;
+                                case EnvelopePhase::kSustain:
+                                    value = 1.0;
+                                    break;
+                                case EnvelopePhase::kRelease: {
+                                    if (releaseSeconds <= 0.0) {
+                                        value = 0.0;
+                                        phase = EnvelopePhase::kIdle;
+                                        tInPhase = 0.0;
+                                    } else {
+                                        tInPhase += dt;
+                                        const double norm =
+                                            std::min(1.0,
+                                                     tInPhase /
+                                                         releaseSeconds);
+                                        value = std::max(0.0,
+                                                         1.0 - norm);
+                                        if (norm >= 1.0) {
+                                            phase =
+                                                EnvelopePhase::kIdle;
+                                            tInPhase = 0.0;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+
+                            instance.envPhase = phase;
+                            instance.envValue = value;
+                            instance.envTimeInPhase = tInPhase;
+                            envAmp = value;
+                        }
+
+                        const double tgt = static_cast<double>(
+                            loopGainTarget);
+                        const float finalGain =
+                            juce::jlimit(0.0F, 1.0F,
+                                         static_cast<float>(tgt *
+                                                            envAmp));
+                        if (finalGain > 0.0F) {
+                            leftOut += l * finalGain;
+                            rightOut += r * finalGain;
                         }
 
                         pos += step;
@@ -615,12 +851,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     auto& instance = pair.second;
                     const int slotIndex = instance.selectedIndex.load(
                         std::memory_order_relaxed);
-                    const float loopGain = instance.gain.load(
+                    const float loopGainTarget = instance.gain.load(
                         std::memory_order_relaxed);
-                    if (loopGain <= 0.0F) {
-                        // Still advance phases below; see comment
-                        // in the oscillator branch.
-                    }
 
                     if (slotIndex < 0 ||
                         slotIndex >= static_cast<int>(
@@ -739,11 +971,131 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const float l = l0 + (l1 - l0) * frac;
                         const float r = r0 + (r1 - r0) * frac;
 
-                        if (loopGain > 0.0F) {
-                            const float g = juce::jlimit(0.0F, 1.0F,
-                                                         loopGain);
-                            leftOut += l * g;
-                            rightOut += r * g;
+                        // Apply the same AR-style envelope used in
+                        // the oscillator-voices branch so that Loop
+                        // gains are smoothed consistently even when
+                        // no generator voices are active.
+                        double envAmp = 1.0;
+                        {
+                            const double lastTarget =
+                                instance.prevTargetGain;
+                            const double tgt = static_cast<double>(
+                                loopGainTarget);
+                            const bool wasOn = lastTarget > 1.0e-4;
+                            const bool isOn = tgt > 1.0e-4;
+
+                            if (!wasOn && isOn) {
+                                instance.envPhase =
+                                    EnvelopePhase::kAttack;
+                                instance.envTimeInPhase = 0.0;
+                                instance.envValue = 0.0;
+                            } else if (wasOn && !isOn) {
+                                instance.envPhase =
+                                    EnvelopePhase::kRelease;
+                                instance.envTimeInPhase = 0.0;
+                            }
+
+                            instance.prevTargetGain = tgt;
+
+                            const double sr =
+                                sampleRate_ > 0.0 ? sampleRate_
+                                                  : 44100.0;
+                            const double dt =
+                                (sr > 0.0) ? (1.0 / sr) : 0.0;
+
+                            auto phase = instance.envPhase;
+                            double value = instance.envValue;
+                            double tInPhase =
+                                instance.envTimeInPhase;
+
+                            const float attackMs =
+                                instance.attackMs.load(
+                                    std::memory_order_relaxed);
+                            const float releaseMs =
+                                instance.releaseMs.load(
+                                    std::memory_order_relaxed);
+
+                            const double attackSeconds =
+                                std::max(
+                                    0.0,
+                                    static_cast<double>(attackMs) /
+                                        1000.0);
+                            const double releaseSeconds =
+                                std::max(
+                                    0.0,
+                                    static_cast<double>(releaseMs) /
+                                        1000.0);
+
+                            switch (phase) {
+                                case EnvelopePhase::kIdle:
+                                    value = 0.0;
+                                    break;
+                                case EnvelopePhase::kAttack: {
+                                    if (attackSeconds <= 0.0) {
+                                        value = 1.0;
+                                        phase = EnvelopePhase::kSustain;
+                                        tInPhase = 0.0;
+                                    } else {
+                                        tInPhase += dt;
+                                        const double norm =
+                                            std::min(1.0,
+                                                     tInPhase /
+                                                         attackSeconds);
+                                        value = norm;
+                                        if (norm >= 1.0) {
+                                            phase =
+                                                EnvelopePhase::kSustain;
+                                            tInPhase = 0.0;
+                                        }
+                                    }
+                                    break;
+                                }
+                                case EnvelopePhase::kDecay:
+                                    phase = EnvelopePhase::kSustain;
+                                    value = 1.0;
+                                    tInPhase = 0.0;
+                                    break;
+                                case EnvelopePhase::kSustain:
+                                    value = 1.0;
+                                    break;
+                                case EnvelopePhase::kRelease: {
+                                    if (releaseSeconds <= 0.0) {
+                                        value = 0.0;
+                                        phase = EnvelopePhase::kIdle;
+                                        tInPhase = 0.0;
+                                    } else {
+                                        tInPhase += dt;
+                                        const double norm =
+                                            std::min(1.0,
+                                                     tInPhase /
+                                                         releaseSeconds);
+                                        value = std::max(0.0,
+                                                         1.0 - norm);
+                                        if (norm >= 1.0) {
+                                            phase =
+                                                EnvelopePhase::kIdle;
+                                            tInPhase = 0.0;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+
+                            instance.envPhase = phase;
+                            instance.envValue = value;
+                            instance.envTimeInPhase = tInPhase;
+                            envAmp = value;
+                        }
+
+                        const double tgt = static_cast<double>(
+                            loopGainTarget);
+                        const float finalGain =
+                            juce::jlimit(0.0F, 1.0F,
+                                         static_cast<float>(tgt *
+                                                            envAmp));
+                        if (finalGain > 0.0F) {
+                            leftOut += l * finalGain;
+                            rightOut += r * finalGain;
                         }
 
                         pos += step;
@@ -916,7 +1268,11 @@ bool AudioEngine::loadLoopSampleFromFile(const std::string& moduleId,
 
 void AudioEngine::setLoopModuleParams(const std::string& moduleId,
                                       const int selectedIndex,
-                                      const float linearGain)
+                                      const float linearGain,
+                                      const float attackMs,
+                                      const float decayMs,
+                                      const float durationMs,
+                                      const float releaseMs)
 {
     auto it = loopModules_.find(moduleId);
     if (it == loopModules_.end()) {
@@ -934,6 +1290,11 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
     const float clampedGain = juce::jlimit(0.0F, 1.0F, linearGain);
     instance.gain.store(clampedGain, std::memory_order_relaxed);
 
+    instance.attackMs.store(attackMs, std::memory_order_relaxed);
+    instance.decayMs.store(decayMs, std::memory_order_relaxed);
+    instance.durationMs.store(durationMs, std::memory_order_relaxed);
+    instance.releaseMs.store(releaseMs, std::memory_order_relaxed);
+
     // Updating parameters does not reset playback positions so that
     // loops continue running even when muted. To honour this, we avoid
     // rebuilding the snapshot on every parameter update (which would
@@ -949,6 +1310,14 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
                 clampedIndex, std::memory_order_relaxed);
             snapIt->second.gain.store(
                 clampedGain, std::memory_order_relaxed);
+            snapIt->second.attackMs.store(attackMs,
+                                          std::memory_order_relaxed);
+            snapIt->second.decayMs.store(decayMs,
+                                         std::memory_order_relaxed);
+            snapIt->second.durationMs.store(durationMs,
+                                            std::memory_order_relaxed);
+            snapIt->second.releaseMs.store(releaseMs,
+                                           std::memory_order_relaxed);
         }
     }
 }
@@ -1107,6 +1476,24 @@ void AudioEngine::setSampleplayFilter(const int mode,
     sampleplayFilterR_.setCutoffFrequency(static_cast<float>(fc));
     sampleplayFilterL_.setResonance(qClamped);
     sampleplayFilterR_.setResonance(qClamped);
+}
+
+void AudioEngine::setVoiceEnvelope(const int index,
+                                   const float attackMs,
+                                   const float decayMs,
+                                   const float durationMs,
+                                   const float releaseMs)
+{
+    if (index < 0 || index >= kMaxVoices) {
+        return;
+    }
+
+    voices_[index].attackMs.store(attackMs, std::memory_order_relaxed);
+    voices_[index].decayMs.store(decayMs, std::memory_order_relaxed);
+    voices_[index].durationMs.store(durationMs,
+                                    std::memory_order_relaxed);
+    voices_[index].releaseMs.store(releaseMs,
+                                   std::memory_order_relaxed);
 }
 
 void AudioEngine::clearAllConnectionWaveformTaps()

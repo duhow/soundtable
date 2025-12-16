@@ -2,6 +2,67 @@
 
 ## 2025-12-16
 
+### Extensión rango Oscillator y carga de sesiones RTP (Loopdemo)
+- Se ha ampliado el mapeo de frecuencia del `OscillatorModule` para que el
+  parámetro normalizado `freq` cubra aproximadamente el rango de notas
+  MIDI 0–127 (≈8 Hz–12.5 kHz). Esto alinea el comportamiento con los
+  patches originales de Reactable donde `midifreq` puede estar en todo
+  el rango MIDI.
+- El loader de sesiones RTP (`ReactableRtpLoader`) ahora, al cargar un
+  `Oscillator` con atributo `midifreq`, calcula la frecuencia en Hz
+  usando la fórmula estándar MIDI→Hz y la convierte a valor normalizado
+  `freq` usando `base_frequency_hz` y `frequency_range_hz` del módulo.
+  De este modo la afinación por defecto del oscilador en la escena
+  coincide con la nota indicada en el `.rtp`.
+- Para los módulos `Loop` y `Oscillator`, el `<envelope>` definido en
+  el archivo `.rtp` se parsea a la estructura `Envelope` y, además, se
+  vuelca en los parámetros del módulo (`attack`, `decay`, `duration`,
+  `release`). Esto facilita que la UI y el motor de audio puedan
+  consultar/aplicar el ADSR de forma consistente.
+- Se han ampliado los tests en `tests/scene_tests.cpp` para comprobar
+  que:
+  - `midifreq` se expone como parámetro del `Oscillator` tras cargar
+    una sesión RTP.
+  - El parámetro normalizado `freq` queda inicializado de forma que la
+    frecuencia efectiva en Hz sea coherente con la nota `midifreq`.
+  - Los valores ADSR del `<envelope>` de un `Oscillator` se almacenan
+    tanto en la estructura `Envelope` interna como en los parámetros del
+    módulo.
+
+### ADSR aplicado en runtime a Oscillator y Loop
+- Se ha añadido soporte de envolvente simple tipo AR en `AudioEngine`
+  para las voces de `Oscillator`: el motor detecta transiciones del
+  nivel de voz (0→>0 como note-on, >0→0 como note-off) y aplica una
+  rampa de ataque y una de release en tiempo de muestra usando los
+  tiempos `attack` y `release` cargados desde el `<envelope>` del
+  módulo. `decay` y `duration` se reservan para una futura
+  implementación de ADSR completo, pero ya se propagan hasta el motor.
+- `MainComponent_Audio` ahora pasa la envolvente de cada
+  `OscillatorModule` a través de `AudioEngine::setVoiceEnvelope`, de
+  modo que cada voz conoce los tiempos de ataque/decaimiento/duración/
+  release configurados en la sesión RTP.
+- Para los módulos `Loop`, `AudioEngine::LoopInstance` mantiene ahora
+  un pequeño estado de envolvente (fase, valor actual y tiempos
+  attack/release). `MainComponent_Audio` llama a
+  `setLoopModuleParams` incluyendo los cuatro tiempos del
+  `<envelope>` del Loop; en el callback de audio el motor suaviza los
+  cambios de ganancia del loop (por mute/desmute o cambios de `amp`)
+  aplicando la misma envolvente AR basada en los tiempos de ataque y
+  release.
+- Esta primera fase garantiza que los parámetros de envelope definidos
+  en `.rtp` tienen un efecto audible: los osciladores y loops ya no
+  reaccionan con saltos bruscos de nivel, sino que respetan rampas de
+  entrada/salida según los tiempos de ataque y release de la sesión.
+
+### Próximos pasos relacionados
+
+- Aplicar el envelope ADSR en tiempo de ejecución dentro de
+  `AudioEngine` para módulos `Oscillator` y `Loop` (modulación de
+  amplitud u otros parámetros según diseño definitivo).
+- Revisar el flujo de `Sampleplay` para decidir cómo usar `midifreq`
+  como afinación por defecto al cargar sesiones RTP, manteniendo la
+  compatibilidad con el disparo actual por beat.
+
 ### Ajuste visual de mute pendiente en líneas de audio
 - Se ha modificado el pintado de las líneas radiales de audio en `MainComponent_Paint.cpp` para que, cuando una línea está marcada como "pendiente de silenciar" (estado de cut/mute en hover sobre la conexión), se mantenga la waveform existente y sólo cambie el color de la línea de sonido de blanco a amarillo. Anteriormente, al marcar una línea para mute, se sustituía la waveform por una línea recta amarilla, dando la sensación de que se dibujaba una nueva línea plana sin información de audio.
 - Para conseguirlo, las ramas de pintado de waveform de radiales asociadas a `SampleplayModule`, `LoopModule` y módulos con voces procedurales dejan de descartar el caso `isMarkedForCut`; ahora siguen obteniendo su snapshot de waveform (por conexión o global) y llaman a `drawWaveformOnLine` con el mismo patrón espacial, pero seleccionando el color en función del estado: blanco cuando la línea está activa normalmente y amarillo cuando está marcada para mute pendiente, de forma uniforme en todos los tipos de módulo.

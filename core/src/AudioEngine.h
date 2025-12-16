@@ -145,6 +145,12 @@ public:
     // low-pass, 2 = band-pass, 3 = high-pass.
     void setSampleplayFilter(int mode, double cutoffHz, float q);
 
+    // Per-voice amplitude envelope configuration. Times are
+    // specified in milliseconds as loaded from the Reactable .rtp
+    // envelopes associated with Oscillator modules.
+    void setVoiceEnvelope(int index, float attackMs, float decayMs,
+                          float durationMs, float releaseMs);
+
     // Per-connection waveform taps --------------------------------------
 
     // Kind of low-level signal source a connection tap is attached
@@ -226,7 +232,11 @@ public:
     // does not pause the loops.
     void setLoopModuleParams(const std::string& moduleId,
                              int selectedIndex,
-                             float linearGain);
+                             float linearGain,
+                             float attackMs,
+                             float decayMs,
+                             float durationMs,
+                             float releaseMs);
 
     // Sets the global tempo in beats per minute used to time-align
     // loop playback. Loops with a valid `beats` value will adjust
@@ -268,6 +278,14 @@ private:
         std::atomic<int> filterMode{0};
         std::atomic<double> filterCutoffHz{0.0};
         std::atomic<float> filterQ{0.7071F};
+        // Envelope times configured from the Scene/UI. Units are
+        // milliseconds as loaded from the Reactable .rtp envelope
+        // attributes. The audio thread converts them to seconds and
+        // sample counts on the fly.
+        std::atomic<float> attackMs{0.0F};
+        std::atomic<float> decayMs{0.0F};
+        std::atomic<float> durationMs{0.0F};
+        std::atomic<float> releaseMs{0.0F};
     };
 
     Voice voices_[kMaxVoices];
@@ -275,6 +293,17 @@ private:
 
     // Phase per voice, only touched on the audio thread.
     double phases_[kMaxVoices]{};
+
+    // Simple per-voice amplitude envelope used to apply ADSR-style
+    // shaping to generator output. The envelope is driven entirely
+    // on the audio thread based on transitions of the target voice
+    // level (0 → >0 = note-on, >0 → 0 = note-off).
+    enum class EnvelopePhase { kIdle = 0, kAttack, kDecay, kSustain, kRelease };
+
+    EnvelopePhase voiceEnvPhase_[kMaxVoices]{};
+    double voiceEnvValue_[kMaxVoices]{};        // [0,1] envelope amplitude
+    double voiceEnvTimeInPhase_[kMaxVoices]{};  // seconds elapsed in phase
+    double voicePrevTargetLevel_[kMaxVoices]{}; // last seen target level
 
     // Per-voice state-variable filters implemented using JUCE's DSP
     // module for improved stability and sound quality.
@@ -381,6 +410,21 @@ private:
         std::atomic<int> selectedIndex{0};
         // Linear gain in [0,1] applied to the selected slot.
         std::atomic<float> gain{0.0F};
+
+        // Simple AR-style envelope configuration (milliseconds) and
+        // runtime state used to smooth gain changes for Loop
+        // modules. For now we use attack/release only; decay and
+        // duration are kept for future refinement when modelling the
+        // full ADSR from Reactable.
+        std::atomic<float> attackMs{0.0F};
+        std::atomic<float> decayMs{0.0F};
+        std::atomic<float> durationMs{0.0F};
+        std::atomic<float> releaseMs{0.0F};
+
+        EnvelopePhase envPhase{EnvelopePhase::kIdle};
+        double envValue{0.0};
+        double envTimeInPhase{0.0};
+        double prevTargetGain{0.0};
 
         LoopInstance() = default;
 

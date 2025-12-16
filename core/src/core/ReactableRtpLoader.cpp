@@ -672,6 +672,15 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         std::size_t env_end = 0U;
         const auto env_tag = ExtractTagContent(xml, env_pos, &env_end);
         loop->mutable_envelope() = ParseEnvelope(env_tag);
+
+        // Expose ADSR envelope components as standard module parameters so
+        // that the UI and future audio processing can read the values
+        // directly from the parameter map.
+        const auto& env = loop->envelope();
+        loop->SetParameter("attack", env.attack);
+        loop->SetParameter("decay", env.decay);
+        loop->SetParameter("duration", env.duration);
+        loop->SetParameter("release", env.release);
       }
       // Parse <loop> children describing audio loops.
       std::size_t lp_pos = FindTag(xml, "loop", inner_start, inner_end);
@@ -712,6 +721,49 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         std::size_t env_end = 0U;
         const auto env_tag = ExtractTagContent(xml, env_pos, &env_end);
         osc->mutable_envelope() = ParseEnvelope(env_tag);
+
+        // Expose ADSR envelope components as standard module parameters.
+        const auto& env = osc->envelope();
+        osc->SetParameter("attack", env.attack);
+        osc->SetParameter("decay", env.decay);
+        osc->SetParameter("duration", env.duration);
+        osc->SetParameter("release", env.release);
+      }
+
+      // If the .rtp patch specifies a base MIDI note via `midifreq`, use it
+      // to initialise the normalised `freq` parameter so that the oscillator
+      // starts at the expected musical pitch.
+      const auto it_midifreq = attrs.find("midifreq");
+      if (it_midifreq != attrs.end()) {
+        try {
+          const float midiNote = std::stof(it_midifreq->second);
+          const double targetHz = 440.0 *
+                                  std::pow(2.0,
+                                           (static_cast<double>(midiNote) -
+                                            69.0) /
+                                               12.0);
+
+          const double baseHz = osc->base_frequency_hz();
+          const double rangeHz = osc->frequency_range_hz();
+          if (rangeHz > 0.0) {
+            const double norm = (targetHz - baseHz) / rangeHz;
+            float freqParam = static_cast<float>(norm);
+
+            if (!std::isfinite(freqParam)) {
+              freqParam = 0.5F;
+            }
+
+            if (freqParam < 0.0F) {
+              freqParam = 0.0F;
+            } else if (freqParam > 1.0F) {
+              freqParam = 1.0F;
+            }
+
+            osc->SetParameter("freq", freqParam);
+          }
+        } catch (...) {
+          // Ignore malformed midifreq values and keep defaults.
+        }
       }
       module = std::move(osc);
     } else if (type == "Sampleplay") {

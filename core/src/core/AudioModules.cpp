@@ -33,7 +33,10 @@ OscillatorModule::OscillatorModule(const std::string& id,
   set_waveform(Waveform::kSine);
   enable_frequency_control(true);
   enable_gain_control(true);
-  set_frequency_mapping(200.0, 800.0);  // 200–1000 Hz
+  // Expand frequency range so that the normalised `freq` parameter
+  // can cover the full MIDI note range [0,127]. MIDI note 0 is
+  // ≈8.18 Hz and note 127 is ≈12.54 kHz.
+  set_frequency_mapping(8.0, 12536.0);  // ≈8 Hz – 12.5 kHz
   set_level_mapping(0.02F, 0.18F);
   set_connection_targets({ModuleType::kAudio, ModuleType::kFilter});
 

@@ -1180,11 +1180,21 @@ void MainComponent::timerCallback()
             continue;
         }
 
+        // Envelope parameters for this Loop module as loaded from
+        // the .rtp envelope. We pass them to the audio engine so
+        // that loop gain changes can be smoothed using attack /
+        // release times.
+        const auto& loopEnv = loopModule->envelope();
+
         if (!isInsideMusicArea(obj)) {
             // Keep playback positions advancing in the engine but
             // treat the module as effectively silent.
             audioEngine_.setLoopModuleParams(loopModule->id(), 0,
-                                             0.0F);
+                                             0.0F,
+                                             loopEnv.attack,
+                                             loopEnv.decay,
+                                             loopEnv.duration,
+                                             loopEnv.release);
             continue;
         }
 
@@ -1242,7 +1252,11 @@ void MainComponent::timerCallback()
         }
 
         audioEngine_.setLoopModuleParams(loopModule->id(),
-                                         selectedIndex, loopGain);
+                         selectedIndex, loopGain,
+                         loopEnv.attack,
+                         loopEnv.decay,
+                         loopEnv.duration,
+                         loopEnv.release);
 
         if (loopGain > 0.0F) {
             modulesWithActiveAudio_.insert(loopModule->id());
@@ -1554,8 +1568,9 @@ void MainComponent::timerCallback()
         const float levelRange = module->level_range();
 
         int waveformIndex = 0;  // 0 = sine by default.
-        if (const auto* oscModule =
-                dynamic_cast<const rectai::OscillatorModule*>(module)) {
+        const auto* oscModule =
+            dynamic_cast<const rectai::OscillatorModule*>(module);
+        if (oscModule != nullptr) {
             waveformIndex = oscModule->waveform_index();
         }
 
@@ -1753,6 +1768,13 @@ void MainComponent::timerCallback()
                                             filterCutoffHz, filterQ);
                 audioEngine_.setVoiceWaveform(assignedVoice,
                                               waveformIndex);
+
+                if (oscModule != nullptr) {
+                    const auto& env = oscModule->envelope();
+                    audioEngine_.setVoiceEnvelope(
+                        assignedVoice, env.attack, env.decay,
+                        env.duration, env.release);
+                }
 
                 // Mark generator and, when present, its downstream
                 // module as visually active so the paint layer can

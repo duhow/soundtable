@@ -140,6 +140,46 @@ int main()
         assert(obj.angle_radians() > expected_angle_rad - 0.01F);
         assert(obj.angle_radians() < expected_angle_rad + 0.01F);
 
+        // The Oscillator should expose the `midifreq` parameter as
+        // loaded from the .rtp patch.
+        const float midiFromParam = oscModule->GetParameterOrDefault(
+            "midifreq", -1.0F);
+        assert(midiFromParam == 44.0F);
+
+        // The loader must initialise the normalised `freq` parameter
+        // from `midifreq` using the module's frequency mapping so
+        // that the resulting Hz is close to the expected MIDI pitch.
+        const float freqParam = oscModule->GetParameterOrDefault(
+            "freq", -1.0F);
+        assert(freqParam >= 0.0F && freqParam <= 1.0F);
+
+        const double baseHz = oscModule->base_frequency_hz();
+        const double rangeHz = oscModule->frequency_range_hz();
+        const double effectiveHz =
+            baseHz + rangeHz * static_cast<double>(freqParam);
+
+        const double targetHz =
+            440.0 * std::pow(2.0, (44.0 - 69.0) / 12.0);
+        assert(effectiveHz > targetHz * 0.9);
+        assert(effectiveHz < targetHz * 1.1);
+
+        // Envelope from the <envelope> tag should be applied both to
+        // the internal structure and as module parameters.
+        const auto& env = oscModule->envelope();
+        assert(env.attack == 0.0F);
+        assert(env.decay == 0.0F);
+        assert(env.duration == 25.0F);
+        assert(env.release == 0.0F);
+
+        assert(oscModule->GetParameterOrDefault("attack", -1.0F) ==
+               env.attack);
+        assert(oscModule->GetParameterOrDefault("decay", -1.0F) ==
+               env.decay);
+        assert(oscModule->GetParameterOrDefault("duration", -1.0F) ==
+               env.duration);
+        assert(oscModule->GetParameterOrDefault("release", -1.0F) ==
+               env.release);
+
         // Metadata should be populated.
         assert(metadata.author_name == "TestAuthor");
         assert(metadata.patch_name == "TestPatch");
