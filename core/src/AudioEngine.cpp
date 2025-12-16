@@ -418,7 +418,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const float durationMs = voices_[v].durationMs.load(
                         std::memory_order_relaxed);
 
-                    const double attackSeconds =
+                    const double attackSecondsRaw =
                         std::max(0.0, static_cast<double>(attackMs) /
                                             1000.0);
                     const double releaseSeconds =
@@ -428,6 +428,19 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         std::max(0.0,
                                  static_cast<double>(durationMs) /
                                      1000.0);
+
+                    // Avoid hard clicks when triggering Oscillator
+                    // envelopes with attack=0 by enforcing a very
+                    // small minimum attack time. This keeps the
+                    // envelope effectively "instant" from a
+                    // musical perspective while smoothing the
+                    // first few samples enough to remove audible
+                    // transients.
+                    double attackSeconds = attackSecondsRaw;
+                    if (attackSecondsRaw <= 0.0) {
+                        constexpr double kMinAttackSeconds = 0.0005;  // 0.5 ms
+                        attackSeconds = kMinAttackSeconds;
+                    }
 
                     const bool hasOneShot = durationSeconds > 0.0;
 

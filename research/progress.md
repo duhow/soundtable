@@ -2,6 +2,12 @@
 
 ## 2025-12-16
 
+### Suavizado de ataque en la envolvente de Oscillator para evitar clicks
+- Tras ajustar la lógica de duración/decay de la envolvente por voz en `AudioEngine` para respetar `duration` (modo one-shot), se detectaron pequeños "clicks" audibles al inicio de cada nota del Oscillator cuando el `attack` del `<envelope>` era 0 ms (caso típico del Oscillator 47 en `Loopdemo.rtp`).
+- El origen del artefacto es el salto brusco de amplitud cuando una nueva nota reinicia la envolvente desde 0 a un nivel alto en un solo sample: aunque la fase de la onda del oscilador es continua, la rampa de ataque instantánea genera un escalón en la envolvente que se percibe como un transitorio de banda ancha.
+- Para mitigarlo sin cambiar perceptiblemente la sensación de ataque instantáneo, se ha introducido en `AudioEngine` un **ataque mínimo** para las envolventes de voz de Oscillator: al calcular `attackSeconds` a partir de `attackMs`, si el resultado es `<= 0` se sustituye por un pequeño valor fijo `kMinAttackSeconds = 0.0005` (≈0.5 ms). Esto se aplica tanto al modo one-shot (governado por `duration`) como al modo AR clásico.
+- Con este ajuste, los patches que declaran `attack="0"` siguen sonando con un ataque prácticamente inmediato desde el punto de vista musical, pero el primer puñado de samples de la envolvente se suaviza lo suficiente como para eliminar los clicks al inicio de cada nota cuando el `Sequencer` dispara pasos densos sobre el Oscillator.
+
 ### Sincronía del Sequencer con el transporte global (beats, Loops y pulsos)
 - La lógica de avance del `Sequencer` en `MainComponent_Audio::timerCallback` se ha ajustado para que el índice de step de audio ya no dependa de un acumulador interno específico (`sequencerAudioPhase_`), sino de la **misma posición global en beats** que utilizan el motor de Loops y los pulsos visuales centrales.
 - En lugar de incrementar una fase propia por frame (`sequencerAudioPhase_ += beatsThisFrame`) y derivar de ella el índice de step, ahora se calcula explícitamente la posición de transporte continua en beats como `transportPositionBeats = transportBeats_ + beatPhase_` y, a partir de ahí, se obtiene el step activo con:
