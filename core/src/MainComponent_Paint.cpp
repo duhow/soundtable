@@ -678,14 +678,14 @@ void MainComponent::paint(juce::Graphics& g)
                         /*tiled=*/true);
                 } else {
                     g.setColour(juce::Colours::white.withAlpha(baseAlpha));
-                    g.drawLine(juce::Line<float>({cx, cy}, splitPoint), 2.0F);
+                    g.drawLine(juce::Line<float>({cx, cy}, splitPoint), 1.2F);
                 }
                 
                 // Second segment: split to center (dashed, muted/silenced output).
                 const float dashLengths[] = {6.0F, 4.0F};
                 g.setColour(juce::Colours::white.withAlpha(baseAlpha * 0.6F));
                 g.drawDashedLine(juce::Line<float>(splitPoint, centre), dashLengths,
-                                static_cast<int>(std::size(dashLengths)), 1.5F);
+                                 static_cast<int>(std::size(dashLengths)), 1.2F);
                 continue;
             }
 
@@ -787,7 +787,7 @@ void MainComponent::paint(juce::Graphics& g)
             float sampleplayRadialWave[kWaveformPoints]{};
             float sampleplayRadialNorm = 0.0F;
 
-            if (!isRadialMuted && !isMarkedForCut &&
+            if (!isRadialMuted &&
                 (isSampleplayModule ||
                  (isFilterModule && hasSampleplayUpstream))) {
                 std::string radialConnKey;
@@ -845,13 +845,15 @@ void MainComponent::paint(juce::Graphics& g)
 
             const bool sampleplayRadialActive =
                 sampleplayRadialNorm > 0.0F && !isRadialMuted &&
-                !isMarkedForCut &&
                 (isSampleplayModule ||
                  (isFilterModule && hasSampleplayUpstream));
 
             if (sampleplayRadialActive) {
-                g.setColour(
-                    juce::Colours::white.withAlpha(baseAlpha));
+                const auto radialColour =
+                    isMarkedForCut
+                        ? juce::Colours::yellow.withAlpha(0.9F)
+                        : juce::Colours::white.withAlpha(baseAlpha);
+                g.setColour(radialColour);
                 const float amplitudeLevel =
                     isSampleplayModule ? visualLevel : 1.0F;
                 const float waveformAmplitude =
@@ -874,8 +876,7 @@ void MainComponent::paint(juce::Graphics& g)
             float loopRadialWave[kWaveformPoints]{};
             float loopRadialNorm = 0.0F;
 
-            if (!isRadialMuted && !isMarkedForCut && isLoopModule &&
-                lineCarriesAudio) {
+            if (!isRadialMuted && isLoopModule && lineCarriesAudio) {
                 audioEngine_.getWaveformSnapshot(
                     loopRadialWave, kWaveformPoints, 0.05);
 
@@ -892,15 +893,21 @@ void MainComponent::paint(juce::Graphics& g)
 
             const bool loopRadialActive =
                 loopRadialNorm > 0.0F && !isRadialMuted &&
-                !isMarkedForCut && isLoopModule && lineCarriesAudio;
+                isLoopModule && lineCarriesAudio;
 
             if (loopRadialActive) {
-                g.setColour(
-                    juce::Colours::white.withAlpha(baseAlpha));
+                const auto radialColour =
+                    isMarkedForCut
+                        ? juce::Colours::yellow.withAlpha(0.9F)
+                        : juce::Colours::white.withAlpha(baseAlpha);
+                g.setColour(radialColour);
                 const float amplitudeLevel = visualLevel;
                 const float waveformAmplitude =
                     15.0F * amplitudeLevel;
-                const float waveformThickness = 1.4F;
+                // Use a slightly thinner stroke so that Loop
+                // radials visually match the perceived thickness
+                // of Oscillator radials.
+                const float waveformThickness = 1.2F;
                 drawWaveformOnLine(
                     line.getEnd(), line.getStart(),
                     waveformAmplitude, waveformThickness,
@@ -910,7 +917,7 @@ void MainComponent::paint(juce::Graphics& g)
                 continue;
             }
 
-            if (lineCarriesAudio && !isRadialMuted && !isMarkedForCut) {
+            if (lineCarriesAudio && !isRadialMuted) {
                 const auto voiceIt =
                     moduleVoiceIndex_.find(object.logical_id());
                 const int voiceIndex =
@@ -921,8 +928,11 @@ void MainComponent::paint(juce::Graphics& g)
                 if (voiceIndex >= 0 &&
                     voiceIndex < AudioEngine::kMaxVoices &&
                     voiceNormPost[voiceIndex] > 0.0F) {
-                    g.setColour(
-                        juce::Colours::white.withAlpha(baseAlpha));
+                    const auto waveformColour =
+                        isMarkedForCut
+                            ? juce::Colours::yellow.withAlpha(0.9F)
+                            : juce::Colours::white.withAlpha(baseAlpha);
+                    g.setColour(waveformColour);
                     float amplitudeLevel = visualLevel;
 
                     // If this module does not have an explicit
@@ -958,20 +968,24 @@ void MainComponent::paint(juce::Graphics& g)
                         /*tiled=*/true);
                     continue;
                 }
-            } else if (isMarkedForCut) {
-                // Draw line in yellow when marked for mute toggle.
-                g.setColour(juce::Colours::yellow.withAlpha(0.9F));
-                g.drawLine(line, 3.0F);
+            }
+
+            // Fallback for non-audio or silent lines. Preserve the
+            // existing style (solid vs dashed) and only change the
+            // colour when the line is marked for a pending
+            // mute/unmute operation.
+            const auto radialFallbackColour =
+                isMarkedForCut
+                    ? juce::Colours::yellow.withAlpha(0.9F)
+                    : juce::Colours::white.withAlpha(baseAlpha);
+            g.setColour(radialFallbackColour);
+            if (isRadialMuted) {
+                const float dashLengths[] = {6.0F, 4.0F};
+                g.drawDashedLine(
+                    line, dashLengths,
+                    static_cast<int>(std::size(dashLengths)), 1.2F);
             } else {
-                g.setColour(juce::Colours::white.withAlpha(baseAlpha));
-                if (isRadialMuted) {
-                    const float dashLengths[] = {6.0F, 4.0F};
-                    g.drawDashedLine(
-                        line, dashLengths,
-                        static_cast<int>(std::size(dashLengths)), 2.0F);
-                } else {
-                    g.drawLine(line, 2.0F);
-                }
+                g.drawLine(line, 1.2F);
             }
 
             // Flow pulse travelling from node to centre to suggest
@@ -1186,14 +1200,14 @@ void MainComponent::paint(juce::Graphics& g)
 
                 if (!drewWave) {
                     g.setColour(activeColour);
-                    g.drawLine(juce::Line<float>(p1, splitPoint), conn.is_hardlink ? 1.8F : 1.5F);
+                    g.drawLine(juce::Line<float>(p1, splitPoint), 1.2F);
                 }
                 
                 // Second segment: split to destination (dashed, muted).
                 const float dashLengths[] = {6.0F, 4.0F};
                 g.setColour(activeColour.withAlpha(0.6F));
                 g.drawDashedLine(juce::Line<float>(splitPoint, p2), dashLengths,
-                                static_cast<int>(std::size(dashLengths)), 1.5F);
+                                 static_cast<int>(std::size(dashLengths)), 1.2F);
                 continue;
             }
 
@@ -1206,7 +1220,7 @@ void MainComponent::paint(juce::Graphics& g)
                 g.drawDashedLine(juce::Line<float>(p1, p2), dashLengths,
                                  static_cast<int>(
                                      std::size(dashLengths)),
-                                 1.5F);
+                                 1.2F);
             } else if (conn.is_hardlink) {
                 // Hardlink: straight segment with a pulse travelling
                 // directly from source to destination.
@@ -1248,8 +1262,7 @@ void MainComponent::paint(juce::Graphics& g)
                 }
 
                 if (!drewWave) {
-                    const float thickness =
-                        isConnectionMarkedForCut ? 3.0F : 1.8F;
+                    const float thickness = 1.2F;
                     g.drawLine(juce::Line<float>(p1, p2), thickness);
                 }
             } else {
@@ -1280,8 +1293,11 @@ void MainComponent::paint(juce::Graphics& g)
                             estimateWaveformPeriod(tempWave,
                                                    kWaveformPoints);
 
-                        g.setColour(
-                            juce::Colours::white.withAlpha(0.8F));
+                        // Use the same activeColour (including
+                        // yellow when marked for cut) so that
+                        // all audio-carrying connections share
+                        // the same mute/hover visual behaviour.
+                        g.setColour(activeColour);
                         const bool tiled = !involvesSampleplay;
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
@@ -1296,8 +1312,7 @@ void MainComponent::paint(juce::Graphics& g)
                 // a straight segment (with or without waveform).
                 if (!drewWave) {
                     g.setColour(activeColour);
-                    const float thickness =
-                        isConnectionMarkedForCut ? 3.0F : 1.5F;
+                    const float thickness = 1.2F;
                     g.drawLine(juce::Line<float>(p1, p2), thickness);
                 }
             }
