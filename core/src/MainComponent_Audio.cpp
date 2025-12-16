@@ -2187,6 +2187,11 @@ void MainComponent::timerCallback()
         // completo.
         transportBeats_ += 1.0;
 
+        // Keep the Loop engine's integer beat counter in sync with
+        // the global transport so that Loop modules can derive a
+        // consistent playback phase on sample switches.
+        audioEngine_.advanceLoopBeatCounter();
+
         const bool strong = (beatIndex_ % 4 == 0);
         pulses_.push_back(Pulse{0.0F, strong});
 
@@ -2209,6 +2214,11 @@ void MainComponent::timerCallback()
             beatIndex_ = 0;
         }
     }
+
+    // Expose the current fractional beat phase to the audio engine so
+    // that Loop modules can use a continuous beat position (integer
+    // beats + phase) when aligning playback across samples.
+    audioEngine_.setLoopBeatPhase(beatPhase_);
 
     // Advance connection flow phase (used for pulses along edges).
     connectionFlowPhase_ += dt;

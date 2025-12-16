@@ -496,6 +496,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     // com.reactable/Samples/ and hand them to the AudioEngine.
     loadLoopSamples();
 
+    // Reset the global loop beat counter so that Loop modules start
+    // from a well-defined transport origin for this session.
+    audioEngine_.resetLoopBeatCounter(0U);
+
     // Load Reactable icon atlas (atlas_2048.png + atlas_2048.xml) so that
     // modules can be rendered with their original icons instead of only
     // text labels or procedural shapes. If loading fails, the UI will

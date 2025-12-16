@@ -205,6 +205,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     }
 
     const double bpm = loopGlobalBpm_.load(std::memory_order_relaxed);
+    const unsigned int loopBeatsInt =
+        loopGlobalBeatCounter_.load(std::memory_order_relaxed);
+    const double loopBeatPhase =
+        loopBeatPhase_.load(std::memory_order_relaxed);
+    const double loopBeats = static_cast<double>(loopBeatsInt) +
+                             juce::jlimit(0.0, 1.0, loopBeatPhase);
 
     for (int sample = 0; sample < numSamples; ++sample) {
         float oscMixed = 0.0F;
@@ -386,7 +392,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // Mix Loop modules: sum the currently selected slot for
             // each instance. Playback phase for all slots advances
             // regardless of gain so that muting connections to the
-            // master does not pause the loops.
+            // master does not pause the loops. When the selected slot
+            // changes, its playback position is realigned from the
+            // global loop beat counter so that switching samples keeps
+            // them phase-locked to the transport.
             if (loopSnapshot && !loopSnapshot->empty()) {
                 for (auto& pair : *loopSnapshot) {
                     auto& instance = pair.second;
@@ -424,6 +433,43 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const int totalFrames = slot.numFrames;
                     if (sr <= 0.0 || srcSr <= 0.0 || totalFrames <= 0) {
                         continue;
+                    }
+
+                    // Align playback position for the selected slot
+                    // when it changes, using the continuous global
+                    // beat position (integer beats + fractional
+                    // phase) so that different samples behave as if
+                    // they were all running in parallel.
+                    if (slot.beats > 0 && totalFrames > 0 &&
+                        instance.readPositions.size() ==
+                            instance.slots.size() &&
+                        instance.lastSelectedIndexForPlayback !=
+                            slotIndex) {
+                        const unsigned int beatsPerLoop =
+                            static_cast<unsigned int>(slot.beats);
+                        if (beatsPerLoop > 0U) {
+                            const double loopBeatsMod = std::fmod(
+                                loopBeats,
+                                static_cast<double>(beatsPerLoop));
+                            const double fracBeat =
+                                loopBeatsMod /
+                                static_cast<double>(beatsPerLoop);
+                            const double targetFrame =
+                                fracBeat *
+                                static_cast<double>(totalFrames);
+
+                            const double clampedFrame = juce::jlimit(
+                                0.0,
+                                static_cast<double>(
+                                    std::max(totalFrames - 1, 0)),
+                                targetFrame);
+
+                            instance.readPositions[static_cast<
+                                std::size_t>(slotIndex)] =
+                                clampedFrame;
+                            instance.lastSelectedIndexForPlayback =
+                                slotIndex;
+                        }
                     }
 
                     // Base step from source to device sample rate.
@@ -556,7 +602,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
             // Mix Loop modules even when there are no oscillator
             // voices so that scenes consisting only of LoopModule
-            // still render correctly.
+            // still render correctly. As in the oscillator branch,
+            // align the selected slot's playback position from the
+            // global loop beat counter when switching samples so that
+            // different loops remain phase-locked to the transport.
             if (loopSnapshot && !loopSnapshot->empty()) {
                 for (auto& pair : *loopSnapshot) {
                     auto& instance = pair.second;
@@ -594,6 +643,41 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const int totalFrames = slot.numFrames;
                     if (sr <= 0.0 || srcSr <= 0.0 || totalFrames <= 0) {
                         continue;
+                    }
+
+                    // Align playback position for the selected slot
+                    // when it changes, using the continuous global
+                    // beat position.
+                    if (slot.beats > 0 && totalFrames > 0 &&
+                        instance.readPositions.size() ==
+                            instance.slots.size() &&
+                        instance.lastSelectedIndexForPlayback !=
+                            slotIndex) {
+                        const unsigned int beatsPerLoop =
+                            static_cast<unsigned int>(slot.beats);
+                        if (beatsPerLoop > 0U) {
+                            const double loopBeatsMod = std::fmod(
+                                loopBeats,
+                                static_cast<double>(beatsPerLoop));
+                            const double fracBeat =
+                                loopBeatsMod /
+                                static_cast<double>(beatsPerLoop);
+                            const double targetFrame =
+                                fracBeat *
+                                static_cast<double>(totalFrames);
+
+                            const double clampedFrame = juce::jlimit(
+                                0.0,
+                                static_cast<double>(
+                                    std::max(totalFrames - 1, 0)),
+                                targetFrame);
+
+                            instance.readPositions[static_cast<
+                                std::size_t>(slotIndex)] =
+                                clampedFrame;
+                            instance.lastSelectedIndexForPlayback =
+                                slotIndex;
+                        }
                     }
 
                     double step = srcSr / sr;
@@ -841,6 +925,27 @@ void AudioEngine::setLoopGlobalTempo(const double bpm)
 {
     const double clamped = bpm > 0.0 ? bpm : 0.0;
     loopGlobalBpm_.store(clamped, std::memory_order_relaxed);
+}
+
+void AudioEngine::setLoopBeatPhase(const double beatPhase01)
+{
+    const double clamped = juce::jlimit(0.0, 1.0, beatPhase01);
+    loopBeatPhase_.store(clamped, std::memory_order_relaxed);
+}
+
+void AudioEngine::resetLoopBeatCounter(const unsigned int startBeat)
+{
+    loopGlobalBeatCounter_.store(startBeat, std::memory_order_relaxed);
+}
+
+void AudioEngine::advanceLoopBeatCounter()
+{
+    loopGlobalBeatCounter_.fetch_add(1U, std::memory_order_relaxed);
+}
+
+unsigned int AudioEngine::loopBeatCounter() const noexcept
+{
+    return loopGlobalBeatCounter_.load(std::memory_order_relaxed);
 }
 
 void AudioEngine::setFrequency(const double frequency)

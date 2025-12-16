@@ -235,6 +235,21 @@ public:
     // intentionally simple and pitch-shifts the audio.
     void setLoopGlobalTempo(double bpm);
 
+    // Updates the fractional beat phase [0,1) for the loop transport
+    // so that Loop modules can derive a continuous beat position when
+    // combined with the integer beat counter. This is typically
+    // driven from the UI timer using the same `beatPhase_` that
+    // powers visual pulses.
+    void setLoopBeatPhase(double beatPhase01);
+
+    // Loop transport: global beat counter used to align the playback
+    // phase of LoopModule samples when switching between slots. This
+    // counter is advanced once per tempo beat from the UI thread and
+    // read on the audio thread.
+    void resetLoopBeatCounter(unsigned int startBeat = 0U);
+    void advanceLoopBeatCounter();
+    [[nodiscard]] unsigned int loopBeatCounter() const noexcept;
+
 private:
     juce::AudioDeviceManager deviceManager_;
 
@@ -353,6 +368,11 @@ private:
         // Shared playback position per slot, in source frames. Only
         // touched on the audio thread.
         std::vector<double> readPositions;
+        // Last slot index whose playback position was aligned on the
+        // audio thread. Used to detect when the selected slot changes
+        // so that we can derive a new read position from the global
+        // loop beat counter.
+        int lastSelectedIndexForPlayback{-1};
         // Index of the currently audible slot.
         std::atomic<int> selectedIndex{0};
         // Linear gain in [0,1] applied to the selected slot.
@@ -367,6 +387,8 @@ private:
         {
             slots = other.slots;
             readPositions = other.readPositions;
+            lastSelectedIndexForPlayback =
+                other.lastSelectedIndexForPlayback;
             selectedIndex.store(
                 other.selectedIndex.load(std::memory_order_relaxed),
                 std::memory_order_relaxed);
@@ -379,6 +401,8 @@ private:
             if (this != &other) {
                 slots = other.slots;
                 readPositions = other.readPositions;
+                lastSelectedIndexForPlayback =
+                    other.lastSelectedIndexForPlayback;
                 selectedIndex.store(
                     other.selectedIndex.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
@@ -393,6 +417,8 @@ private:
         {
             slots = std::move(other.slots);
             readPositions = std::move(other.readPositions);
+            lastSelectedIndexForPlayback =
+                other.lastSelectedIndexForPlayback;
             selectedIndex.store(
                 other.selectedIndex.load(std::memory_order_relaxed),
                 std::memory_order_relaxed);
@@ -405,6 +431,8 @@ private:
             if (this != &other) {
                 slots = std::move(other.slots);
                 readPositions = std::move(other.readPositions);
+                lastSelectedIndexForPlayback =
+                    other.lastSelectedIndexForPlayback;
                 selectedIndex.store(
                     other.selectedIndex.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
@@ -427,6 +455,16 @@ private:
 
     // Global tempo in BPM used for approximate loop sync.
     std::atomic<double> loopGlobalBpm_{120.0};
+
+    // Global integer beat counter for Loop modules. Incremented once
+    // per tempo beat so that individual loop slots can derive a
+    // consistent playback phase when switching between samples.
+    std::atomic<unsigned int> loopGlobalBeatCounter_{0U};
+
+    // Fractional beat phase in [0,1) used together with
+    // `loopGlobalBeatCounter_` to obtain a continuous global beat
+    // position for LoopModule playback alignment.
+    std::atomic<double> loopBeatPhase_{0.0};
 
     // Non-copyable helper to access the AudioFormatManager without
     // reinitialising it on every load.
