@@ -1127,7 +1127,52 @@ void MainComponent::timerCallback()
     // loading patches whose Output starts muted in a completely
     // silent state.
     float sampleplayOutputGain = globalVolumeGain;
-    {
+
+    // Temporary hold-mute: if the user is holding down either the
+    // Sampleplay radial to the master or one of its direct audio
+    // connections, force the global Sampleplay path gain to 0 while
+    // the gesture is active. This mirrors the behaviour implemented
+    // for Oscillator generators, where hold-mute silences the chain
+    // without modifying persistent mute state.
+    bool holdBlocksSampleplay = false;
+    if (activeConnectionHold_.has_value()) {
+        const auto& hold = *activeConnectionHold_;
+
+        if (hold.is_object_line) {
+            const auto objIt = objects.find(hold.object_id);
+            if (objIt != objects.end()) {
+                const auto& obj = objIt->second;
+                const auto modIt = modules.find(obj.logical_id());
+                if (modIt != modules.end() &&
+                    modIt->second != nullptr &&
+                    modIt->second->is<rectai::SampleplayModule>()) {
+                    holdBlocksSampleplay = true;
+                }
+            }
+        } else if (!hold.connection_key.empty()) {
+            for (const auto& edge : audioEdges) {
+                rectai::Connection tmpConn{edge.from_module_id,
+                                           edge.from_port_name,
+                                           edge.to_module_id,
+                                           edge.to_port_name,
+                                           edge.is_hardlink};
+                const std::string key = makeConnectionKey(tmpConn);
+                if (key != hold.connection_key) {
+                    continue;
+                }
+
+                const auto modIt = modules.find(edge.from_module_id);
+                if (modIt != modules.end() &&
+                    modIt->second != nullptr &&
+                    modIt->second->is<rectai::SampleplayModule>()) {
+                    holdBlocksSampleplay = true;
+                }
+                break;
+            }
+        }
+    }
+
+    if (!holdBlocksSampleplay) {
         // Consider the Sampleplay path muted if **all** effective
         // routes from Sampleplay modules to the master are muted at
         // connection level. A Sampleplay module is considered routed
@@ -1190,6 +1235,8 @@ void MainComponent::timerCallback()
         if (!hasUnmutedSampleplay) {
             sampleplayOutputGain = 0.0F;
         }
+    } else {
+        sampleplayOutputGain = 0.0F;
     }
 
     audioEngine_.setSampleplayOutputGain(sampleplayOutputGain);
@@ -1218,6 +1265,38 @@ void MainComponent::timerCallback()
         // that loop gain changes can be smoothed using attack /
         // release times.
         const auto& loopEnv = loopModule->envelope();
+
+        // Check for temporary hold-mute gestures on this Loop module.
+        // If the radial from this module to the master is being held,
+        // or a direct audio connection originating from this module
+        // is held, we treat the loop as muted while keeping playback
+        // positions advancing in the engine.
+        bool isHeldForLoop = false;
+        if (activeConnectionHold_.has_value()) {
+            const auto& hold = *activeConnectionHold_;
+
+            if (hold.is_object_line && hold.object_id == objId) {
+                isHeldForLoop = true;
+            } else if (!hold.is_object_line &&
+                       !hold.connection_key.empty()) {
+                for (const auto& edge : audioEdges) {
+                    if (edge.from_module_id != loopModule->id()) {
+                        continue;
+                    }
+
+                    rectai::Connection tmpConn{edge.from_module_id,
+                                               edge.from_port_name,
+                                               edge.to_module_id,
+                                               edge.to_port_name,
+                                               edge.is_hardlink};
+                    const std::string key = makeConnectionKey(tmpConn);
+                    if (key == hold.connection_key) {
+                        isHeldForLoop = true;
+                        break;
+                    }
+                }
+            }
+        }
 
         if (!isInsideMusicArea(obj)) {
             // Keep playback positions advancing in the engine but
@@ -1268,7 +1347,7 @@ void MainComponent::timerCallback()
             loopGain = linear * globalVolumeGain;
         }
 
-        if (routeToMasterMuted) {
+        if (routeToMasterMuted || isHeldForLoop) {
             loopGain = 0.0F;
         }
 

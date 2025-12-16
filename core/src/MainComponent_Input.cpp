@@ -775,12 +775,18 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 // Store hold state for temporary mute/visualisation.
                 // The actual mute is driven by activeConnectionHold_
                 // in timerCallback() rather than by mutating
-                // mutedConnections_.
+                // mutedConnections_. When the connection is already
+                // muted at the start of the gesture, remember that so
+                // that releasing the hold can clear that mute.
+                const bool isCurrentlyMuted =
+                    mutedConnections_.find(key) !=
+                    mutedConnections_.end();
                 activeConnectionHold_ = ConnectionHoldState{
                     key,
                     0,   // Not an object-to-center line.
                     false,
-                    splitPoint};
+                    splitPoint,
+                    isCurrentlyMuted};
 
                 repaint();
                 return;
@@ -857,12 +863,31 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                     splitPoint = juce::jlimit(0.0F, 1.0F, splitPoint);
                 }
                 
-                // Store hold state and apply temporary mute.
+                // Store hold state and apply temporary mute. Also
+                // record whether the implicit module→master
+                // connection is currently muted so that releasing a
+                // hold on an already-muted radial clears that mute.
+                bool isRadialMuted = false;
+                for (const auto& conn : scene_.connections()) {
+                    if (conn.from_module_id != object.logical_id() ||
+                        conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                        continue;
+                    }
+
+                    const std::string key = makeConnectionKey(conn);
+                    if (mutedConnections_.find(key) !=
+                        mutedConnections_.end()) {
+                        isRadialMuted = true;
+                        break;
+                    }
+                }
+
                 activeConnectionHold_ = ConnectionHoldState{
                     "",  // No connection key for object-to-center lines.
                     id,
                     true,
-                    splitPoint
+                    splitPoint,
+                    isRadialMuted
                 };
 
                 repaint();
@@ -1391,16 +1416,71 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
 {
     juce::ignoreUnused(event);
 
-    // Handle click-and-hold mute release.
-    // Always clear hold state when releasing; connection-level mute
-    // changes (if any) are handled via cut gestures.
-    if (activeConnectionHold_.has_value()) {
-        activeConnectionHold_.reset();
-    }
-    
-    // Apply mute toggle to lines that were cut during touch drag.
     const auto& objects = scene_.objects();
     const auto& connections = scene_.connections();
+
+    // Handle click-and-hold mute release.
+    // Always clear hold state when releasing. If the hold started on
+    // an already-muted line and requested unmute-on-release, clear
+    // that mute now (without requiring a cut gesture).
+    if (activeConnectionHold_.has_value()) {
+        const ConnectionHoldState hold = *activeConnectionHold_;
+
+        if (hold.unmute_on_release) {
+            if (hold.is_object_line && hold.object_id != 0) {
+                const auto objIt = objects.find(hold.object_id);
+                if (objIt != objects.end()) {
+                    const auto& obj = objIt->second;
+                    const std::string moduleId = obj.logical_id();
+
+                    bool justUnmutedMaster = false;
+                    for (const auto& conn : connections) {
+                        if (conn.from_module_id != moduleId ||
+                            conn.to_module_id !=
+                                rectai::MASTER_OUTPUT_ID) {
+                            continue;
+                        }
+
+                        const std::string key =
+                            makeConnectionKey(conn);
+                        const auto it = mutedConnections_.find(key);
+                        if (it != mutedConnections_.end()) {
+                            mutedConnections_.erase(it);
+                            justUnmutedMaster = true;
+                        }
+                    }
+
+                    if (justUnmutedMaster) {
+                        const std::string prefix = moduleId + ":";
+                        std::vector<std::string> keysToErase;
+                        keysToErase.reserve(
+                            mutedConnections_.size());
+
+                        for (const auto& key : mutedConnections_) {
+                            if (key.rfind(prefix, 0) == 0U) {
+                                keysToErase.push_back(key);
+                            }
+                        }
+
+                        for (const auto& key : keysToErase) {
+                            mutedConnections_.erase(key);
+                        }
+                    }
+                }
+            } else if (!hold.is_object_line &&
+                       !hold.connection_key.empty()) {
+                const auto it =
+                    mutedConnections_.find(hold.connection_key);
+                if (it != mutedConnections_.end()) {
+                    mutedConnections_.erase(it);
+                }
+            }
+        }
+
+        activeConnectionHold_.reset();
+    }
+
+    // Apply mute toggle to lines that were cut durante touch drag.
 
     // Precompute mapping from module id to object id.
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;

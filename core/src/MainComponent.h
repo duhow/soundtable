@@ -296,6 +296,11 @@ private:
         std::int64_t object_id{0};   // For object-to-center lines.
         bool is_object_line{false};  // True if object-to-center, false if module-to-module.
         float split_point{0.0F};     // Normalized position along the line (0=source, 1=destination).
+        // When true, releasing the hold should unmute the underlying
+        // connection or radial if it was muted at the start of the
+        // gesture. This lets users click/hold on an already-muted
+        // line to clear its mute without performing a cut gesture.
+        bool unmute_on_release{false};
     };
     std::optional<ConnectionHoldState> activeConnectionHold_;
 

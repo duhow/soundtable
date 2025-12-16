@@ -420,10 +420,12 @@ private:
 
     // Each active Loop module that needs a dedicated waveform curve in
     // the UI is assigned a small integer slot. The audio thread writes
-    // the mono loop signal (post-gain/envelope) into
+    // the dry mono loop signal (pre-mix gain) into
     // `loopWaveformBuffers_` at the shared `waveformWriteIndex_`, and
     // the GUI thread samples snapshots via
-    // `getLoopModuleWaveformSnapshot`.
+    // `getLoopModuleWaveformSnapshot`. This keeps visualisation
+    // independent from last-stage mutes such as UI hold-gestures
+    // while still following the underlying loop content.
     float loopWaveformBuffers_[kMaxLoopWaveforms]
                              [kWaveformHistorySize]{};
     std::unordered_map<std::string, int> loopModuleToWaveformIndex_;

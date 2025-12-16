@@ -641,60 +641,188 @@ void MainComponent::paint(juce::Graphics& g)
                     juce::jmap(splitT, 0.0F, 1.0F, centre.x, cx),
                     juce::jmap(splitT, 0.0F, 1.0F, centre.y, cy)
                 };
-                
+
+                bool drewWaveformSegment = false;
+
                 // First segment: object to split (with waveform even if muted).
-                // Check for voice data directly, not relying on modulesWithActiveAudio_
-                // since the module is temporarily muted during hold.
-                const auto voiceIt = moduleVoiceIndex_.find(object.logical_id());
-                const int voiceIndex = (voiceIt != moduleVoiceIndex_.end()) ? voiceIt->second : -1;
+                // We support three families here:
+                //  - Sampleplay modules: waveform from the corresponding
+                //    audio connection tap.
+                //  - Loop modules: per-module loop waveform history.
+                //  - Procedural generators (e.g. Oscillator): per-voice
+                //    post-filter waveform buffer.
+                if (isSampleplayModule) {
+                    float sampleplayRadialWave[kWaveformPoints]{};
+                    float sampleplayRadialNorm = 0.0F;
 
-                if (voiceIndex >= 0 && voiceIndex < AudioEngine::kMaxVoices &&
-                    voiceNormPost[voiceIndex] > 0.0F) {
-                    g.setColour(juce::Colours::white.withAlpha(baseAlpha));
+                    std::string radialConnKey;
+                    for (const auto& conn : scene_.connections()) {
+                        if (conn.from_module_id != object.logical_id() ||
+                            conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                            continue;
+                        }
 
-                    float amplitudeLevel = visualLevel;
-                    if (!hasExplicitVolumeBar) {
-                        const float rms = voiceRmsPost[voiceIndex];
-                        if (rms > 0.0F) {
-                            amplitudeLevel = juce::jlimit(0.0F, 1.0F,
-                                                          rms / 0.7071F);
-                        } else {
-                            amplitudeLevel = 0.0F;
+                        if (!isAudioConnection(conn)) {
+                            continue;
+                        }
+
+                        // For hold-mute we always tap the connection,
+                        // regardless of its persistent mute state; the
+                        // audio path itself is gated separately.
+                        radialConnKey = makeConnectionKey(conn);
+                        break;
+                    }
+
+                    if (!radialConnKey.empty()) {
+                        audioEngine_.getConnectionWaveformSnapshot(
+                            radialConnKey, sampleplayRadialWave,
+                            kWaveformPoints, 0.05);
+
+                        float maxAbs = 0.0F;
+                        for (int i = 0; i < kWaveformPoints; ++i) {
+                            maxAbs = std::max(
+                                maxAbs,
+                                std::abs(sampleplayRadialWave[i]));
+                        }
+
+                        if (maxAbs > 1.0e-4F) {
+                            sampleplayRadialNorm = 1.0F / maxAbs;
                         }
                     }
 
-                    const float waveformAmplitude = 15.0F * amplitudeLevel;
-                    const float waveformThickness = 1.4F;
-                    // Calculate segments based on physical line length in pixels to maintain
-                    // consistent waveform visual density (window effect: longer line shows more cycles).
-                    const juce::Point<float> delta =
-                        splitPoint - juce::Point<float>{cx, cy};
-                    const float segmentLineLength =
-                        std::sqrt(delta.x * delta.x +
-                                  delta.y * delta.y);
-                    const int segmentsForWaveformHold =
-                        static_cast<int>(segmentLineLength / 5.0F);
-                    const int periodSamples =
-                        voicePeriodSamples[voiceIndex] > 0
-                            ? voicePeriodSamples[voiceIndex]
-                            : kWaveformPoints;
-                    drawWaveformOnLine(
-                        {cx, cy}, splitPoint, waveformAmplitude,
-                        waveformThickness,
-                        voiceWaveformsPost[voiceIndex], periodSamples,
-                        voiceNormPost[voiceIndex],
-                        juce::jmax(1, segmentsForWaveformHold),
-                        /*tiled=*/true);
+                    if (sampleplayRadialNorm > 0.0F) {
+                        g.setColour(
+                            juce::Colours::white.withAlpha(baseAlpha));
+                        const float amplitudeLevel = visualLevel;
+                        const float waveformAmplitude =
+                            15.0F * amplitudeLevel;
+                        const float waveformThickness = 1.4F;
+
+                        const juce::Point<float> delta =
+                            splitPoint - juce::Point<float>{cx, cy};
+                        const float segmentLineLength =
+                            std::sqrt(delta.x * delta.x +
+                                      delta.y * delta.y);
+                        const int segmentsForWaveformHold =
+                            static_cast<int>(segmentLineLength / 5.0F);
+
+                        drawWaveformOnLine(
+                            {cx, cy}, splitPoint, waveformAmplitude,
+                            waveformThickness, sampleplayRadialWave,
+                            kWaveformPoints, sampleplayRadialNorm,
+                            juce::jmax(1, segmentsForWaveformHold),
+                            /*tiled=*/false);
+                        drewWaveformSegment = true;
+                    }
+                } else if (isLoopModule) {
+                    float loopRadialWave[kWaveformPoints]{};
+                    float loopRadialNorm = 0.0F;
+
+                    audioEngine_.getLoopModuleWaveformSnapshot(
+                        object.logical_id(), loopRadialWave,
+                        kWaveformPoints, 0.05);
+
+                    float maxAbs = 0.0F;
+                    for (int i = 0; i < kWaveformPoints; ++i) {
+                        maxAbs = std::max(maxAbs,
+                                          std::abs(loopRadialWave[i]));
+                    }
+
+                    if (maxAbs > 1.0e-4F) {
+                        loopRadialNorm = 1.0F / maxAbs;
+                    }
+
+                    if (loopRadialNorm > 0.0F) {
+                        g.setColour(
+                            juce::Colours::white.withAlpha(baseAlpha));
+                        const float amplitudeLevel = visualLevel;
+                        const float waveformAmplitude =
+                            15.0F * amplitudeLevel;
+                        const float waveformThickness = 1.2F;
+
+                        const juce::Point<float> delta =
+                            splitPoint - juce::Point<float>{cx, cy};
+                        const float segmentLineLength =
+                            std::sqrt(delta.x * delta.x +
+                                      delta.y * delta.y);
+                        const int segmentsForWaveformHold =
+                            static_cast<int>(segmentLineLength / 5.0F);
+
+                        drawWaveformOnLine(
+                            {cx, cy}, splitPoint, waveformAmplitude,
+                            waveformThickness, loopRadialWave,
+                            kWaveformPoints, loopRadialNorm,
+                            juce::jmax(1, segmentsForWaveformHold),
+                            /*tiled=*/false);
+                        drewWaveformSegment = true;
+                    }
                 } else {
-                    g.setColour(juce::Colours::white.withAlpha(baseAlpha));
-                    g.drawLine(juce::Line<float>({cx, cy}, splitPoint), 1.2F);
+                    const auto voiceIt =
+                        moduleVoiceIndex_.find(object.logical_id());
+                    const int voiceIndex =
+                        (voiceIt != moduleVoiceIndex_.end())
+                            ? voiceIt->second
+                            : -1;
+
+                    if (voiceIndex >= 0 &&
+                        voiceIndex < AudioEngine::kMaxVoices &&
+                        voiceNormPost[voiceIndex] > 0.0F) {
+                        g.setColour(
+                            juce::Colours::white.withAlpha(baseAlpha));
+
+                        float amplitudeLevel = visualLevel;
+                        if (!hasExplicitVolumeBar) {
+                            const float rms = voiceRmsPost[voiceIndex];
+                            if (rms > 0.0F) {
+                                amplitudeLevel = juce::jlimit(
+                                    0.0F, 1.0F, rms / 0.7071F);
+                            } else {
+                                amplitudeLevel = 0.0F;
+                            }
+                        }
+
+                        const float waveformAmplitude =
+                            15.0F * amplitudeLevel;
+                        const float waveformThickness = 1.4F;
+
+                        const juce::Point<float> delta =
+                            splitPoint - juce::Point<float>{cx, cy};
+                        const float segmentLineLength =
+                            std::sqrt(delta.x * delta.x +
+                                      delta.y * delta.y);
+                        const int segmentsForWaveformHold =
+                            static_cast<int>(segmentLineLength / 5.0F);
+                        const int periodSamples =
+                            voicePeriodSamples[voiceIndex] > 0
+                                ? voicePeriodSamples[voiceIndex]
+                                : kWaveformPoints;
+                        drawWaveformOnLine(
+                            {cx, cy}, splitPoint, waveformAmplitude,
+                            waveformThickness,
+                            voiceWaveformsPost[voiceIndex],
+                            periodSamples,
+                            voiceNormPost[voiceIndex],
+                            juce::jmax(1, segmentsForWaveformHold),
+                            /*tiled=*/true);
+                        drewWaveformSegment = true;
+                    }
                 }
-                
+
+                if (!drewWaveformSegment) {
+                    g.setColour(juce::Colours::white.withAlpha(baseAlpha));
+                    g.drawLine(juce::Line<float>({cx, cy}, splitPoint),
+                               1.2F);
+                }
+
                 // Second segment: split to center (dashed, muted/silenced output).
                 const float dashLengths[] = {6.0F, 4.0F};
-                g.setColour(juce::Colours::white.withAlpha(baseAlpha * 0.6F));
-                g.drawDashedLine(juce::Line<float>(splitPoint, centre), dashLengths,
-                                 static_cast<int>(std::size(dashLengths)), 1.2F);
+                g.setColour(
+                    juce::Colours::white.withAlpha(baseAlpha * 0.6F));
+                g.drawDashedLine(juce::Line<float>(splitPoint, centre),
+                                 dashLengths,
+                                 static_cast<int>(
+                                     std::size(dashLengths)),
+                                 1.2F);
                 continue;
             }
 

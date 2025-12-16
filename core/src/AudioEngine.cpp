@@ -896,17 +896,23 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             juce::jlimit(0.0F, 1.0F,
                                          static_cast<float>(tgt *
                                                             envAmp));
-                        const float monoWithGain = l * finalGain;
+                        const float monoDry = l;
+                        const float monoWithGain = monoDry * finalGain;
                         if (finalGain > 0.0F) {
-                            leftOut += l * finalGain;
+                            leftOut += monoWithGain;
                             rightOut += r * finalGain;
                         }
 
                         const int wfIndex = instance.visualWaveformIndex;
                         if (wfIndex >= 0 &&
                             wfIndex < kMaxLoopWaveforms) {
+                            // Store the dry mono loop signal for
+                            // visualisation so that UI effects such
+                            // as mute-on-hold can silence the audio
+                            // path without flattening the waveform
+                            // history.
                             loopWaveformBuffers_[wfIndex][bufIndex] =
-                                monoWithGain;
+                                monoDry;
                         }
 
                         pos += step;
@@ -1226,17 +1232,23 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             juce::jlimit(0.0F, 1.0F,
                                          static_cast<float>(tgt *
                                                             envAmp));
-                        const float monoWithGain = l * finalGain;
+                        const float monoDry = l;
+                        const float monoWithGain = monoDry * finalGain;
                         if (finalGain > 0.0F) {
-                            leftOut += l * finalGain;
+                            leftOut += monoWithGain;
                             rightOut += r * finalGain;
                         }
 
                         const int wfIndex = instance.visualWaveformIndex;
                         if (wfIndex >= 0 &&
                             wfIndex < kMaxLoopWaveforms) {
+                            // Store the dry mono loop signal for
+                            // visualisation so that UI effects such
+                            // as mute-on-hold can silence the audio
+                            // path without flattening the waveform
+                            // history.
                             loopWaveformBuffers_[wfIndex][bufIndex] =
-                                monoWithGain;
+                                monoDry;
                         }
 
                         pos += step;
