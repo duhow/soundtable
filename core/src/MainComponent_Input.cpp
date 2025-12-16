@@ -300,6 +300,12 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 const double norm =
                     (clampedBpm - minBpm) / (maxBpm - minBpm);
                 freqValue = static_cast<float>(norm);
+            } else if (moduleForObject->is<rectai::LoopModule>()) {
+                // Loop modules use the left bar to select the
+                // current sample slot via the normalised "sample"
+                // parameter.
+                freqValue = moduleForObject->GetParameterOrDefault(
+                    "sample", 0.0F);
             } else {
                 freqValue = moduleForObject->GetParameterOrDefault(
                     "freq",
@@ -327,7 +333,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
             freqEnabled =
                 moduleForObject->uses_frequency_control() ||
-                isTempoModule;
+                isTempoModule ||
+                moduleForObject->is<rectai::LoopModule>();
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
         gainValue = juce::jlimit(0.0F, 1.0F, gainValue);
@@ -416,7 +423,43 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 scene_.SetModuleParameter(object.logical_id(), "tempo",
                                           static_cast<float>(bpm_));
             } else {
-                scene_.SetModuleParameter(object.logical_id(), "freq", value);
+                const auto& modulesForFreq = scene_.modules();
+                const auto modItFreq =
+                    modulesForFreq.find(object.logical_id());
+                rectai::AudioModule* moduleForFreq =
+                    (modItFreq != modulesForFreq.end() &&
+                     modItFreq->second != nullptr)
+                        ? modItFreq->second.get()
+                        : nullptr;
+
+                if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
+                    moduleForFreq)) {
+                    // Map click position to one of four discrete
+                    // sample slots and update the "sample"
+                    // parameter. Also mark the loop label as
+                    // recently active so the filename overlay
+                    // appears.
+                    // Flip the vertical mapping so that a click on
+                    // the top segment selects slot 3 and a click on
+                    // the bottom segment selects slot 0, matching the
+                    // visual ordering of the Loop segments.
+                    const float clamped = juce::jlimit(0.0F, 1.0F, value);
+                    int segIndex =
+                        static_cast<int>((1.0F - clamped) * 4.0F);
+                    if (segIndex < 0) {
+                        segIndex = 0;
+                    } else if (segIndex > 3) {
+                        segIndex = 3;
+                    }
+                    const float sampleValue =
+                        (static_cast<float>(segIndex) + 0.5F) / 4.0F;
+                    scene_.SetModuleParameter(object.logical_id(),
+                                              "sample", sampleValue);
+                    markLoopSampleLabelActive(loopModule->id());
+                } else {
+                    scene_.SetModuleParameter(object.logical_id(), "freq",
+                                              value);
+                }
             }
 
             repaint();

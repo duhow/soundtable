@@ -9,6 +9,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_dsp/juce_dsp.h>
 
 namespace rectai {
@@ -197,6 +198,43 @@ public:
         return *audioGraph_;
     }
 
+    // Loop module integration --------------------------------------------
+
+    // Loads a loop sample for the given logical module id and slot index
+    // from an absolute file path. The audio is decoded via JUCE
+    // AudioFormatManager and stored as interleaved stereo float buffers.
+    //
+    // Supported formats depend on the compiled-in JUCE formats but are
+    // expected to include at least WAV/AIFF/FLAC/Ogg/Opus on desktop.
+    //
+    // On success, returns true. On failure, returns false and optionally
+    // writes a human-readable error message into `outError`.
+    bool loadLoopSampleFromFile(const std::string& moduleId,
+                                int slotIndex,
+                                const std::string& absolutePath,
+                                int beats,
+                                std::string* outError);
+
+    // Updates the runtime parameters for a loop module:
+    //   - `selectedIndex` selects which of the loaded slots [0,3] is
+    //     currently audible.
+    //   - `linearGain` is a per-module gain in [0,1] applied to the
+    //     loop output before mixing with the rest of the engine.
+    //
+    // The internal playback phase for all slots continues advancing
+    // regardless of gain so that muting a connection to the master
+    // does not pause the loops.
+    void setLoopModuleParams(const std::string& moduleId,
+                             int selectedIndex,
+                             float linearGain);
+
+    // Sets the global tempo in beats per minute used to time-align
+    // loop playback. Loops with a valid `beats` value will adjust
+    // their playback rate so that their length corresponds to the
+    // given number of beats at the current BPM. The mapping is
+    // intentionally simple and pitch-shifts the audio.
+    void setLoopGlobalTempo(double bpm);
+
 private:
     juce::AudioDeviceManager deviceManager_;
 
@@ -298,6 +336,101 @@ private:
     // the Scene and used as the canonical representation of modules
     // and typed connections on the audio side.
     std::unique_ptr<rectai::AudioGraph> audioGraph_;
+
+    // ------------------------------------------------------------------
+    // Loop modules
+
+    struct LoopSample {
+        std::vector<float> interleavedData;  // [L,R,L,R,...]
+        int numFrames{0};
+        double sourceSampleRate{0.0};
+        int beats{0};
+    };
+
+    struct LoopInstance {
+        // Per-slot decoded audio; typically up to 4 entries.
+        std::vector<LoopSample> slots;
+        // Shared playback position per slot, in source frames. Only
+        // touched on the audio thread.
+        std::vector<double> readPositions;
+        // Index of the currently audible slot.
+        std::atomic<int> selectedIndex{0};
+        // Linear gain in [0,1] applied to the selected slot.
+        std::atomic<float> gain{0.0F};
+
+        LoopInstance() = default;
+
+        // Custom copy constructor/assignment to allow the container of
+        // LoopInstance to be copied even though std::atomic is not
+        // copy-constructible by default.
+        LoopInstance(const LoopInstance& other)
+        {
+            slots = other.slots;
+            readPositions = other.readPositions;
+            selectedIndex.store(
+                other.selectedIndex.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            gain.store(other.gain.load(std::memory_order_relaxed),
+                       std::memory_order_relaxed);
+        }
+
+        LoopInstance& operator=(const LoopInstance& other)
+        {
+            if (this != &other) {
+                slots = other.slots;
+                readPositions = other.readPositions;
+                selectedIndex.store(
+                    other.selectedIndex.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                gain.store(
+                    other.gain.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            }
+            return *this;
+        }
+
+        LoopInstance(LoopInstance&& other) noexcept
+        {
+            slots = std::move(other.slots);
+            readPositions = std::move(other.readPositions);
+            selectedIndex.store(
+                other.selectedIndex.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            gain.store(other.gain.load(std::memory_order_relaxed),
+                       std::memory_order_relaxed);
+        }
+
+        LoopInstance& operator=(LoopInstance&& other) noexcept
+        {
+            if (this != &other) {
+                slots = std::move(other.slots);
+                readPositions = std::move(other.readPositions);
+                selectedIndex.store(
+                    other.selectedIndex.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                gain.store(
+                    other.gain.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            }
+            return *this;
+        }
+    };
+
+    // Mutable map updated from the UI thread when loop samples are
+    // loaded or their parameters change.
+    std::unordered_map<std::string, LoopInstance> loopModules_;
+
+    // Snapshot pointer used by the audio thread for lock-free
+    // iteration over loop instances.
+    std::shared_ptr<std::unordered_map<std::string, LoopInstance>>
+        loopModulesSnapshot_;
+
+    // Global tempo in BPM used for approximate loop sync.
+    std::atomic<double> loopGlobalBpm_{120.0};
+
+    // Non-copyable helper to access the AudioFormatManager without
+    // reinitialising it on every load.
+    juce::AudioFormatManager loopFormatManager_;
 
     // Set to true when the audio device initialisation succeeded but
     // reported zero output channels (e.g. "no channels"). Used by

@@ -1397,6 +1397,12 @@ void MainComponent::paint(juce::Graphics& g)
                 const double norm =
                     (clampedBpm - minBpm) / (maxBpm - minBpm);
                 freqValue = static_cast<float>(norm);
+            } else if (moduleForObject->is<rectai::LoopModule>()) {
+                // For Loop modules, the left bar represents the
+                // currently selected sample slot via the normalised
+                // "sample" parameter.
+                freqValue = moduleForObject->GetParameterOrDefault(
+                    "sample", 0.0F);
             } else {
                 freqValue = moduleForObject->GetParameterOrDefault(
                     "freq",
@@ -1428,7 +1434,8 @@ void MainComponent::paint(juce::Graphics& g)
 
             showFreqControl =
                 moduleForObject->uses_frequency_control() ||
-                isTempoModule;
+                isTempoModule ||
+                moduleForObject->is<rectai::LoopModule>();
             showGainControl = moduleForObject->uses_gain_control();
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
@@ -1471,48 +1478,192 @@ void MainComponent::paint(juce::Graphics& g)
             const juce::Colour freqForegroundColour =
                 juce::Colours::white.withAlpha(1.0F);
 
-            const bool freqIsFull = (freqValue >= 0.999F);
-            const bool freqIsEmpty = (freqValue <= 0.001F);
+            if (moduleForObject != nullptr &&
+                moduleForObject->is<rectai::LoopModule>()) {
+                // For Loop modules, render the left bar as four
+                // discrete segments with a small transparent gap and
+                // a triangle marker indicating the active slot.
+                const int segmentsCount = 4;
+                const float gap = 1.0F;
 
-            // When the control is at 0%, draw only the background
-            // arc so the bar appears completely empty, avoiding any
-            // tiny filled segment caused by clipping and
-            // anti-aliasing.
-            if (freqIsEmpty) {
-                g.setColour(freqBackgroundColour);
-                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
-            } else {
-                const float handleY = juce::jmap(freqValue, 0.0F, 1.0F,
-                                                 sliderBottom, sliderTop);
-
-                juce::Colour effectiveFreqBackground = freqBackgroundColour;
-                juce::Colour effectiveFreqForeground = freqForegroundColour;
-
-                // When the control is at 100%, render the entire arc
-                // with the foreground colour so that any small gap
-                // between the background and filled regions becomes
-                // invisible.
-                if (freqIsFull) {
-                    effectiveFreqBackground = freqForegroundColour;
+                // Active segment index derived from the normalised
+                // sample parameter.
+                float sampleParam = juce::jlimit(0.0F, 1.0F, freqValue);
+                int activeIndex = static_cast<int>(sampleParam * 4.0F);
+                if (activeIndex < 0) {
+                    activeIndex = 0;
+                } else if (activeIndex > 3) {
+                    activeIndex = 3;
                 }
 
-                // Draw the full bar path as a darker background.
-                g.setColour(effectiveFreqBackground);
-                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+                // Precompute the angle range covered by the visible
+                // arc so that each Loop segment spans the same angle
+                // and therefore has the same visual length.
+                const float dyTop = sliderTop - cy;
+                const float dyBottom = sliderBottom - cy;
+                const float sinTop = juce::jlimit(-1.0F, 1.0F,
+                                                  dyTop / ringRadius);
+                const float sinBottom = juce::jlimit(-1.0F, 1.0F,
+                                                     dyBottom / ringRadius);
+                const float angleTop = std::asin(sinTop);
+                const float angleBottom = std::asin(sinBottom);
 
-                // Draw the filled portion by clipping the same arc from
-                // the bottom of the bar up to the current value.
-                juce::Graphics::ScopedSaveState clipGuard(g);
-                const float clipPaddingX = 6.0F;
-                juce::Rectangle<int> filledClip(
-                    static_cast<int>(cx - ringRadius - clipPaddingX),
-                    static_cast<int>(handleY),
-                    static_cast<int>(ringRadius * 2.0F + clipPaddingX * 2.0F),
-                    static_cast<int>(sliderBottom - handleY + 4.0F));
-                g.reduceClipRegion(filledClip);
+                for (int i = 0; i < segmentsCount; ++i) {
+                    const float segStartT = static_cast<float>(i) /
+                                             static_cast<float>(segmentsCount);
+                    const float segEndT = static_cast<float>(i + 1) /
+                                           static_cast<float>(segmentsCount);
 
-                g.setColour(effectiveFreqForeground);
-                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+                    const float segAngle0 = juce::jmap(
+                        segStartT, 0.0F, 1.0F, angleTop, angleBottom);
+                    const float segAngle1 = juce::jmap(
+                        segEndT, 0.0F, 1.0F, angleTop, angleBottom);
+
+                    // Apply a small angular shrink at both ends to
+                    // create a 1px-ish gap between segments.
+                    const float shrink = gap / ringRadius;
+                    const float a0 = segAngle0 + shrink;
+                    const float a1 = segAngle1 - shrink;
+                    if (a1 <= a0) {
+                        continue;
+                    }
+
+                    juce::Path segPath;
+                    const int segSteps = 16;
+                    for (int s = 0; s <= segSteps; ++s) {
+                        const float tt = static_cast<float>(s) /
+                                         static_cast<float>(segSteps);
+                        const float a = juce::jmap(tt, 0.0F, 1.0F,
+                                                   a0, a1);
+                        const float x = cx - ringRadius * std::cos(a);
+                        const float y = cy + ringRadius * std::sin(a);
+                        if (s == 0) {
+                            segPath.startNewSubPath(x, y);
+                        } else {
+                            segPath.lineTo(x, y);
+                        }
+                    }
+
+                    // Background bar segment.
+                    g.setColour(freqBackgroundColour);
+                    g.strokePath(segPath, juce::PathStrokeType(5.0F));
+
+                    if (i == activeIndex) {
+                        // Highlight the active segment with the
+                        // foreground colour on top of the background.
+                        g.setColour(freqForegroundColour);
+                        g.strokePath(segPath, juce::PathStrokeType(5.0F));
+                    }
+                }
+
+                // Triangle selector: restore the original layout
+                // (triangle to the left of the bar, sliding
+                // vertically with the active segment) and then
+                // rotate the triangle shape 45° so that its tip
+                // touches the active segment.
+                const float activeTop = juce::jmap(
+                    static_cast<float>(activeIndex) / segmentsCount,
+                    0.0F, 1.0F, sliderTop, sliderBottom);
+                const float activeBottom = juce::jmap(
+                    static_cast<float>(activeIndex + 1) / segmentsCount,
+                    0.0F, 1.0F, sliderTop, sliderBottom);
+                const float triY = 0.5F * (activeTop + activeBottom);
+
+                const float dyTri = triY - cy;
+                const float insideTri =
+                    ringRadius * ringRadius - dyTri * dyTri;
+                if (insideTri > 0.0F) {
+                    const float dxTri = std::sqrt(insideTri);
+                    const float barX = cx - dxTri;
+
+                    // Radial direction from the module centre to the
+                    // active segment centre.
+                    const float ux = (barX - cx) / ringRadius;
+                    const float uy = (triY - cy) / ringRadius;
+
+                    // Tip of the triangle sits exactly on the
+                    // active segment, and the whole body extends
+                    // *outside* the bar along the radial direction so
+                    // it "wraps" the segment from the exterior.
+                    const float triHeight = 7.0F;
+                    const float halfWidth = 4.5F;
+
+                    const juce::Point<float> tip(barX, triY);
+                    const juce::Point<float> baseCenter(
+                        tip.x + ux * triHeight,
+                        tip.y + uy * triHeight);
+
+                    // Tangent to the arc at the active segment,
+                    // perpendicular to the radial.
+                    const float tx = -uy;
+                    const float ty = ux;
+
+                    const juce::Point<float> base1(
+                        baseCenter.x + tx * halfWidth,
+                        baseCenter.y + ty * halfWidth);
+                    const juce::Point<float> base2(
+                        baseCenter.x - tx * halfWidth,
+                        baseCenter.y - ty * halfWidth);
+
+                    juce::Path tri;
+                    tri.startNewSubPath(tip);
+                    tri.lineTo(base1);
+                    tri.lineTo(base2);
+                    tri.closeSubPath();
+
+                    g.setColour(freqForegroundColour);
+                    g.fillPath(tri);
+                }
+            } else {
+                const bool freqIsFull = (freqValue >= 0.999F);
+                const bool freqIsEmpty = (freqValue <= 0.001F);
+
+                // When the control is at 0%, draw only the background
+                // arc so the bar appears completely empty, avoiding any
+                // tiny filled segment caused by clipping and
+                // anti-aliasing.
+                if (freqIsEmpty) {
+                    g.setColour(freqBackgroundColour);
+                    g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+                } else {
+                    const float handleY = juce::jmap(freqValue, 0.0F, 1.0F,
+                                                     sliderBottom,
+                                                     sliderTop);
+
+                    juce::Colour effectiveFreqBackground =
+                        freqBackgroundColour;
+                    juce::Colour effectiveFreqForeground =
+                        freqForegroundColour;
+
+                    // When the control is at 100%, render the entire arc
+                    // with the foreground colour so that any small gap
+                    // between the background and filled regions becomes
+                    // invisible.
+                    if (freqIsFull) {
+                        effectiveFreqBackground = freqForegroundColour;
+                    }
+
+                    // Draw the full bar path as a darker background.
+                    g.setColour(effectiveFreqBackground);
+                    g.strokePath(freqArc,
+                                 juce::PathStrokeType(5.0F));
+
+                    // Draw the filled portion by clipping the same arc from
+                    // the bottom of the bar up to the current value.
+                    juce::Graphics::ScopedSaveState clipGuard(g);
+                    const float clipPaddingX = 6.0F;
+                    juce::Rectangle<int> filledClip(
+                        static_cast<int>(cx - ringRadius - clipPaddingX),
+                        static_cast<int>(handleY),
+                        static_cast<int>(ringRadius * 2.0F +
+                                         clipPaddingX * 2.0F),
+                        static_cast<int>(sliderBottom - handleY + 4.0F));
+                    g.reduceClipRegion(filledClip);
+
+                    g.setColour(effectiveFreqForeground);
+                    g.strokePath(freqArc,
+                                 juce::PathStrokeType(5.0F));
+                }
             }
         }
 
@@ -1718,8 +1869,8 @@ void MainComponent::paint(juce::Graphics& g)
         // musical area, so "right" is interpreted in the module's
         // local space.
         if (const auto* sampleModule =
-                dynamic_cast<const rectai::SampleplayModule*>(
-                    moduleForObject)) {
+            dynamic_cast<const rectai::SampleplayModule*>(
+                moduleForObject)) {
             const auto* activeInstrument =
                 sampleModule->active_instrument();
             if (activeInstrument != nullptr &&
@@ -1780,6 +1931,94 @@ void MainComponent::paint(juce::Graphics& g)
                     g.drawText(instrumentName, labelBounds,
                                juce::Justification::centredLeft,
                                false);
+                }
+            }
+        }
+
+        // Loop sample title: when a Loop module has one or more
+        // loops declared, render the currently selected filename
+        // (basename only) to the right of the node body. The label
+        // appears for a few seconds after the selected slot changes
+        // and then fades out.
+        if (const auto* loopModule =
+                dynamic_cast<const rectai::LoopModule*>(
+                    moduleForObject)) {
+            const auto& loops = loopModule->loops();
+            if (!loops.empty()) {
+                float sampleParam = loopModule->GetParameterOrDefault(
+                    "sample", 0.0F);
+                sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
+                int selectedIndex = static_cast<int>(sampleParam * 4.0F);
+                if (selectedIndex < 0) {
+                    selectedIndex = 0;
+                } else if (selectedIndex > 3) {
+                    selectedIndex = 3;
+                }
+
+                const rectai::LoopDefinition* chosen = nullptr;
+                // Loops are already ordered by the loader; clamp to
+                // available entries.
+                if (selectedIndex < static_cast<int>(loops.size())) {
+                    chosen = &loops[static_cast<std::size_t>(
+                        selectedIndex)];
+                } else {
+                    chosen = &loops.front();
+                }
+
+                if (chosen != nullptr && !chosen->filename.empty()) {
+                    juce::String name(chosen->filename);
+                    // Strip any directory components to keep the
+                    // label compact.
+                    const int lastSlash = name.lastIndexOfAnyOf("/\\");
+                    if (lastSlash >= 0 && lastSlash < name.length() - 1) {
+                        name = name.substring(lastSlash + 1);
+                    }
+
+                    const float labelMargin = 10.0F;
+                    const float labelHeight = 18.0F;
+                    const float labelWidth = 160.0F;
+                    juce::Rectangle<float> labelBounds(
+                        cx + nodeRadius + labelMargin,
+                        cy - labelHeight * 0.5F,
+                        labelWidth,
+                        labelHeight);
+
+                    double labelAlpha = 0.0;
+                    const auto itTime =
+                        loopLabelLastChangeSeconds_.find(
+                            loopModule->id());
+                    if (itTime != loopLabelLastChangeSeconds_.end()) {
+                        const double elapsed =
+                            nowSeconds - itTime->second;
+                        if (elapsed >= 0.0) {
+                            if (elapsed <= 5.0) {
+                                labelAlpha = 1.0;
+                            } else if (elapsed <= 5.5) {
+                                labelAlpha =
+                                    1.0 - (elapsed - 5.0) / 0.5;
+                            }
+                        }
+                    } else {
+                        // First-time render: bootstrap the timer so
+                        // the label appears and fades on existing
+                        // modules.
+                        labelAlpha = 1.0;
+                        const double firstNow = nowSeconds;
+                        loopLabelLastChangeSeconds_.emplace(
+                            loopModule->id(), firstNow);
+                    }
+
+                    if (labelAlpha > 0.0) {
+                        const juce::Colour textColour =
+                            juce::Colours::white;
+                        const float alpha =
+                            static_cast<float>(labelAlpha);
+                        g.setColour(textColour.withAlpha(0.9F * alpha));
+                        g.setFont(13.0F);
+                        g.drawText(name, labelBounds,
+                                   juce::Justification::centredLeft,
+                                   false);
+                    }
                 }
             }
         }

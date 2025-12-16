@@ -320,6 +320,73 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
         }
     };
 
+    const auto loadLoopSamples = [this]() {
+        const auto& modules = scene_.modules();
+
+        for (const auto& [id, modulePtr] : modules) {
+            juce::ignoreUnused(id);
+            if (modulePtr == nullptr) {
+                continue;
+            }
+
+            auto* loopModule =
+                dynamic_cast<rectai::LoopModule*>(modulePtr.get());
+            if (loopModule == nullptr) {
+                continue;
+            }
+
+            // Order loops by the `order` field and load up to the
+            // first four entries. Filenames are resolved relative to
+            // com.reactable/Samples/.
+            std::vector<rectai::LoopDefinition> loops =
+                loopModule->loops();
+            std::sort(loops.begin(), loops.end(),
+                      [](const rectai::LoopDefinition& a,
+                         const rectai::LoopDefinition& b) {
+                          return a.order < b.order;
+                      });
+
+            int slotIndex = 0;
+            for (const auto& loopDef : loops) {
+                if (slotIndex >= 4) {
+                    break;
+                }
+                if (loopDef.filename.empty()) {
+                    continue;
+                }
+
+                const juce::String relativePath =
+                    juce::String("Samples/") +
+                    juce::String(loopDef.filename);
+                const juce::File audioFile =
+                    rectai::ui::loadFile(relativePath);
+                if (!audioFile.existsAsFile()) {
+                    juce::Logger::writeToLog(
+                        juce::String("[rectai-core] Loop: sample not "
+                                     "found: ") +
+                        audioFile.getFullPathName());
+                    ++slotIndex;
+                    continue;
+                }
+
+                std::string error;
+                const bool ok = audioEngine_.loadLoopSampleFromFile(
+                    loopModule->id(), slotIndex,
+                    audioFile.getFullPathName().toStdString(),
+                    loopDef.beats, &error);
+                if (!ok) {
+                    juce::Logger::writeToLog(
+                        juce::String("[rectai-core] Loop: failed to load "
+                                     "sample: ") +
+                        audioFile.getFullPathName() + " (" +
+                        juce::String(error) + ")");
+                }
+
+                ++slotIndex;
+            }
+        }
+    };
+
     if (!loadDefaultPatch()) {
         // Fallback: example scene with a couple of modules and an
         // explicit Output/master so that connection-level mute via
@@ -390,6 +457,12 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
     // SampleplayModule::LoadSoundfont.
     loadSampleplaySoundfonts();
 
+    // Resolve and load audio files for any Loop modules present in
+    // the patch. The .rtp loader has already populated the
+    // LoopDefinition list; here we resolve filenames under
+    // com.reactable/Samples/ and hand them to the AudioEngine.
+    loadLoopSamples();
+
     // Load Reactable icon atlas (atlas_2048.png + atlas_2048.xml) so that
     // modules can be rendered with their original icons instead of only
     // text labels or procedural shapes. If loading fails, the UI will
@@ -410,4 +483,12 @@ void MainComponent::markSampleplayInstrumentLabelActive(
     const double nowSeconds =
         juce::Time::getMillisecondCounterHiRes() / 1000.0;
     sampleplayLabelLastChangeSeconds_[moduleId] = nowSeconds;
+}
+
+void MainComponent::markLoopSampleLabelActive(
+    const std::string& moduleId)
+{
+    const double nowSeconds =
+        juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    loopLabelLastChangeSeconds_[moduleId] = nowSeconds;
 }

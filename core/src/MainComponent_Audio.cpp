@@ -467,11 +467,63 @@ void MainComponent::timerCallback()
         const float diff = deltaIt->second;
 
         // ------------------------------------------------------------------
-        // 1) Rotation → per-module frequency (`freq` parameter).
-        // Applies to any Module that exposes frequency control and
-        // has a tangible object on the table (Oscillator). A full
+        // 1) Rotation → per-module frequency (`freq` parameter) or
+        // Loop sample selection (`sample` parameter).
+        // For standard modules with frequency control, a full
         // revolution corresponds to a normalised delta of one unit.
-        if (module->uses_frequency_control() && !obj.docked()) {
+        // For Loop modules, the same rotation scrolls over the four
+        // discrete sample segments with wrap-around behaviour.
+        if (auto* loopModule =
+                dynamic_cast<rectai::LoopModule*>(module)) {
+            if (!obj.docked()) {
+                const float deltaSample = -diff / 360.0F;  // [-0.5, 0.5]
+
+                if (std::fabs(deltaSample) >
+                    std::numeric_limits<float>::epsilon()) {
+                    const float currentSampleParam =
+                        loopModule->GetParameterOrDefault("sample", 0.0F);
+                    float clampedCurrent = juce::jlimit(
+                        0.0F, 1.0F, currentSampleParam);
+                    float updated = clampedCurrent + deltaSample;
+
+                    // Infinite scroll: when crossing the [0,1]
+                    // bounds, wrap the value instead of clamping so
+                    // the user can rotate continuously through the
+                    // 4 segments.
+                    if (updated > 1.0F) {
+                        updated -= 1.0F;
+                    } else if (updated < 0.0F) {
+                        updated += 1.0F;
+                    }
+
+                    auto paramToIndex = [](const float v) {
+                        int idx = static_cast<int>(v * 4.0F);
+                        if (idx < 0) {
+                            idx = 0;
+                        } else if (idx > 3) {
+                            idx = 3;
+                        }
+                        return idx;
+                    };
+
+                    const int previousIndex = paramToIndex(clampedCurrent);
+                    int newIndex = paramToIndex(updated);
+
+                    // Snap al centro del segmento activo para que
+                    // la barra segmentada y el triángulo se
+                    // alineen de forma estable.
+                    const float newSampleParam =
+                        (static_cast<float>(newIndex) + 0.5F) / 4.0F;
+
+                    scene_.SetModuleParameter(obj.logical_id(), "sample",
+                                              newSampleParam);
+
+                    if (newIndex != previousIndex) {
+                        markLoopSampleLabelActive(loopModule->id());
+                    }
+                }
+            }
+        } else if (module->uses_frequency_control() && !obj.docked()) {
             // Invert sign so that counter-clockwise rotation reduces the
             // frequency parameter and clockwise rotation increases it.
             const float deltaFreq = -diff / 360.0F;  // [-0.5, 0.5]
@@ -559,6 +611,11 @@ void MainComponent::timerCallback()
                                       newVolume);
         }
     }
+
+    // Keep the loop engine in sync with the current BPM so that
+    // Loop modules can optionally time-stretch their playback to
+    // stay on beat.
+    audioEngine_.setLoopGlobalTempo(bpm_);
 
     // ------------------------------------------------------------------
     // Hardlink maintenance and collision-based toggling.
@@ -1104,6 +1161,94 @@ void MainComponent::timerCallback()
     }
 
     audioEngine_.setSampleplayOutputGain(sampleplayOutputGain);
+
+    // Configure per-module Loop parameters (selected slot and gain)
+    // based on the current Scene and routing. Loops keep running
+    // even when their radial to the master is muted; here we only
+    // gate the gain passed to the AudioEngine.
+    for (const auto& [objId, obj] : objects) {
+        juce::ignoreUnused(objId);
+
+        const auto modIt = modules.find(obj.logical_id());
+        if (modIt == modules.end() || modIt->second == nullptr) {
+            continue;
+        }
+
+        auto* module = modIt->second.get();
+        auto* loopModule =
+            dynamic_cast<rectai::LoopModule*>(module);
+        if (loopModule == nullptr) {
+            continue;
+        }
+
+        if (!isInsideMusicArea(obj)) {
+            // Keep playback positions advancing in the engine but
+            // treat the module as effectively silent.
+            audioEngine_.setLoopModuleParams(loopModule->id(), 0,
+                                             0.0F);
+            continue;
+        }
+
+        // Determine whether the implicit Loop → Output(master)
+        // connection is muted at connection level.
+        bool routeToMasterMuted = true;
+        for (const auto& edge : audioEdges) {
+            if (edge.from_module_id != loopModule->id() ||
+                edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                continue;
+            }
+
+            rectai::Connection tmpConn{edge.from_module_id,
+                                       edge.from_port_name,
+                                       edge.to_module_id,
+                                       edge.to_port_name,
+                                       edge.is_hardlink};
+            const std::string key = makeConnectionKey(tmpConn);
+            const bool connIsMuted =
+                mutedConnections_.find(key) !=
+                mutedConnections_.end();
+            if (!connIsMuted) {
+                routeToMasterMuted = false;
+                break;
+            }
+        }
+
+        float ampParam = loopModule->GetParameterOrDefault(
+            "amp", 1.0F);
+        ampParam = juce::jlimit(0.0F, 1.0F, ampParam);
+
+        // Map the Loop "amp" parameter through the same global
+        // volume curve used for generators and Sampleplay.
+        float loopGain = ampParam;
+        if (loopGain > 0.0F) {
+            const float db = -40.0F * (1.0F - loopGain);
+            const float linear = std::pow(10.0F, db / 20.0F);
+            loopGain = linear * globalVolumeGain;
+        }
+
+        if (routeToMasterMuted) {
+            loopGain = 0.0F;
+        }
+
+        // Derive selected slot index from the normalised "sample"
+        // parameter in [0,1]. We quantise it to four segments.
+        float sampleParam = loopModule->GetParameterOrDefault(
+            "sample", 0.0F);
+        sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
+        int selectedIndex = static_cast<int>(sampleParam * 4.0F);
+        if (selectedIndex < 0) {
+            selectedIndex = 0;
+        } else if (selectedIndex > 3) {
+            selectedIndex = 3;
+        }
+
+        audioEngine_.setLoopModuleParams(loopModule->id(),
+                                         selectedIndex, loopGain);
+
+        if (loopGain > 0.0F) {
+            modulesWithActiveAudio_.insert(loopModule->id());
+        }
+    }
 
     // Configure an optional filter on the global Sampleplay path
     // when there is an active Sampleplay → Filter connection. Since

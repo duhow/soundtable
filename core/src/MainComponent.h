@@ -107,6 +107,13 @@ private:
     std::unordered_map<std::string, double>
         sampleplayLabelLastChangeSeconds_;
 
+    // Loop sample label visibility: per-module timestamp of the last
+    // time the selected slot changed or the module entered the
+    // musical area. Used by the paint code to fade out the currently
+    // selected loop filename after a short period of inactivity.
+    std::unordered_map<std::string, double>
+        loopLabelLastChangeSeconds_;
+
     // Last timer tick timestamp (seconds) used to derive dt for
     // animations, so visuals remain stable if the timer frequency
     // changes.
@@ -215,6 +222,11 @@ private:
     // recently active so that the UI keeps it visible and restarts
     // its fade-out timer.
     void markSampleplayInstrumentLabelActive(const std::string& moduleId);
+
+    // Mark the Loop sample label for a given module id as recently
+    // active so that the UI keeps it visible and restarts its
+    // fade-out timer.
+    void markLoopSampleLabelActive(const std::string& moduleId);
 
     // Touch interface state.
     bool isTouchActive_{false};

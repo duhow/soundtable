@@ -38,6 +38,10 @@ AudioEngine::AudioEngine()
     // engine can keep track of modules and typed connections once a
     // Scene is provided.
     audioGraph_ = std::make_unique<rectai::AudioGraph>();
+
+    // Register basic audio formats once; used for Loop module sample
+    // decoding (WAV/FLAC/Ogg/Opus, depending on JUCE configuration).
+    loopFormatManager_.registerBasicFormats();
 }
 
 AudioEngine::~AudioEngine()
@@ -181,6 +185,27 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         }
     }
 
+    // Take a snapshot of the current loop modules so that the audio
+    // thread can iterate safely without holding a lock while the UI
+    // thread potentially updates the map. If no snapshot exists yet
+    // fall back to the mutable map directly.
+    std::shared_ptr<std::unordered_map<std::string, LoopInstance>>
+        loopSnapshot;
+    {
+        loopSnapshot = loopModulesSnapshot_;
+        if (loopSnapshot == nullptr) {
+            // This is only expected during startup before any loop
+            // modules are configured. Using the mutable map here is
+            // acceptable as it is typically empty and avoids an
+            // extra allocation.
+            loopSnapshot = std::make_shared<
+                std::unordered_map<std::string, LoopInstance>>(
+                loopModules_);
+        }
+    }
+
+    const double bpm = loopGlobalBpm_.load(std::memory_order_relaxed);
+
     for (int sample = 0; sample < numSamples; ++sample) {
         float oscMixed = 0.0F;
 
@@ -217,6 +242,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         sampleplayLeft_[spIdx] = filteredSampleplayL;
         sampleplayRight_[spIdx] = filteredSampleplayR;
 
+        // Mix oscillator voices (if any).
         if (voiceCount > 0) {
             for (int v = 0; v < voiceCount; ++v) {
                 const double freq =
@@ -354,12 +380,130 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 }
             }
 
-            const float leftOut = juce::jlimit(
-                -0.9F, 0.9F,
-                filteredSampleplayL + oscMixed);
-            const float rightOut = juce::jlimit(
-                -0.9F, 0.9F,
-                filteredSampleplayR + oscMixed);
+            float leftOut = filteredSampleplayL + oscMixed;
+            float rightOut = filteredSampleplayR + oscMixed;
+
+            // Mix Loop modules: sum the currently selected slot for
+            // each instance. Playback phase for all slots advances
+            // regardless of gain so that muting connections to the
+            // master does not pause the loops.
+            if (loopSnapshot && !loopSnapshot->empty()) {
+                for (auto& pair : *loopSnapshot) {
+                    auto& instance = pair.second;
+                    const int slotIndex = instance.selectedIndex.load(
+                        std::memory_order_relaxed);
+                    const float loopGain = instance.gain.load(
+                        std::memory_order_relaxed);
+                    if (loopGain <= 0.0F) {
+                        // Still advance phases below so playback
+                        // state remains in sync even when muted.
+                    }
+
+                    if (slotIndex < 0 ||
+                        slotIndex >= static_cast<int>(
+                                         instance.slots.size())) {
+                        continue;
+                    }
+
+                    auto& slot = instance.slots[static_cast<std::size_t>(
+                        slotIndex)];
+                    if (slot.numFrames <= 0 ||
+                        slot.sourceSampleRate <= 0.0) {
+                        continue;
+                    }
+
+                    if (instance.readPositions.size() !=
+                        instance.slots.size()) {
+                        instance.readPositions.assign(
+                            instance.slots.size(), 0.0);
+                    }
+
+                    const double sr = sampleRate_ > 0.0 ? sampleRate_
+                                                         : 44100.0;
+                    const double srcSr = slot.sourceSampleRate;
+                    const int totalFrames = slot.numFrames;
+                    if (sr <= 0.0 || srcSr <= 0.0 || totalFrames <= 0) {
+                        continue;
+                    }
+
+                    // Base step from source to device sample rate.
+                    double step = srcSr / sr;
+
+                    // Optional tempo sync when both BPM and beats
+                    // metadata are valid. The mapping is intentionally
+                    // simple and introduces pitch shift.
+                    if (bpm > 0.0 && slot.beats > 0) {
+                        const double loopSeconds =
+                            static_cast<double>(slot.numFrames) /
+                            slot.sourceSampleRate;
+                        if (loopSeconds > 0.0) {
+                            const double desiredSeconds =
+                                (60.0 * static_cast<double>(slot.beats)) /
+                                bpm;
+                            if (desiredSeconds > 0.0) {
+                                const double rate =
+                                    loopSeconds / desiredSeconds;
+                                step *= rate;
+                            }
+                        }
+                    }
+
+                    double& pos = instance.readPositions[static_cast<
+                        std::size_t>(slotIndex)];
+                    if (pos < 0.0) {
+                        pos = 0.0;
+                    }
+
+                    const double framePos = pos;
+                    const int i0 = static_cast<int>(framePos);
+                    const int i1 = (i0 + 1) % totalFrames;
+                    const float frac = static_cast<float>(framePos -
+                                                          static_cast<
+                                                              double>(
+                                                              i0));
+
+                    const std::size_t base0 =
+                        static_cast<std::size_t>(i0) * 2U;
+                    const std::size_t base1 =
+                        static_cast<std::size_t>(i1) * 2U;
+                    if (base1 + 1 >= slot.interleavedData.size()) {
+                        // Defensive: malformed buffer.
+                        pos = std::fmod(pos + step,
+                                        static_cast<double>(
+                                            std::max(totalFrames, 1)));
+                    } else {
+                        const float l0 =
+                            slot.interleavedData[base0 + 0];
+                        const float r0 =
+                            slot.interleavedData[base0 + 1];
+                        const float l1 =
+                            slot.interleavedData[base1 + 0];
+                        const float r1 =
+                            slot.interleavedData[base1 + 1];
+
+                        const float l = l0 + (l1 - l0) * frac;
+                        const float r = r0 + (r1 - r0) * frac;
+
+                        if (loopGain > 0.0F) {
+                            const float g = juce::jlimit(0.0F, 1.0F,
+                                                         loopGain);
+                            leftOut += l * g;
+                            rightOut += r * g;
+                        }
+
+                        pos += step;
+                        if (pos >= static_cast<double>(totalFrames)) {
+                            pos = std::fmod(pos, static_cast<double>(
+                                                     std::max(
+                                                         totalFrames,
+                                                         1)));
+                        }
+                    }
+                }
+            }
+
+            leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
+            rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
 
             // Store the mixed mono signal (left channel) for
             // waveform visualisation.
@@ -383,12 +527,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // Sampleplay (SoundFont) audio and keep its waveform
             // history up to date so that Sampleplay-only scenes
             // both sound and render correctly.
-            const float leftOut = juce::jlimit(
-                -0.9F, 0.9F,
-                sampleplayLeft_[static_cast<std::size_t>(sample)]);
-            const float rightOut = juce::jlimit(
-                -0.9F, 0.9F,
-                sampleplayRight_[static_cast<std::size_t>(sample)]);
+            float leftOut =
+                sampleplayLeft_[static_cast<std::size_t>(sample)];
+            float rightOut =
+                sampleplayRight_[static_cast<std::size_t>(sample)];
 
             waveformBuffer_[bufIndex] = leftOut;
             const float sampleplayMonoRaw = rawSampleplayL;
@@ -414,6 +556,121 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 }
             }
 
+            // Mix Loop modules even when there are no oscillator
+            // voices so that scenes consisting only of LoopModule
+            // still render correctly.
+            if (loopSnapshot && !loopSnapshot->empty()) {
+                for (auto& pair : *loopSnapshot) {
+                    auto& instance = pair.second;
+                    const int slotIndex = instance.selectedIndex.load(
+                        std::memory_order_relaxed);
+                    const float loopGain = instance.gain.load(
+                        std::memory_order_relaxed);
+                    if (loopGain <= 0.0F) {
+                        // Still advance phases below; see comment
+                        // in the oscillator branch.
+                    }
+
+                    if (slotIndex < 0 ||
+                        slotIndex >= static_cast<int>(
+                                         instance.slots.size())) {
+                        continue;
+                    }
+
+                    auto& slot = instance.slots[static_cast<std::size_t>(
+                        slotIndex)];
+                    if (slot.numFrames <= 0 ||
+                        slot.sourceSampleRate <= 0.0) {
+                        continue;
+                    }
+
+                    if (instance.readPositions.size() !=
+                        instance.slots.size()) {
+                        instance.readPositions.assign(
+                            instance.slots.size(), 0.0);
+                    }
+
+                    const double sr = sampleRate_ > 0.0 ? sampleRate_
+                                                         : 44100.0;
+                    const double srcSr = slot.sourceSampleRate;
+                    const int totalFrames = slot.numFrames;
+                    if (sr <= 0.0 || srcSr <= 0.0 || totalFrames <= 0) {
+                        continue;
+                    }
+
+                    double step = srcSr / sr;
+                    if (bpm > 0.0 && slot.beats > 0) {
+                        const double loopSeconds =
+                            static_cast<double>(slot.numFrames) /
+                            slot.sourceSampleRate;
+                        if (loopSeconds > 0.0) {
+                            const double desiredSeconds =
+                                (60.0 * static_cast<double>(slot.beats)) /
+                                bpm;
+                            if (desiredSeconds > 0.0) {
+                                const double rate =
+                                    loopSeconds / desiredSeconds;
+                                step *= rate;
+                            }
+                        }
+                    }
+
+                    double& pos = instance.readPositions[static_cast<
+                        std::size_t>(slotIndex)];
+                    if (pos < 0.0) {
+                        pos = 0.0;
+                    }
+
+                    const double framePos = pos;
+                    const int i0 = static_cast<int>(framePos);
+                    const int i1 = (i0 + 1) % totalFrames;
+                    const float frac = static_cast<float>(framePos -
+                                                          static_cast<
+                                                              double>(
+                                                              i0));
+
+                    const std::size_t base0 =
+                        static_cast<std::size_t>(i0) * 2U;
+                    const std::size_t base1 =
+                        static_cast<std::size_t>(i1) * 2U;
+                    if (base1 + 1 >= slot.interleavedData.size()) {
+                        pos = std::fmod(pos + step,
+                                        static_cast<double>(
+                                            std::max(totalFrames, 1)));
+                    } else {
+                        const float l0 =
+                            slot.interleavedData[base0 + 0];
+                        const float r0 =
+                            slot.interleavedData[base0 + 1];
+                        const float l1 =
+                            slot.interleavedData[base1 + 0];
+                        const float r1 =
+                            slot.interleavedData[base1 + 1];
+
+                        const float l = l0 + (l1 - l0) * frac;
+                        const float r = r0 + (r1 - r0) * frac;
+
+                        if (loopGain > 0.0F) {
+                            const float g = juce::jlimit(0.0F, 1.0F,
+                                                         loopGain);
+                            leftOut += l * g;
+                            rightOut += r * g;
+                        }
+
+                        pos += step;
+                        if (pos >= static_cast<double>(totalFrames)) {
+                            pos = std::fmod(pos, static_cast<double>(
+                                                     std::max(
+                                                         totalFrames,
+                                                         1)));
+                        }
+                    }
+                }
+            }
+
+            leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
+            rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
+
             for (int channel = 0; channel < numOutputChannels; ++channel) {
                 if (auto* buffer = outputChannelData[channel]) {
                     if (channel == 0) {
@@ -427,6 +684,148 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             }
         }
     }
+}
+
+bool AudioEngine::loadLoopSampleFromFile(const std::string& moduleId,
+                                         const int slotIndex,
+                                         const std::string& absolutePath,
+                                         const int beats,
+                                         std::string* outError)
+{
+    if (slotIndex < 0) {
+        if (outError != nullptr) {
+            *outError = "Invalid slot index";
+        }
+        return false;
+    }
+
+    juce::File file{juce::String(absolutePath)};
+    if (!file.existsAsFile()) {
+        if (outError != nullptr) {
+            *outError = "File does not exist";
+        }
+        return false;
+    }
+
+    std::unique_ptr<juce::AudioFormatReader> reader(
+        loopFormatManager_.createReaderFor(file));
+    if (reader == nullptr) {
+        if (outError != nullptr) {
+            *outError = "Unsupported audio format";
+        }
+        return false;
+    }
+
+    const juce::int64 numSamples64 = reader->lengthInSamples;
+    if (numSamples64 <= 0) {
+        if (outError != nullptr) {
+            *outError = "Empty audio file";
+        }
+        return false;
+    }
+
+    const int numFrames = static_cast<int>(
+        std::min<juce::int64>(numSamples64,
+                              std::numeric_limits<int>::max()));
+
+    const int channels = static_cast<int>(reader->numChannels);
+    const double sourceRate = reader->sampleRate;
+    if (sourceRate <= 0.0) {
+        if (outError != nullptr) {
+            *outError = "Invalid sample rate";
+        }
+        return false;
+    }
+
+    // We always decode to stereo interleaved float data. Mono files
+    // are duplicated on both channels; multi-channel files use the
+    // first two channels only.
+    std::vector<float> interleaved;
+    interleaved.resize(static_cast<std::size_t>(numFrames * 2), 0.0F);
+
+    juce::AudioBuffer<float> tempBuffer(
+        std::max(2, channels), numFrames);
+    tempBuffer.clear();
+
+    if (!reader->read(&tempBuffer, 0, numFrames, 0, true, true)) {
+        if (outError != nullptr) {
+            *outError = "Failed to read audio data";
+        }
+        return false;
+    }
+
+    const float* ch0 = tempBuffer.getReadPointer(0);
+    const float* ch1 = tempBuffer.getNumChannels() > 1
+                            ? tempBuffer.getReadPointer(1)
+                            : nullptr;
+
+    for (int i = 0; i < numFrames; ++i) {
+        const float l = ch0[i];
+        const float r = ch1 != nullptr ? ch1[i] : l;
+        const std::size_t base = static_cast<std::size_t>(i) * 2U;
+        interleaved[base + 0] = l;
+        interleaved[base + 1] = r;
+    }
+
+    LoopSample sample;
+    sample.interleavedData = std::move(interleaved);
+    sample.numFrames = numFrames;
+    sample.sourceSampleRate = sourceRate;
+    sample.beats = std::max(0, beats);
+
+    LoopInstance& instance = loopModules_[moduleId];
+    if (static_cast<int>(instance.slots.size()) <= slotIndex) {
+        instance.slots.resize(static_cast<std::size_t>(slotIndex + 1));
+        instance.readPositions.resize(
+            instance.slots.size(), 0.0);
+    }
+
+    instance.slots[static_cast<std::size_t>(slotIndex)] =
+        std::move(sample);
+
+    // Refresh the snapshot used by the audio thread.
+    loopModulesSnapshot_ =
+        std::make_shared<std::unordered_map<std::string, LoopInstance>>(
+            loopModules_);
+
+    if (outError != nullptr) {
+        outError->clear();
+    }
+    return true;
+}
+
+void AudioEngine::setLoopModuleParams(const std::string& moduleId,
+                                      const int selectedIndex,
+                                      const float linearGain)
+{
+    auto it = loopModules_.find(moduleId);
+    if (it == loopModules_.end()) {
+        // Creating the instance lazily allows MainComponent to drive
+        // parameters even before samples are loaded.
+        it = loopModules_.emplace(moduleId, LoopInstance{}).first;
+    }
+
+    LoopInstance& instance = it->second;
+    const int clampedIndex =
+        std::max(0, std::min(selectedIndex,
+                             static_cast<int>(instance.slots.size()) - 1));
+    instance.selectedIndex.store(clampedIndex,
+                                 std::memory_order_relaxed);
+    const float clampedGain = juce::jlimit(0.0F, 1.0F, linearGain);
+    instance.gain.store(clampedGain, std::memory_order_relaxed);
+
+    // Updating parameters does not reset playback positions so that
+    // loops continue running even when muted.
+
+    loopModulesSnapshot_ =
+        std::make_shared<std::unordered_map<std::string, LoopInstance>>(
+            loopModules_);
+}
+
+void AudioEngine::setLoopGlobalTempo(const double bpm)
+{
+    const double clamped = bpm > 0.0 ? bpm : 0.0;
+    loopGlobalBpm_.store(clamped, std::memory_order_relaxed);
 }
 
 void AudioEngine::setFrequency(const double frequency)
