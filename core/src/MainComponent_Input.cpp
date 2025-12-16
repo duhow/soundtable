@@ -16,73 +16,109 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
 {
     const auto bounds = getLocalBounds().toFloat();
 
-    // When the cursor is over the Tempo module, use the mouse wheel
-    // to adjust the global BPM in 1-unit steps instead of scrolling
-    // the dock. This provides a quick tempo nudge gesture that
-    // complements rotation and the side control bar.
+    // When the cursor is over specific modules on the table surface,
+    // repurpose the mouse wheel for direct parameter tweaks instead
+    // of scrolling the dock: Tempo adjusts BPM, Loop cycles samples.
     {
         const auto& objects = scene_.objects();
         const auto& modules = scene_.modules();
 
-        const float tempoRadius = 30.0F;
-        for (const auto& [id, object] : objects) {
-            juce::ignoreUnused(id);
+        const float interactionRadius = 30.0F;
+        const float wheelDelta = static_cast<float>(wheel.deltaY);
 
-            const auto modIt = modules.find(object.logical_id());
-            if (modIt == modules.end() || modIt->second == nullptr) {
-                continue;
+        if (wheelDelta != 0.0F) {
+            for (const auto& [id, object] : objects) {
+                juce::ignoreUnused(id);
+
+                const auto modIt = modules.find(object.logical_id());
+                if (modIt == modules.end() || modIt->second == nullptr) {
+                    continue;
+                }
+
+                auto* module = modIt->second.get();
+
+                if (object.docked()) {
+                    // Wheel gestures are only active when the tangible
+                    // is on the table surface.
+                    continue;
+                }
+
+                const auto centrePos = objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                const float dx = static_cast<float>(event.position.x) - cx;
+                const float dy = static_cast<float>(event.position.y) - cy;
+                const float distSq = dx * dx + dy * dy;
+                if (distSq > interactionRadius * interactionRadius) {
+                    continue;
+                }
+
+                // TempoModule: fine-grained BPM nudging.
+                if (auto* tempoModule =
+                        dynamic_cast<rectai::TempoModule*>(module)) {
+                    const double baseStep =
+                        event.mods.isShiftDown() ? 5.0 : 1.0;
+                    const double step =
+                        (wheelDelta > 0.0F) ? baseStep : -baseStep;
+                    double newBpm = bpm_ + step;
+                    newBpm = juce::jlimit(40.0, 400.0, newBpm);
+
+                    if (newBpm == bpm_) {
+                        return;
+                    }
+
+                    bpm_ = newBpm;
+                    bpmLastChangeSeconds_ =
+                        juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+                    // Keep the logical Tempo module parameter in sync
+                    // with the global BPM so that serialisation and
+                    // other consumers observe the updated tempo value.
+                    scene_.SetModuleParameter(tempoModule->id(), "tempo",
+                                              static_cast<float>(bpm_));
+
+                    repaint();
+                    return;
+                }
+
+                // LoopModule: cycle through the four discrete sample
+                // slots using the normalised "sample" parameter.
+                if (auto* loopModule =
+                        dynamic_cast<rectai::LoopModule*>(module)) {
+                    float sampleParam = loopModule->GetParameterOrDefault(
+                        "sample", 0.0F);
+                    sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
+                    int segIndex =
+                        static_cast<int>(sampleParam * 4.0F);
+                    if (segIndex < 0) {
+                        segIndex = 0;
+                    } else if (segIndex > 3) {
+                        segIndex = 3;
+                    }
+
+                    if (wheelDelta > 0.0F) {
+                        ++segIndex;
+                    } else if (wheelDelta < 0.0F) {
+                        --segIndex;
+                    }
+
+                    if (segIndex < 0) {
+                        segIndex = 3;
+                    } else if (segIndex > 3) {
+                        segIndex = 0;
+                    }
+
+                    const float newSampleValue =
+                        (static_cast<float>(segIndex) + 0.5F) / 4.0F;
+                    scene_.SetModuleParameter(loopModule->id(), "sample",
+                                              newSampleValue);
+                    markLoopSampleLabelActive(loopModule->id());
+
+                    repaint();
+                    return;
+                }
             }
-
-            auto* module = modIt->second.get();
-            auto* tempoModule =
-                dynamic_cast<rectai::TempoModule*>(module);
-            if (tempoModule == nullptr) {
-                continue;
-            }
-
-            if (object.docked()) {
-                // For now, only support wheel-based tempo changes
-                // when the Tempo tangible is on the table surface.
-                continue;
-            }
-
-            const auto centrePos = objectTableToScreen(object, bounds);
-            const float cx = centrePos.x;
-            const float cy = centrePos.y;
-
-            const float dx = static_cast<float>(event.position.x) - cx;
-            const float dy = static_cast<float>(event.position.y) - cy;
-            const float distSq = dx * dx + dy * dy;
-            if (distSq > tempoRadius * tempoRadius) {
-                continue;
-            }
-
-            const float wheelDelta = static_cast<float>(wheel.deltaY);
-            if (wheelDelta == 0.0F) {
-                return;
-            }
-
-            const double baseStep = event.mods.isShiftDown() ? 5.0 : 1.0;
-            const double step = (wheelDelta > 0.0F) ? baseStep : -baseStep;
-            double newBpm = bpm_ + step;
-            newBpm = juce::jlimit(40.0, 400.0, newBpm);
-
-            if (newBpm == bpm_) {
-                return;
-            }
-
-            bpm_ = newBpm;
-            bpmLastChangeSeconds_ =
-                juce::Time::getMillisecondCounterHiRes() / 1000.0;
-
-            // Keep the logical Tempo module parameter in sync with
-            // the global BPM so that serialisation and other
-            // consumers observe the updated tempo value.
-            scene_.SetModuleParameter(tempoModule->id(), "tempo",
-                                      static_cast<float>(bpm_));
-
-            repaint();
-            return;
         }
     }
 
