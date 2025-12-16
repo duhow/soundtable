@@ -287,10 +287,15 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
         auto isOnGainControlBar = [sliderTop, sliderBottom](float hx,
                                                             juce::Point<float> p) {
-            // Gain keeps a symmetric clickable area around its handle.
-            const float halfWidth = 14.0F;
-            const float dx = std::abs(p.x - hx);
-            const bool withinX = dx <= halfWidth;
+            // Extend the clickable area slightly further towards the
+            // outside of the table (screen right) while keeping the
+            // inner edge close to the node so that the centre area
+            // remains available to grab the module.
+            const float halfWidthLeft = 14.0F;
+            const float extraRight = 7.0F;
+            const float leftBoundary = hx - halfWidthLeft;
+            const float rightBoundary = hx + halfWidthLeft + extraRight;
+            const bool withinX = (p.x >= leftBoundary && p.x <= rightBoundary);
             const bool withinY = (p.y >= sliderTop && p.y <= sliderBottom);
             return withinX && withinY;
         };
