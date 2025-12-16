@@ -509,7 +509,8 @@ void MainComponent::paint(juce::Graphics& g)
 
             const bool isGeneratorLike =
                 moduleForConnection != nullptr &&
-                (moduleForConnection->type() != rectai::ModuleType::kSettings);
+                moduleForConnection->type() ==
+                    rectai::ModuleType::kGenerator;
             const bool isGlobalController =
                 moduleForConnection != nullptr &&
                 moduleForConnection->is_global_controller();
@@ -522,6 +523,10 @@ void MainComponent::paint(juce::Graphics& g)
             const bool isSampleplayModule =
                 moduleForConnection != nullptr &&
                 moduleForConnection->is<rectai::SampleplayModule>();
+
+            const bool isLoopModule =
+                moduleForConnection != nullptr &&
+                moduleForConnection->is<rectai::LoopModule>();
 
             const bool isFilterModule =
                 moduleForConnection != nullptr &&
@@ -857,6 +862,50 @@ void MainComponent::paint(juce::Graphics& g)
                     waveformAmplitude, waveformThickness,
                     sampleplayRadialWave, kWaveformPoints,
                     sampleplayRadialNorm, segmentsForWaveform,
+                    /*tiled=*/false);
+                continue;
+            }
+
+            // For Loop modules, approximate the radial waveform
+            // using the global mixed waveform history maintained by
+            // the AudioEngine. This allows Loop radials to display
+            // signal activity even though loops do not occupy
+            // dedicated oscillator voices or per-connection taps.
+            float loopRadialWave[kWaveformPoints]{};
+            float loopRadialNorm = 0.0F;
+
+            if (!isRadialMuted && !isMarkedForCut && isLoopModule &&
+                lineCarriesAudio) {
+                audioEngine_.getWaveformSnapshot(
+                    loopRadialWave, kWaveformPoints, 0.05);
+
+                float maxAbs = 0.0F;
+                for (int i = 0; i < kWaveformPoints; ++i) {
+                    maxAbs = std::max(maxAbs,
+                                      std::abs(loopRadialWave[i]));
+                }
+
+                if (maxAbs > 1.0e-4F) {
+                    loopRadialNorm = 1.0F / maxAbs;
+                }
+            }
+
+            const bool loopRadialActive =
+                loopRadialNorm > 0.0F && !isRadialMuted &&
+                !isMarkedForCut && isLoopModule && lineCarriesAudio;
+
+            if (loopRadialActive) {
+                g.setColour(
+                    juce::Colours::white.withAlpha(baseAlpha));
+                const float amplitudeLevel = visualLevel;
+                const float waveformAmplitude =
+                    15.0F * amplitudeLevel;
+                const float waveformThickness = 1.4F;
+                drawWaveformOnLine(
+                    line.getEnd(), line.getStart(),
+                    waveformAmplitude, waveformThickness,
+                    loopRadialWave, kWaveformPoints, loopRadialNorm,
+                    segmentsForWaveform,
                     /*tiled=*/false);
                 continue;
             }

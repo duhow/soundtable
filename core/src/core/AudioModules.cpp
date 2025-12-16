@@ -514,6 +514,13 @@ LoopModule::LoopModule(const std::string& id)
 
   AddOutputPort("out", PortSignalKind::kAudio);
 
+  // Expose a dedicated gain control so that the right-hand
+  // arc in the UI can drive the Loop output level via the
+  // "amp" parameter, matching the behaviour of Sampleplay
+  // and Input modules.
+  enable_gain_control(true);
+  set_level_mapping(0.0F, 1.0F);
+
   SetParameter("amp", 1.0F);
   SetParameter("sample", 0.0F);
   SetParameter("speed", 1.0F);

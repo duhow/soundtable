@@ -531,8 +531,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 sampleplayLeft_[static_cast<std::size_t>(sample)];
             float rightOut =
                 sampleplayRight_[static_cast<std::size_t>(sample)];
-
-            waveformBuffer_[bufIndex] = leftOut;
             const float sampleplayMonoRaw = rawSampleplayL;
 
             // No oscillator voices are active: clear per-voice
@@ -670,6 +668,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
             rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
+
+            // Store the mixed mono signal (left channel) for
+            // waveform visualisation so that the global
+            // waveform history reflects both Sampleplay and
+            // Loop-only scenes.
+            waveformBuffer_[bufIndex] = leftOut;
 
             for (int channel = 0; channel < numOutputChannels; ++channel) {
                 if (auto* buffer = outputChannelData[channel]) {
@@ -815,11 +819,22 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
     instance.gain.store(clampedGain, std::memory_order_relaxed);
 
     // Updating parameters does not reset playback positions so that
-    // loops continue running even when muted.
+    // loops continue running even when muted. To honour this, we avoid
+    // rebuilding the snapshot on every parameter update (which would
+    // recreate LoopInstance copies with fresh readPositions). Instead,
+    // the audio thread keeps using the existing snapshot and we update
+    // the atomic fields used for selection and gain in-place when 
+    // possible.
 
-    loopModulesSnapshot_ =
-        std::make_shared<std::unordered_map<std::string, LoopInstance>>(
-            loopModules_);
+    if (auto snapshot = loopModulesSnapshot_) {
+        auto snapIt = snapshot->find(moduleId);
+        if (snapIt != snapshot->end()) {
+            snapIt->second.selectedIndex.store(
+                clampedIndex, std::memory_order_relaxed);
+            snapIt->second.gain.store(
+                clampedGain, std::memory_order_relaxed);
+        }
+    }
 }
 
 void AudioEngine::setLoopGlobalTempo(const double bpm)

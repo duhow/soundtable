@@ -433,19 +433,19 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                         : nullptr;
 
                 if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
-                    moduleForFreq)) {
+                        moduleForFreq)) {
                     // Map click position to one of four discrete
                     // sample slots and update the "sample"
                     // parameter. Also mark the loop label as
                     // recently active so the filename overlay
                     // appears.
-                    // Flip the vertical mapping so that a click on
-                    // the top segment selects slot 3 and a click on
-                    // the bottom segment selects slot 0, matching the
-                    // visual ordering of the Loop segments.
+                    // The bottom segment (near sliderBottom) is
+                    // index 0 and the top segment is index 3,
+                    // consistent with the drawing order in
+                    // MainComponent_Paint.
                     const float clamped = juce::jlimit(0.0F, 1.0F, value);
                     int segIndex =
-                        static_cast<int>((1.0F - clamped) * 4.0F);
+                        static_cast<int>(clamped * 4.0F);
                     if (segIndex < 0) {
                         segIndex = 0;
                     } else if (segIndex > 3) {
