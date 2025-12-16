@@ -54,6 +54,29 @@
   reaccionan con saltos bruscos de nivel, sino que respetan rampas de
   entrada/salida según los tiempos de ataque y release de la sesión.
 
+### Normalización y límites para ADSR y `midifreq`
+- El parser de `<envelope>` en `ReactableRtpLoader.cpp` ahora aplica
+  límites razonables a los tiempos en milisegundos: `attack`, `decay`
+  y `release` se clampean al rango `[0, 2000]` ms y `duration` al
+  rango `[0, 7500]` ms. Valores negativos, no finitos o con formato
+  inválido se normalizan primero a `0.0F` antes de aplicar el clamping
+  superior. Los arrays `points_x` y `points_y` siguen leyéndose como
+  CSV de flotantes (`SplitFloats`), por lo que valores decimales en el
+  `.rtp` (como los de `Loopdemo.rtp`) se conservan tal cual en
+  `Envelope::points_x/points_y`.
+- En `MainComponent_Audio.cpp`, el cálculo de la nota MIDI para
+  `SampleplayModule` dentro de `triggerSampleplayNotesOnBeat` pasa de
+  usar `lround` a `std::floor` sobre el parámetro `midifreq`. Esto
+  respeta la semántica acordada: `midifreq` puede ser entero o decimal
+  en el `.rtp`, pero en Sampleplay siempre se trunca hacia abajo a un
+  número de nota MIDI entero en `[0, 127]` antes de disparar la nota.
+- Para `OscillatorModule`, el loader sigue usando el valor de
+  `midifreq` como `float` completo al convertir de MIDI→Hz y
+  normalizar el parámetro `freq`, de forma que ajustes finos (por
+  ejemplo, microafinación expresada como decimales) en el `.rtp` se
+  trasladan directamente a la frecuencia base del oscilador dentro del
+  rango expandido (~8–12.5 kHz).
+
 ### Próximos pasos relacionados
 
 - Aplicar el envelope ADSR en tiempo de ejecución dentro de

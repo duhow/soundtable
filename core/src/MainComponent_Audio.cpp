@@ -211,12 +211,16 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
             continue;
         }
 
-        // Derive MIDI note from the `midifreq` parameter as before.
+        // Derive MIDI note from the `midifreq` parameter. When used
+        // on Sampleplay modules, `midifreq` may be integer or
+        // fractional; we explicitly floor the value so that
+        // midifreq=59.9 sigue disparando la nota 59, respetando la
+        // semántica de nota MIDI entera.
         const float midiNote = sampleModule->GetParameterOrDefault(
             "midifreq", 87.0F);
         const int midiKey = juce::jlimit(
             0, 127,
-            static_cast<int>(std::lround(static_cast<double>(midiNote))));
+            static_cast<int>(std::floor(static_cast<double>(midiNote))));
 
         const float ampParam = sampleModule->GetParameterOrDefault(
             "amp", 1.0F);

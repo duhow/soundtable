@@ -211,10 +211,29 @@ Envelope ParseEnvelope(const std::string& tag_content)
 {
   Envelope env;
   const auto attrs = ParseAttributes(tag_content);
-  env.attack = ParseFloat(attrs, "attack", 0.0F);
-  env.decay = ParseFloat(attrs, "decay", 0.0F);
-  env.duration = ParseFloat(attrs, "duration", 0.0F);
-  env.release = ParseFloat(attrs, "release", 0.0F);
+  // Envelope times are expressed in milliseconds in the original
+  // Reactable patches. For stability we clamp the ADSR components to
+  // reasonable ranges: attack/decay/release in [0, 2000] ms and
+  // duration in [0, 7500] ms.
+  const float rawAttack = ParseFloat(attrs, "attack", 0.0F);
+  const float rawDecay = ParseFloat(attrs, "decay", 0.0F);
+  const float rawDuration = ParseFloat(attrs, "duration", 0.0F);
+  const float rawRelease = ParseFloat(attrs, "release", 0.0F);
+
+  auto clampMs = [](float value, float maxMs) {
+    if (!std::isfinite(value) || value < 0.0F) {
+      return 0.0F;
+    }
+    if (value > maxMs) {
+      return maxMs;
+    }
+    return value;
+  };
+
+  env.attack = clampMs(rawAttack, 2000.0F);
+  env.decay = clampMs(rawDecay, 2000.0F);
+  env.duration = clampMs(rawDuration, 7500.0F);
+  env.release = clampMs(rawRelease, 2000.0F);
 
   const auto it_x = attrs.find("points_x");
   if (it_x != attrs.end()) {

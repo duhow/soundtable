@@ -3,3 +3,7 @@
 /rectai-tracker
 /Testing
 /reacTIVision
+/*.log
+
+*.rtz
+/com.reactable/
