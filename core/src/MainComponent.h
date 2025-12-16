@@ -150,6 +150,14 @@ private:
     double sequencerAudioPhase_{0.0};
     int sequencerAudioStep_{0};
 
+    // Contador absoluto de steps de audio avanzados desde el inicio
+    // del transporte. Se usa para garantizar que, si el timer se
+    // retrasa y se saltan varios steps ideales entre dos llamadas a
+    // `timerCallback`, se ejecuten todos los pasos intermedios en
+    // orden en lugar de sólo el último, reduciendo saltos
+    // perceptibles en el patrón rítmico.
+    std::int64_t sequencerAudioStepCounter_{0};
+
     // Simple beat counter advancing with the global transport.
     // Used to tag MidiNoteEvent events with a beat position without
     // introducing a full MIDI scheduler yet.

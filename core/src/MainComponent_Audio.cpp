@@ -2324,22 +2324,51 @@ void MainComponent::timerCallback()
     // stay phase-locked.
     const int audioStepsPerBar = rectai::SequencerPreset::kNumSteps;
     if (audioStepsPerBar > 0) {
-        // Derive the current step index from the global transport
+        // Derive the current step **counter** from the global transport
         // position (integer beats + fractional phase) using a fixed
-        // beats-per-step. This keeps the Sequencer grid exactly in
-        // sync with Loops and the visual beat pulses.
+        // beats-per-step. Esto nos da un índice absoluto de step
+        // desde el inicio del transporte, no sólo el valor módulo
+        // 16; así, si el timer llega tarde y se han cruzado varios
+        // steps ideales entre dos callbacks, podemos ejecutar todos
+        // los pasos intermedios en orden y evitar saltos rítmicos.
         const double transportPositionBeats = transportBeats_ + beatPhase_;
         const double beatsPerStep = 1.0 / 4.0;  // 16 steps over 4 beats.
         const double stepPhase =
             (beatsPerStep > 0.0)
                 ? (transportPositionBeats / beatsPerStep)
                 : 0.0;
-        const int newAudioStep = static_cast<int>(std::floor(stepPhase)) %
-                                 audioStepsPerBar;
 
-        if (newAudioStep != sequencerAudioStep_) {
-            sequencerAudioStep_ = newAudioStep;
-            runSequencerStep(sequencerAudioStep_);
+        const auto newStepCounter = static_cast<std::int64_t>(
+            std::floor(stepPhase));
+
+        if (newStepCounter > sequencerAudioStepCounter_) {
+            // Avanzar uno a uno todos los steps que hayan quedado
+            // pendientes desde el último tick del timer. Cada
+            // incremento del contador corresponde a un step lógico
+            // (semicorchea); el índice visible del preset se obtiene
+            // módulo `audioStepsPerBar`.
+            for (std::int64_t s = sequencerAudioStepCounter_ + 1;
+                 s <= newStepCounter; ++s) {
+                const int stepIndex = static_cast<int>(
+                    s % static_cast<std::int64_t>(audioStepsPerBar));
+                sequencerAudioStep_ = stepIndex;
+                runSequencerStep(stepIndex);
+            }
+
+            sequencerAudioStepCounter_ = newStepCounter;
+        } else if (newStepCounter < sequencerAudioStepCounter_) {
+            // El transporte se ha reseteado o ha retrocedido
+            // (por ejemplo, al reinicializar el dispositivo de
+            // audio). Sin intentar reproducir steps "en
+            // retroceso", re-sincronizamos el contador al valor
+            // actual y ejecutamos el step correspondiente una sola
+            // vez para alinear el runtime con la nueva posición.
+            sequencerAudioStepCounter_ = newStepCounter;
+            const int stepIndex = static_cast<int>(
+                (newStepCounter % audioStepsPerBar + audioStepsPerBar) %
+                audioStepsPerBar);
+            sequencerAudioStep_ = stepIndex;
+            runSequencerStep(stepIndex);
         }
     }
 

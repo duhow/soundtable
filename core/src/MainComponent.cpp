@@ -508,10 +508,17 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
 
     // Periodically map scene state to audio parameters and refresh the
     // UI. Use a relatively high update rate so that waveform
-    // visualisations and other animations feel responsive.
+    // visualisations and other animations feel responsive y el
+    // disparo de pasos del Sequencer tenga jitter mínimo respecto al
+    // transporte de audio.
     lastTimerSeconds_ =
         juce::Time::getMillisecondCounterHiRes() / 1000.0;
-    startTimerHz(120);
+    // Aumentar la frecuencia del timer reduce la cuantización
+    // temporal de los pasos del Sequencer (que actualmente se
+    // avanzan desde `timerCallback` a partir de `transportBeats()`)
+    // y hace que cada nota se dispare más cerca de su beat ideal.
+    // 240 Hz → resolución nominal ≈4.2 ms.
+    startTimerHz(240);
 }
 
 void MainComponent::markSampleplayInstrumentLabelActive(
