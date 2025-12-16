@@ -1804,9 +1804,20 @@ void MainComponent::timerCallback()
 
                 if (oscModule != nullptr) {
                     const auto& env = oscModule->envelope();
+
+                    // El motor de audio implementa actualmente una
+                    // envolvente simple tipo AR (Attack/Release). Para
+                    // que el parámetro `decay` de los Oscillators tenga
+                    // un efecto audible incluso cuando `release` es 0 en
+                    // el `.rtp`, mapeamos el tiempo de release efectivo
+                    // como `env.release` si es > 0, o en su defecto como
+                    // `env.decay`.
+                    const float effectiveReleaseMs =
+                        (env.release > 0.0F) ? env.release : env.decay;
+
                     audioEngine_.setVoiceEnvelope(
                         assignedVoice, env.attack, env.decay,
-                        env.duration, env.release);
+                        env.duration, effectiveReleaseMs);
                 }
 
                 // Mark generator and, when present, its downstream
@@ -2214,12 +2225,11 @@ void MainComponent::timerCallback()
 
                 // 2) Oscillator: update freq/gain based on the
                 // MidiNoteEvent; the audio engine will pick up these
-                // changes on the next tick. Additionally, when the
-                // Sequencer is allowed to control volume, we derive a
-                // note length in beats from the SequenceTrack
-                // `speed` (for `speed_type="binary"`) and schedule a
-                // gain gate so that the audible note duration matches
-                // the musical figure.
+                // changes on the next tick. El tiempo de nota audible
+                // se gobierna ahora únicamente por la envolvente de la
+                // voz (attack/release) y por los pasos activos del
+                // Sequencer; no se aplica un gating adicional basado
+                // en `speed`.
                 if (auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
                         dstModule)) {
                     // In Sequencer v1 (pulse mode) we keep the
@@ -2256,33 +2266,6 @@ void MainComponent::timerCallback()
                             0.0F, 1.0F, noteEvent.velocity01);
                         scene_.SetModuleParameter(oscModule->id(), "gain",
                                                   gainParam);
-                    }
-
-                    // If the Sequencer is driving volume, schedule a
-                    // note-off time for this Oscillator so that its
-                    // gain is forced to zero after the figure length
-                    // specified by the SequenceTrack `speed` when
-                    // `speed_type` is "binary". This approximates the
-                    // original Reactable behavior where the speed of a
-                    // sequence encodes the rhythmic value of its
-                    // notes.
-                    if (sequencerControlsVolume_) {
-                        double noteLengthBeats = 1.0;  // default: quarter.
-
-                        const auto& tracks = seqModule->tracks();
-                        if (presetIndex >= 0 &&
-                            presetIndex < static_cast<int>(tracks.size())) {
-                            const rectai::SequenceTrack& track =
-                                tracks[static_cast<std::size_t>(presetIndex)];
-                            if (track.speed_type == "binary") {
-                                noteLengthBeats =
-                                    binarySpeedToBeats(track.speed);
-                            }
-                        }
-
-                        const double noteOffBeat =
-                            transportBeats_ + noteLengthBeats;
-                        moduleNoteOffBeats_[oscModule->id()] = noteOffBeat;
                     }
 
                     // Retrigger the per-voice amplitude envelope for
@@ -2368,45 +2351,6 @@ void MainComponent::timerCallback()
     // that Loop modules can use a continuous beat position (integer
     // beats + phase) when aligning playback across samples.
     audioEngine_.setLoopBeatPhase(beatPhase_);
-
-    // Apply pending note-off gates for modules whose gain is being
-    // controlled directly from the Sequencer (currently Oscillator
-    // modules). We compare the global transport position in beats
-    // against the scheduled note-off time and, once reached, force
-    // their gain to zero so that the audible note duration matches
-    // the figure derived from the Sequencer track speed.
-    if (!moduleNoteOffBeats_.empty()) {
-        const double transportPosition = transportBeats_ + beatPhase_;
-
-        std::vector<std::string> toErase;
-        toErase.reserve(moduleNoteOffBeats_.size());
-
-        const auto& modulesLocal = scene_.modules();
-
-        for (const auto& [moduleId, noteOffBeat] : moduleNoteOffBeats_) {
-            if (transportPosition < noteOffBeat) {
-                continue;
-            }
-
-            const auto modIt = modulesLocal.find(moduleId);
-            if (modIt == modulesLocal.end() || modIt->second == nullptr) {
-                toErase.push_back(moduleId);
-                continue;
-            }
-
-            if (auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
-                    modIt->second.get())) {
-                juce::ignoreUnused(oscModule);
-                scene_.SetModuleParameter(moduleId, "gain", 0.0F);
-            }
-
-            toErase.push_back(moduleId);
-        }
-
-        for (const auto& id : toErase) {
-            moduleNoteOffBeats_.erase(id);
-        }
-    }
 
     // Advance connection flow phase (used for pulses along edges).
     connectionFlowPhase_ += dt;

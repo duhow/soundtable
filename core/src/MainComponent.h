@@ -167,15 +167,6 @@ private:
     // lines should display a waveform instead of a plain line.
     std::unordered_set<std::string> modulesWithActiveAudio_;
 
-    // Optional note-off time in beats for modules whose gain is being
-    // gated directly by the Sequencer (for now, Oscillator modules
-    // connected to a Sequencer). When the global transport position
-    // reaches or exceeds this beat, the corresponding module's gain
-    // is forced to zero so that the audible note length matches the
-    // musical figure encoded in the Sequencer track `speed` when
-    // `speed_type="binary"`.
-    std::unordered_map<std::string, double> moduleNoteOffBeats_;
-
     // Mapping from module id to the AudioEngine voice index currently
     // representing its audio chain (generator and optional downstream
     // module). This lets the paint code fetch a module-specific
