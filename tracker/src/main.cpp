@@ -68,6 +68,7 @@ std::string mapLogicalId(int markerId)
 	case 56: return "1";   // Volume
 	case 44: return "5";   // Sequencer A
 	case 45: return "6";   // Sequencer B
+	case 24: return "24";  // Sample A
 	case 46: return "24";  // Sample A
 	case 47: return "29";  // Sample B
 	case 29: return "8";   // Filter

@@ -6,14 +6,18 @@
 
 class MainWindow : public juce::DocumentWindow {
 public:
-    MainWindow(juce::String name, AudioEngine& audioEngine)
+    MainWindow(juce::String name, AudioEngine& audioEngine,
+               juce::String initialSessionPath)
         : juce::DocumentWindow(name,
                                juce::Colours::darkgrey,
                                juce::DocumentWindow::allButtons)
     {
         setUsingNativeTitleBar(true);
         setResizable(true, true);
-        setContentOwned(new MainComponent(audioEngine), true);
+        setContentOwned(
+            new MainComponent(audioEngine,
+                               std::move(initialSessionPath)),
+            true);
         centreWithSize(getWidth(), getHeight());
         setVisible(true);
     }
@@ -86,15 +90,40 @@ public:
     const juce::String getApplicationName() override { return "RectaiTable"; }
     const juce::String getApplicationVersion() override { return "0.1.0"; }
 
-    void initialise(const juce::String&) override
+    void initialise(const juce::String& commandLineParameters) override
     {
         // Install a custom LookAndFeel that, when a bundled font is
         // present, uses a single embedded typeface instead of
         // querying all system fonts via fontconfig.
         juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel_);
 
-        mainWindow_ =
-            std::make_unique<MainWindow>(getApplicationName(), audioEngine_);
+        // Parse command-line arguments to extract an optional
+        // session file path. Any token starting with '-' is
+        // currently treated as a (reserved) option and ignored
+        // here, while the last positional argument is interpreted
+        // as the candidate session file.
+        juce::StringArray tokens;
+        tokens.addTokens(commandLineParameters, true);
+        tokens.trim();
+        tokens.removeEmptyStrings();
+
+        juce::StringArray positional;
+        for (const auto& token : tokens) {
+            if (token.startsWithChar('-')) {
+                // Reserved for future CLI options such as --help or
+                // --version.
+                continue;
+            }
+            positional.add(token);
+        }
+
+        juce::String initialSessionPath;
+        if (positional.size() > 0) {
+            initialSessionPath = positional[positional.size() - 1];
+        }
+
+        mainWindow_ = std::make_unique<MainWindow>(
+            getApplicationName(), audioEngine_, initialSessionPath);
     }
 
     void shutdown() override

@@ -16,7 +16,8 @@ class AudioEngine;
 
 class MainComponent : public juce::Component, public juce::Timer {
 public:
-    explicit MainComponent(AudioEngine& audioEngine);
+    explicit MainComponent(AudioEngine& audioEngine,
+                           juce::String initialSessionPath = {});
     ~MainComponent() override = default;
 
     void paint(juce::Graphics& g) override;

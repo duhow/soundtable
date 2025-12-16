@@ -15,20 +15,21 @@
 #include "core/SoundfontUtils.h"
 #include "MainComponentHelpers.h"
 
-MainComponent::MainComponent(AudioEngine& audioEngine)
+MainComponent::MainComponent(AudioEngine& audioEngine,
+                             juce::String initialSessionPath)
     : audioEngine_(audioEngine)
 {
     setSize(1280, 720);
 
-    // Load default Reactable patch from com.reactable/Resources/default.rtp.
-    // If loading fails (e.g., when running tests without assets), fall back
-    // to the small hardcoded demo scene used originally.
-    const auto loadDefaultPatch = [this]() {
+    // Load initial Reactable patch. If an explicit session file was
+    // provided on the command line, try that first; otherwise fall
+    // back to com.reactable/Resources/default.rtp. If loading fails
+    // (e.g., when running tests without assets), fall back to the
+    // small hardcoded demo scene used originally.
+    const auto loadPatchFromFile = [this](const juce::File& patchFile) {
         using rectai::LoadReactablePatchFromFile;
         using rectai::ReactablePatchMetadata;
 
-        const juce::File patchFile =
-            rectai::ui::loadFile("Resources/default.rtp");
         if (!patchFile.existsAsFile()) {
             return false;
         }
@@ -72,6 +73,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
             return true;
         }
 
+        juce::Logger::writeToLog(
+            juce::String("[rectai-core] Failed to load session: ") +
+            patchFile.getFullPathName() + " (" + juce::String(error) +
+            ")");
         return false;
     };
 
@@ -387,7 +392,35 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
         }
     };
 
-    if (!loadDefaultPatch()) {
+    bool loaded = false;
+
+    // 1) If an explicit session path was provided on startup, try
+    //    to load it and validate that it is a proper Reactable
+    //    .rtp project.
+    if (initialSessionPath.isNotEmpty()) {
+        const juce::File userFile(initialSessionPath);
+        if (!userFile.existsAsFile()) {
+            juce::Logger::writeToLog(
+                juce::String("[rectai-core] Session file not found: ") +
+                userFile.getFullPathName());
+        } else {
+            loaded = loadPatchFromFile(userFile);
+        }
+    }
+
+    // 2) If no file was provided or loading the explicit file
+    //    failed, fall back to the bundled default patch.
+    if (!loaded) {
+        const juce::File defaultFile =
+            rectai::ui::loadFile("Resources/default.rtp");
+        if (defaultFile.existsAsFile()) {
+            loaded = loadPatchFromFile(defaultFile);
+        }
+    }
+
+    // 3) If we still have no valid scene (e.g. running without
+    //    assets), use the original minimal demo scene.
+    if (!loaded) {
         // Fallback: example scene with a couple of modules and an
         // explicit Output/master so that connection-level mute via
         // radials and AudioGraph-based routing behave consistently
