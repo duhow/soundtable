@@ -267,6 +267,15 @@ public:
     void advanceLoopBeatCounter();
     [[nodiscard]] unsigned int loopBeatCounter() const noexcept;
 
+    // Returns the current global transport position in beats as
+    // driven by the audio callback using the configured BPM and
+    // sample rate. This serves as the master clock for Sequencer
+    // timing and beat-synchronised visuals.
+    [[nodiscard]] double transportBeats() const noexcept
+    {
+        return transportBeatsAudio_.load(std::memory_order_relaxed);
+    }
+
 private:
     juce::AudioDeviceManager deviceManager_;
 
@@ -311,6 +320,10 @@ private:
     double voiceEnvValue_[kMaxVoices]{};        // [0,1] envelope amplitude
     double voiceEnvTimeInPhase_[kMaxVoices]{};  // seconds elapsed in phase
     double voicePrevTargetLevel_[kMaxVoices]{}; // last seen target level
+    // Base level captured at note-on for each voice so that the
+    // release/decay tail can fade out smoothly even when the
+    // instantaneous target level later falls to zero.
+    double voiceEnvBaseLevel_[kMaxVoices]{};
     // Pending envelope retrigger flags per voice, set from the UI
     // thread and consumed on the audio thread. When true, the next
     // audio callback iteration will restart the envelope in the
@@ -515,6 +528,17 @@ private:
 
     // Global tempo in BPM used for approximate loop sync.
     std::atomic<double> loopGlobalBpm_{120.0};
+
+    // Global transport position in beats driven from the audio
+    // thread. This is derived from the current BPM and sample
+    // rate and exposed to the UI as a high-precision master
+    // clock so that Sequencer timing and visual beat pulses can
+    // stay phase-locked to the actual audio stream.
+    std::atomic<double> transportBeatsAudio_{0.0};
+
+    // Internal non-atomic accumulator for `transportBeatsAudio_`,
+    // only touched on the audio thread.
+    double transportBeatsInternal_{0.0};
 
     // Global integer beat counter for Loop modules. Incremented once
     // per tempo beat so that individual loop slots can derive a

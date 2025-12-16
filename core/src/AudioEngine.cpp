@@ -54,6 +54,8 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     sampleRate_ = (device != nullptr && device->getCurrentSampleRate() > 0.0)
                       ? device->getCurrentSampleRate()
                       : 44100.0;
+    transportBeatsInternal_ = 0.0;
+    transportBeatsAudio_.store(0.0, std::memory_order_relaxed);
     // Reset phases for all voices.
     for (double& phase : phases_) {
         phase = 0.0;
@@ -67,6 +69,7 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
         voiceEnvValue_[v] = 0.0;
         voiceEnvTimeInPhase_[v] = 0.0;
         voicePrevTargetLevel_[v] = 0.0;
+        voiceEnvBaseLevel_[v] = 0.0;
     }
 
     const juce::uint32 maxBlockSize =
@@ -215,12 +218,26 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     }
 
     const double bpm = loopGlobalBpm_.load(std::memory_order_relaxed);
-    const unsigned int loopBeatsInt =
-        loopGlobalBeatCounter_.load(std::memory_order_relaxed);
-    const double loopBeatPhase =
-        loopBeatPhase_.load(std::memory_order_relaxed);
-    const double loopBeats = static_cast<double>(loopBeatsInt) +
-                             juce::jlimit(0.0, 1.0, loopBeatPhase);
+
+    // Advance the global transport position in beats using the
+    // current BPM and sample rate. This provides a high-precision
+    // audio-driven clock that can be queried from the UI so that
+    // Sequencer timing and visual beat pulses remain locked to the
+    // actual audio stream instead of the GUI timer.
+    const double beatsPerSecond = (bpm > 0.0) ? (bpm / 60.0) : 0.0;
+    const double blockDurationSeconds =
+        (sampleRate_ > 0.0)
+            ? (static_cast<double>(numSamples) / sampleRate_)
+            : 0.0;
+    const double blockBeats = beatsPerSecond * blockDurationSeconds;
+    transportBeatsInternal_ += blockBeats;
+    transportBeatsAudio_.store(transportBeatsInternal_,
+                               std::memory_order_relaxed);
+
+    // Use the audio-driven transport position for Loop alignment so
+    // that Loop playback stays in phase with the same master clock
+    // used by Sequencer timing and beat pulses.
+    const double loopBeats = transportBeatsInternal_;
 
     for (int sample = 0; sample < numSamples; ++sample) {
         float oscMixed = 0.0F;
@@ -397,6 +414,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         voiceEnvPhase_[v] = EnvelopePhase::kAttack;
                         voiceEnvTimeInPhase_[v] = 0.0;
                         voiceEnvValue_[v] = 0.0;
+                        // Capture the current target level as the
+                        // base amplitude for this envelope cycle so
+                        // that the release/decay tail can fade out
+                        // smoothly even if the target level later
+                        // drops to zero (e.g. when a Sequencer step
+                        // disables the oscillator).
+                        voiceEnvBaseLevel_[v] = lvl;
                     } else if (noteOff) {
                         // Note-off: enter release from current
                         // envelope level.
@@ -477,6 +501,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                 if (norm >= 1.0) {
                                     phase = EnvelopePhase::kIdle;
                                     tInPhase = 0.0;
+                                    // When the envelope reaches the
+                                    // idle state, clear the base
+                                    // level so that subsequent output
+                                    // is fully silent until the next
+                                    // note-on.
+                                    voiceEnvBaseLevel_[v] = 0.0;
                                 }
                             }
                             break;
@@ -489,9 +519,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     envAmp = value;
                 }
 
-                const double level = static_cast<double>(targetLevel);
+                // Apply the envelope to the captured base level so
+                // that release/decay tails remain audible even when
+                // the target voice level is driven to zero by
+                // Sequencer volume control.
+                const double baseLevel = voiceEnvBaseLevel_[v];
                 const float scaledOutput =
-                    s * static_cast<float>(level * envAmp);
+                    s * static_cast<float>(baseLevel * envAmp);
                 oscMixed += scaledOutput;
             }
 

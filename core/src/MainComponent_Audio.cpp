@@ -2288,36 +2288,29 @@ void MainComponent::timerCallback()
         }
     };
 
-    // Spawn a new pulse on every beat; every 4th beat is stronger.
-    const double bps = bpm_ / 60.0;  // beats per second
-    const double beatsThisFrame = bps * dt;
-    beatPhase_ += beatsThisFrame;
-    if (beatPhase_ >= 1.0) {
-        beatPhase_ -= 1.0;
+    // Derive the current global transport position in beats from the
+    // audio engine so that Sequencer timing and visual beat pulses
+    // stay locked to the audio callback instead of the GUI timer.
+    const double engineBeats = audioEngine_.transportBeats();
+    double wholeBeatsDouble = 0.0;
+    const double fracBeat = std::modf(engineBeats, &wholeBeatsDouble);
+    const int wholeBeats = static_cast<int>(wholeBeatsDouble);
 
-        // Avanza un contador simple de beats para etiquetar
-        // MidiNoteEvent::timeBeats con una posición en beats
-        // monotónica, sin introducir todavía un scheduler MIDI
-        // completo.
-        transportBeats_ += 1.0;
-
-        // Keep the Loop engine's integer beat counter in sync with
-        // the global transport so that Loop modules can derive a
-        // consistent playback phase on sample switches.
-        audioEngine_.advanceLoopBeatCounter();
-
-        const bool strong = (beatIndex_ % 4 == 0);
-        pulses_.push_back(Pulse{0.0F, strong});
-
-        // Trigger Sampleplay notes in sync with the global
-        // transport using FluidSynth.
-        triggerSampleplayNotesOnBeat(strong);
-
-        ++beatIndex_;
-        if (beatIndex_ >= 4) {
-            beatIndex_ = 0;
+    // Generate BPM pulses and Sampleplay beat triggers for each new
+    // whole beat that elapsed since the last timer tick.
+    const int prevWholeBeats = static_cast<int>(transportBeats_);
+    if (wholeBeats > prevWholeBeats) {
+        for (int b = prevWholeBeats; b < wholeBeats; ++b) {
+            const int beatInBar = b % 4;
+            const bool strong = (beatInBar == 0);
+            pulses_.push_back(Pulse{0.0F, strong});
+            triggerSampleplayNotesOnBeat(strong);
         }
     }
+
+    transportBeats_ = static_cast<double>(wholeBeats);
+    beatPhase_ = juce::jlimit(0.0, 1.0, fracBeat);
+    beatIndex_ = wholeBeats % 4;
 
     // Advance Sequencer audio step at 16 steps per bar (sixteenth
     // notes) so that, for a 4/4 meter, a full 16-step pattern is
@@ -2347,11 +2340,6 @@ void MainComponent::timerCallback()
         }
     }
 
-    // Expose the current fractional beat phase to the audio engine so
-    // that Loop modules can use a continuous beat position (integer
-    // beats + phase) when aligning playback across samples.
-    audioEngine_.setLoopBeatPhase(beatPhase_);
-
     // Advance connection flow phase (used for pulses along edges).
     connectionFlowPhase_ += dt;
     if (connectionFlowPhase_ > 1.0) {
@@ -2360,6 +2348,7 @@ void MainComponent::timerCallback()
 
     // Simple sequencer phase for widgets (steps per bar = 8).
     const int stepsPerBar = 8;
+    const double bps = bpm_ / 60.0;  // beats per second
     const double stepsPerSecond = bps * static_cast<double>(stepsPerBar);
     sequencerPhase_ += stepsPerSecond * dt;
     if (sequencerPhase_ >= 1.0) {
