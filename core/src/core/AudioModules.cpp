@@ -391,6 +391,9 @@ void SequencerModule::SyncPresetsFromTracks()
       }
 
       // Velocity from volumes vector when present, clamped to [0,1].
+      // Disabled steps must always expose zero velocity so that they
+      // behave as silent pulses, regardless of any volume encoded in
+      // the source track.
       if (stepIndex < static_cast<int>(track.volumes.size())) {
         float v = track.volumes[static_cast<std::size_t>(stepIndex)];
         if (v < 0.0F) {
@@ -398,12 +401,11 @@ void SequencerModule::SyncPresetsFromTracks()
         } else if (v > 1.0F) {
           v = 1.0F;
         }
-        step.velocity01 = v;
+        step.velocity01 = step.enabled ? v : 0.0F;
       } else {
-        // Keep existing default (1.0) when no explicit volume is given.
-        if (!step.enabled) {
-          step.velocity01 = 0.0F;
-        }
+        // When no explicit volume is given, enabled steps default to 1
+        // and disabled steps to 0.
+        step.velocity01 = step.enabled ? 1.0F : 0.0F;
       }
 
       // Pitch handling depends on the Sequencer version. In version 1

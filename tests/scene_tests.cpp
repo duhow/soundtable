@@ -263,7 +263,7 @@ int main()
         assert(!tracks.empty());
 
         const SequencerPreset& preset0 = seqModule->preset(0);
-        // Index 0, 3, 7, 9 y 12 están a 1 en `steps`.
+        // Indices 0, 3, 7, 9 and 12 are set to 1 in `steps`.
         const int expectedEnabledIndices[] = {0, 3, 7, 9, 12};
         for (int i = 0; i < SequencerPreset::kNumSteps; ++i) {
             const SequencerStep& step =
@@ -279,23 +279,22 @@ int main()
 
             if (shouldBeEnabled) {
                 assert(step.enabled);
-                // Volúmenes deben respetarse y estar en [0,1].
+                // Volumes must be respected and clamped to [0,1].
                 assert(step.velocity01 >= 0.0F && step.velocity01 <= 1.0F);
             } else {
                 assert(!step.enabled);
-                // En v1 los pasos deshabilitados exponen velocidad 0.
+                // In v1 disabled steps expose zero velocity.
                 assert(step.velocity01 == 0.0F);
             }
 
-            // En versión 1 todos los pasos comparten el mismo pitch
-            // por diseño (no hay melodía codificada en
-            // step_frequencies). Esto garantiza que el sequencer se
-            // comporte como generador de pulsos.
+            // In version 1 all steps share the same pitch by design
+            // (no melody is encoded in step_frequencies), so the
+            // sequencer behaves as a pulse generator.
             assert(step.pitch == 60);
         }
     }
 
-    // Colours parsed from .rtp (RGB y RGB+alpha).
+    // Colours parsed from .rtp (RGB and RGB+alpha).
     {
         const char* kRtpColours =
             "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
