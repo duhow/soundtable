@@ -46,6 +46,11 @@ public:
     // still covering typical Reactable-style scenes.
     static constexpr int kMaxConnectionTaps = 64;
 
+    // Maximum number of independent LoopModule instances that expose
+    // their own waveform history for visualisation. Typical patches
+    // usan 4 loops; mantenemos un margen prudente.
+    static constexpr int kMaxLoopWaveforms = 16;
+
     // juce::AudioIODeviceCallback
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
@@ -192,6 +197,16 @@ public:
     // destination buffer is cleared. The snapshot shares the same
     // time base as the global and per-voice waveform histories.
     void getConnectionWaveformSnapshot(const std::string& connectionKey,
+                                       float* dst, int numPoints,
+                                       double windowSeconds);
+
+    // Copies a downsampled snapshot of the recent mono waveform for
+    // a specific Loop module into `dst`. The snapshot is driven by a
+    // per-module history buffer updated in el hilo de audio con la
+    // señal resultante (mono) del loop después de aplicar su gain y
+    // envolvente AR. Si el módulo no tiene historial o la ventana es
+    // demasiado corta, el destino se rellena con ceros.
+    void getLoopModuleWaveformSnapshot(const std::string& moduleId,
                                        float* dst, int numPoints,
                                        double windowSeconds);
 
@@ -401,6 +416,19 @@ private:
     std::unordered_map<std::string, int> connectionKeyToTapIndex_;
     std::atomic<int> numConnectionTaps_{0};
 
+    // Per-LoopModule waveform history ---------------------------------
+
+    // Each active Loop module that needs a dedicated waveform curve in
+    // the UI is assigned a small integer slot. The audio thread writes
+    // the mono loop signal (post-gain/envelope) into
+    // `loopWaveformBuffers_` at the shared `waveformWriteIndex_`, and
+    // the GUI thread samples snapshots via
+    // `getLoopModuleWaveformSnapshot`.
+    float loopWaveformBuffers_[kMaxLoopWaveforms]
+                             [kWaveformHistorySize]{};
+    std::unordered_map<std::string, int> loopModuleToWaveformIndex_;
+    int numLoopWaveformSlots_{0};
+
     // Logical audio graph snapshot owned by the engine. Built from
     // the Scene and used as the canonical representation of modules
     // and typed connections on the audio side.
@@ -451,6 +479,12 @@ private:
         double envTimeInPhase{0.0};
         double prevTargetGain{0.0};
 
+        // Index into `loopWaveformBuffers_` used solely for
+        // visualisation. Managed from the UI thread when
+        // `setLoopModuleParams` is called and consumed on the audio
+        // thread via the snapshot map.
+        int visualWaveformIndex{-1};
+
         LoopInstance() = default;
 
         // Custom copy constructor/assignment to allow the container of
@@ -467,6 +501,7 @@ private:
                 std::memory_order_relaxed);
             gain.store(other.gain.load(std::memory_order_relaxed),
                        std::memory_order_relaxed);
+            visualWaveformIndex = other.visualWaveformIndex;
         }
 
         LoopInstance& operator=(const LoopInstance& other)
@@ -482,6 +517,7 @@ private:
                 gain.store(
                     other.gain.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
+                visualWaveformIndex = other.visualWaveformIndex;
             }
             return *this;
         }
@@ -497,6 +533,7 @@ private:
                 std::memory_order_relaxed);
             gain.store(other.gain.load(std::memory_order_relaxed),
                        std::memory_order_relaxed);
+            visualWaveformIndex = other.visualWaveformIndex;
         }
 
         LoopInstance& operator=(LoopInstance&& other) noexcept
@@ -512,6 +549,7 @@ private:
                 gain.store(
                     other.gain.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
+                visualWaveformIndex = other.visualWaveformIndex;
             }
             return *this;
         }

@@ -896,9 +896,17 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             juce::jlimit(0.0F, 1.0F,
                                          static_cast<float>(tgt *
                                                             envAmp));
+                        const float monoWithGain = l * finalGain;
                         if (finalGain > 0.0F) {
                             leftOut += l * finalGain;
                             rightOut += r * finalGain;
+                        }
+
+                        const int wfIndex = instance.visualWaveformIndex;
+                        if (wfIndex >= 0 &&
+                            wfIndex < kMaxLoopWaveforms) {
+                            loopWaveformBuffers_[wfIndex][bufIndex] =
+                                monoWithGain;
                         }
 
                         pos += step;
@@ -1218,9 +1226,17 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             juce::jlimit(0.0F, 1.0F,
                                          static_cast<float>(tgt *
                                                             envAmp));
+                        const float monoWithGain = l * finalGain;
                         if (finalGain > 0.0F) {
                             leftOut += l * finalGain;
                             rightOut += r * finalGain;
+                        }
+
+                        const int wfIndex = instance.visualWaveformIndex;
+                        if (wfIndex >= 0 &&
+                            wfIndex < kMaxLoopWaveforms) {
+                            loopWaveformBuffers_[wfIndex][bufIndex] =
+                                monoWithGain;
                         }
 
                         pos += step;
@@ -1416,6 +1432,21 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
     }
 
     LoopInstance& instance = it->second;
+
+    // Assign a visual waveform slot for this Loop module on first
+    // use so that the audio callback can write into a dedicated
+    // history buffer without realizar lookups costosos por módulo en
+    // cada muestra.
+    if (instance.visualWaveformIndex < 0) {
+        const auto idxIt = loopModuleToWaveformIndex_.find(moduleId);
+        if (idxIt != loopModuleToWaveformIndex_.end()) {
+            instance.visualWaveformIndex = idxIt->second;
+        } else if (numLoopWaveformSlots_ < kMaxLoopWaveforms) {
+            const int newIndex = numLoopWaveformSlots_++;
+            loopModuleToWaveformIndex_.emplace(moduleId, newIndex);
+            instance.visualWaveformIndex = newIndex;
+        }
+    }
     const int clampedIndex =
         std::max(0, std::min(selectedIndex,
                              static_cast<int>(instance.slots.size()) - 1));
@@ -1452,6 +1483,8 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
                                             std::memory_order_relaxed);
             snapIt->second.releaseMs.store(releaseMs,
                                            std::memory_order_relaxed);
+            snapIt->second.visualWaveformIndex =
+                instance.visualWaveformIndex;
         }
     }
 }
@@ -1780,6 +1813,66 @@ void AudioEngine::getConnectionWaveformSnapshot(
         const int bufIndex =
             (startIndex + offset + historySize) % historySize;
         dst[i] = connectionWaveformBuffers_[tapIndex][bufIndex];
+    }
+
+    for (int i = points; i < numPoints; ++i) {
+        dst[i] = dst[points - 1];
+    }
+}
+
+void AudioEngine::getLoopModuleWaveformSnapshot(
+    const std::string& moduleId, float* dst, const int numPoints,
+    const double windowSeconds)
+{
+    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0) {
+        return;
+    }
+
+    const auto it = loopModuleToWaveformIndex_.find(moduleId);
+    if (it == loopModuleToWaveformIndex_.end()) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    const int wfIndex = it->second;
+    if (wfIndex < 0 || wfIndex >= kMaxLoopWaveforms) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    const int historySize = kWaveformHistorySize;
+    const int writeIndex =
+        waveformWriteIndex_.load(std::memory_order_relaxed);
+    const int availableSamples =
+        std::min(historySize, std::max(writeIndex, 0));
+
+    if (availableSamples <= 0) {
+        std::fill(dst, dst + numPoints, 0.0F);
+        return;
+    }
+
+    double window = windowSeconds;
+    if (window <= 0.0) {
+        window = 0.05;  // Default to ~50 ms.
+    }
+
+    int windowSamples = static_cast<int>(window * sampleRate_);
+    windowSamples =
+        std::max(1, std::min(windowSamples, availableSamples));
+
+    const int startIndex =
+        (writeIndex - windowSamples + historySize * 4) % historySize;
+
+    const int points = std::min(numPoints, windowSamples);
+    const float denom = static_cast<float>(std::max(points - 1, 1));
+
+    for (int i = 0; i < points; ++i) {
+        const float t = static_cast<float>(i) / denom;
+        const int offset = static_cast<int>(
+            t * static_cast<float>(windowSamples - 1));
+        const int bufIndex =
+            (startIndex + offset + historySize) % historySize;
+        dst[i] = loopWaveformBuffers_[wfIndex][bufIndex];
     }
 
     for (int i = points; i < numPoints; ++i) {
