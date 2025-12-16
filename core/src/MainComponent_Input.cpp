@@ -368,8 +368,15 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 juce::AffineTransform::rotation(-rotationAngle, cx, cy));
         }
 
+        const float clickDx = click.x - cx;
+        const float clickDy = click.y - cy;
+        const float clickDistSq = clickDx * clickDx + clickDy * clickDy;
+        const float moduleCircleRadius = nodeRadius;
+        const bool insideModuleCircle =
+            (clickDistSq <= moduleCircleRadius * moduleCircleRadius);
+
         auto isOnFreqControlBar = [sliderTop, sliderBottom](float hx,
-                                                            juce::Point<float> p) {
+                                    juce::Point<float> p) {
             // Treat the side control as a vertical bar that extends
             // further towards the outside of the table (screen left),
             // while keeping the inner edge close to the node so that
@@ -384,7 +391,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         };
 
         auto isOnGainControlBar = [sliderTop, sliderBottom](float hx,
-                                                            juce::Point<float> p) {
+                                    juce::Point<float> p) {
             // Extend the clickable area slightly further towards the
             // outside of the table (screen right) while keeping the
             // inner edge close to the node so that the centre area
@@ -399,7 +406,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         };
 
         // Clicking anywhere on the frequency bar.
-        if (freqEnabled && isOnFreqControlBar(freqHandleX, click)) {
+        if (!insideModuleCircle &&
+            freqEnabled && isOnFreqControlBar(freqHandleX, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kFreq;
 
@@ -466,7 +474,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         }
 
         // Clicking anywhere on the gain bar.
-        if (gainEnabled && isOnGainControlBar(gainHandleX, click)) {
+        if (!insideModuleCircle &&
+            gainEnabled && isOnGainControlBar(gainHandleX, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kGain;
 
