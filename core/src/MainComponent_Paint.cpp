@@ -1773,15 +1773,52 @@ void MainComponent::paint(juce::Graphics& g)
             g.setColour(juce::Colours::white.withAlpha(0.5F));
             g.strokePath(gainArc, juce::PathStrokeType(1.0F));
 
+            // White handle: user-controlled module gain.
             const float handleY = juce::jmap(gainValue, 0.0F, 1.0F,
                                              sliderBottom, sliderTop);
             const float dy = handleY - cy;
             const float inside = ringRadius * ringRadius - dy * dy;
+            float handleX = cx + ringRadius;
             if (inside >= 0.0F) {
                 const float dx = std::sqrt(inside);
-                const float handleX = cx + dx;
+                handleX = cx + dx;
                 g.setColour(juce::Colours::white);
                 g.fillEllipse(handleX - 4.0F, handleY - 4.0F, 8.0F, 8.0F);
+            }
+
+            // Grey handle: Sequencer-driven gain factor for
+            // Oscillator modules. It follows the MIDI-controlled
+            // volume but cannot rise above the white handle.
+            if (sequencerControlsVolume_ && moduleForObject != nullptr &&
+                moduleForObject->is<rectai::OscillatorModule>()) {
+                float seqGain = 1.0F;
+                const auto it = oscillatorSequencerGain_.find(
+                    moduleForObject->id());
+                if (it != oscillatorSequencerGain_.end()) {
+                    seqGain = juce::jlimit(0.0F, 1.0F, it->second);
+                }
+
+                // Only show the grey handle when the Sequencer is
+                // actually constraining the level (i.e. attempting
+                // to lower volume). The effective Sequencer value is
+                // clamped to the white handle so it never appears
+                // above it.
+                const float cappedSeq = std::min(gainValue, seqGain);
+                if (cappedSeq < gainValue - 0.001F) {
+                    const float greyY = juce::jmap(cappedSeq, 0.0F, 1.0F,
+                                                   sliderBottom,
+                                                   sliderTop);
+                    const float greyDy = greyY - cy;
+                    const float greyInside =
+                        ringRadius * ringRadius - greyDy * greyDy;
+                    if (greyInside >= 0.0F) {
+                        const float greyDx = std::sqrt(greyInside);
+                        const float greyX = cx + greyDx;
+                        g.setColour(juce::Colours::lightgrey.withAlpha(0.9F));
+                        g.fillEllipse(greyX - 4.0F, greyY - 4.0F,
+                                      8.0F, 8.0F);
+                    }
+                }
             }
         }
 

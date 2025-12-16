@@ -1,5 +1,25 @@
 # Progreso de implementación
 
+## 2025-12-17
+
+### Doble control de volumen en Oscillator: bola blanca (módulo) y bola gris (Sequencer)
+- Se ha ajustado la interacción entre el `Sequencer` y los módulos `Oscillator` para que los mensajes de control de volumen (velocidad de nota) ya **no modifiquen directamente** el parámetro `gain` del Oscillator, que corresponde a la **bola blanca** en la barra lateral derecha y representa el volumen de salida del módulo fijado por el usuario.
+- En `MainComponent` se introduce un mapa `oscillatorSequencerGain_` que almacena, por id de módulo, un factor de ganancia normalizado en `[0,1]` controlado exclusivamente por el `Sequencer` cuando `sequencerControlsVolume_` es `true`. Este factor se actualiza en `MainComponent_Audio::timerCallback`, dentro de `runSequencerStep`:
+  - Cuando un paso activo del Sequencer dispara un Oscillator, se toma `step.velocity01` como valor de volumen del paso, se clampa a `[0,1]` y se guarda en `oscillatorSequencerGain_[oscId]`.
+  - Cuando un paso está desactivado y el Sequencer está autorizado a controlar volumen, en lugar de forzar `gain = 0` sobre el módulo, se fija `oscillatorSequencerGain_[oscId] = 0.0F`, dejando intacto el valor de `gain` elegido por el usuario.
+- La mezcla de audio de generadores en `MainComponent_Audio.cpp` se ha actualizado para que el nivel efectivo de cada cadena cuyo origen es un `OscillatorModule` se base en **dos componentes**:
+  - `userGainParam`: el parámetro `gain` del módulo (bola blanca), leído y clampeado a `[0,1]`.
+  - `seqGain`: el factor de ganancia controlado por el Sequencer, leído de `oscillatorSequencerGain_` cuando existe o asumido como `1.0F` en ausencia de modulaciones.
+  El `gainParam` que alimenta el cálculo de `calculatedLevel` se define ahora como `min(userGainParam, seqGain)` cuando el módulo es un Oscillator y `sequencerControlsVolume_` está activo. De esta forma, el Sequencer **puede reducir el volumen** efectivo de una cadena de Oscillator pero **nunca aumentarlo** por encima del valor fijado en la bola blanca.
+- Visualmente, la barra de volumen lateral derecha en `MainComponent_Paint.cpp` se ha extendido para representar **ambos niveles**:
+  - La bola blanca sigue representando el valor del parámetro `gain` del módulo (controlado por clic/drag del usuario) y mantiene el mismo comportamiento de siempre.
+  - Para módulos `OscillatorModule` y sólo cuando `sequencerControlsVolume_` es `true`, se dibuja una **segunda bola gris** en la misma barra, cuyo valor vertical corresponde al `seqGain` del mapa `oscillatorSequencerGain_`, clampeado con `cappedSeq = min(gainValue, seqGain)`.
+  - La bola gris sólo se muestra cuando el Sequencer está intentando **bajar el volumen** respecto al nivel del módulo (es decir, cuando `cappedSeq < gainValue`), de modo que visualmente actúa como un “segundo cursor” que se mueve por debajo de la bola blanca siguiendo los pasos del Sequencer.
+- La bola gris es puramente informativa y **no es interactiva**: la lógica de input en `MainComponent_Input.cpp` no se ha modificado y sigue utilizando únicamente la barra de `gain` como región clicable, mapeando los clics y drags al parámetro `gain` del módulo (bola blanca). Cualquier interacción del usuario con la barra sigue afectando exclusivamente a la bola blanca; la bola gris se limita a reflejar, en la misma barra, el volumen instantáneo que el Sequencer está imponiendo a ese Oscillator.
+- A nivel de sonido, el resultado es que:
+  - El volumen audible de un Oscillator conectado a un Sequencer está gobernado por la combinación `min(gain_módulo, factor_Sequencer)`.
+  - El usuario ve siempre el volumen máximo permitido para ese módulo (bola blanca) y, cuando el Sequencer atenúa la señal, observa la bola gris moverse por debajo hasta donde llegue el paso actual, sin que ésta pueda **superar** nunca la altura de la bola blanca.
+
 ## 2025-12-16
 
 ### Suavizado de ataque en la envolvente de Oscillator para evitar clicks

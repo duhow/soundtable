@@ -1612,8 +1612,16 @@ void MainComponent::timerCallback()
             const bool downstreamInside = route.inside;
 
             bool downstreamMutedToMaster = false;
-            float gainParam = module->GetParameterOrDefault(
+
+            // Base gain comes from the module's own `gain`
+            // parameter (white handle). For Oscillator modules, an
+            // additional Sequencer-driven gain factor may further
+            // reduce the effective level, but it can never raise it
+            // above the user-set value.
+            float userGainParam = module->GetParameterOrDefault(
                 "gain", module->default_parameter_value("gain"));
+            userGainParam = juce::jlimit(0.0F, 1.0F, userGainParam);
+            float gainParam = userGainParam;
 
             if (downstreamModule != nullptr && downstreamInside) {
                 // A downstream module can also be effectively muted if
@@ -1669,6 +1677,21 @@ void MainComponent::timerCallback()
                 }
             }
 
+            // Apply Sequencer-driven gain only for Oscillator
+            // generators when allowed. The Sequencer controls a
+            // separate factor in [0,1] and the final effective gain
+            // is the minimum of the white handle (user gain) and
+            // this factor, so that external MIDI cannot push the
+            // visible module volume above the user setting.
+            if (oscModule != nullptr && sequencerControlsVolume_) {
+                float seqGain = 1.0F;
+                const auto it = oscillatorSequencerGain_.find(module->id());
+                if (it != oscillatorSequencerGain_.end()) {
+                    seqGain = juce::jlimit(0.0F, 1.0F, it->second);
+                }
+                const float cappedUserGain = userGainParam;
+                gainParam = std::min(cappedUserGain, seqGain);
+            }
             bool chainMuted = srcMuted || route.connectionMuted ||
                                downstreamMutedToMaster;
 
@@ -2032,8 +2055,13 @@ void MainComponent::timerCallback()
                         if (auto* oscModule =
                                 dynamic_cast<rectai::OscillatorModule*>(
                                     modDestIt->second.get())) {
-                            scene_.SetModuleParameter(oscModule->id(),
-                                                      "gain", 0.0F);
+                            // Do not alter the user-visible `gain`
+                            // parameter (white handle). Instead,
+                            // drive a separate Sequencer-controlled
+                            // gain factor used for audio and the
+                            // grey handle on the volume bar.
+                            oscillatorSequencerGain_[oscModule->id()] =
+                                0.0F;
                         }
                     }
                 }
@@ -2265,10 +2293,17 @@ void MainComponent::timerCallback()
                     }
 
                     if (sequencerControlsVolume_) {
-                        const float gainParam = juce::jlimit(
+                        const float gainFactor = juce::jlimit(
                             0.0F, 1.0F, noteEvent.velocity01);
-                        scene_.SetModuleParameter(oscModule->id(), "gain",
-                                                  gainParam);
+                        // Store the Sequencer-driven gain separately
+                        // from the Oscillator's own `gain` parameter
+                        // so that the white handle continues to
+                        // represent the module output level while
+                        // the grey handle (and audio) follow this
+                        // factor, clamped to not exceed the white
+                        // value.
+                        oscillatorSequencerGain_[oscModule->id()] =
+                            gainFactor;
                     }
 
                     // Retrigger the per-voice amplitude envelope for

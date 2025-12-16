@@ -165,10 +165,20 @@ private:
 
     // When true, Sequencer steps modulate the volume (velocity) of
     // destination modules: note velocity in Sampleplay and the
-    // "gain" parameter in Oscillator. When false, the Sequencer only
-    // controls pitch/trigger and volume is assumed to be controlled
-    // by other MIDI sources.
+    // per-module sequencer gain factor in Oscillator. When false,
+    // the Sequencer only controls pitch/trigger and volume is
+    // assumed to be controlled by other MIDI sources.
     bool sequencerControlsVolume_{true};
+
+    // Per-oscillator gain factor driven by the Sequencer when
+    // `sequencerControlsVolume_` is true. This represents the
+    // instantaneous MIDI velocity mapped to [0,1] for each
+    // Oscillator module and is applied on top of the user-facing
+    // `gain` parameter (white handle). The effective audio gain is
+    // the minimum of the module `gain` and this sequencer factor,
+    // and the corresponding grey handle in the UI cannot exceed the
+    // white handle.
+    std::unordered_map<std::string, float> oscillatorSequencerGain_;
 
     // Set of module ids that are currently contributing audible audio
     // to the master bus. Used by the visual layer to decide which
