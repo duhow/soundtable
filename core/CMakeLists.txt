@@ -103,6 +103,7 @@ target_sources(${PROJECT_NAME}
         src/MainComponent_Atlas.cpp
         src/MainComponentHelpers.cpp
         src/MainComponentHelpers.h
+        src/RectaiLookAndFeel.cpp
         src/AudioEngine.cpp
         src/AudioEngine.h
         src/TrackingOscReceiver.cpp

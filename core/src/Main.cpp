@@ -2,6 +2,7 @@
 
 #include "AudioEngine.h"
 #include "MainComponent.h"
+#include "RectaiLookAndFeel.h"
 
 class MainWindow : public juce::DocumentWindow {
 public:
@@ -87,16 +88,23 @@ public:
 
     void initialise(const juce::String&) override
     {
+        // Install a custom LookAndFeel that, when a bundled font is
+        // present, uses a single embedded typeface instead of
+        // querying all system fonts via fontconfig.
+        juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel_);
+
         mainWindow_ =
             std::make_unique<MainWindow>(getApplicationName(), audioEngine_);
     }
 
     void shutdown() override
     {
+        juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
         mainWindow_.reset();
     }
 
 private:
+    RectaiLookAndFeel lookAndFeel_;
     std::unique_ptr<MainWindow> mainWindow_;
     AudioEngine audioEngine_;
 

@@ -1,5 +1,14 @@
 # Progreso de implementación
 
+## 2025-12-16
+
+### LookAndFeel personalizada con fuente embebida opcional para evitar escaneo masivo de fuentes del sistema
+- Se ha introducido una clase `RectaiLookAndFeel` en `core/src/RectaiLookAndFeel.{h,cpp}` que hereda de `juce::LookAndFeel_V4` y, de forma opcional, carga una tipografía TTF embebida desde disco para usarla como fuente sans-serif por defecto en toda la aplicación.
+- La clase intenta localizar un archivo `rectai-default.ttf` en rutas estables relativas al binario (pensadas para el layout actual del repo): `com.reactable/Resources/rectai-default.ttf` y `resources/rectai-default.ttf`. Si encuentra el fichero, lo lee completo en memoria y crea un `juce::Typeface` con `juce::Typeface::createSystemTypefaceFor(...)`, que se instala como tipo de letra sans-serif por defecto mediante `setDefaultSansSerifTypeface(embeddedTypeface_)`.
+- Este diseño permite que el binario sólo tenga que abrir un único archivo de fuente conocido en tiempo de ejecución, evitando que JUCE/fontconfig recorran todas las fuentes de `/usr/share/fonts/...` durante la inicialización para resolver la fuente por defecto. La fuente TTF concreta **no** se versiona en el repositorio (para respetar licencias externas); el usuario puede copiar la tipografía que desee a una de esas rutas con el nombre `rectai-default.ttf` para activar el comportamiento embebido.
+- En `core/src/Main.cpp` se ha añadido un miembro `RectaiLookAndFeel lookAndFeel_` a `RectaiApplication`. En `initialise` se llama a `juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel_)` antes de crear la `MainWindow`, y en `shutdown` se restaura el estado llamando a `setDefaultLookAndFeel(nullptr)` antes de destruir la ventana. De este modo, toda la UI pasa a usar la fuente embebida (cuando existe) sin cambios adicionales en el código de pintado (`MainComponent_Paint.cpp` sigue usando `g.setFont(size)` y se beneficia automáticamente de la tipografía fija).
+- Si no se encuentra `rectai-default.ttf` en las rutas esperadas, `RectaiLookAndFeel` ahora fija explícitamente `"DejaVu Sans"` como nombre de fuente sans-serif por defecto mediante `setDefaultSansSerifTypefaceName("DejaVu Sans")`. Esto hace que JUCE/fontconfig resuelvan directamente esa familia ampliamente disponible en Linux a partir de las cachés del sistema, reduciendo la necesidad de escanear todo `/usr/share/fonts`. Si la creación de la `Typeface` embebida falla por cualquier motivo, también se recurre a este mismo fallback, de modo que el comportamiento resulta determinista tanto con como sin TTF embebido.
+
 ## 2025-12-15
 
 ### Centralizar la forma de onda de Oscillator en AudioModules
