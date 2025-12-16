@@ -60,13 +60,15 @@ std::string makeModulePairKey(const rectai::Connection& conn)
 bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
                                      const rectai::ObjectInstance& toObj)
 {
-    constexpr float centreX = 0.5F;
-    constexpr float centreY = 0.5F;
+    // ObjectInstance positions are expressed in a centre-origin table
+    // coordinate system where the table centre is (0,0) and the table
+    // border lies at radius 1. Work directly in that space so geometric
+    // tests remain independent of the current component size.
 
-    const float fromDx = fromObj.x() - centreX;
-    const float fromDy = fromObj.y() - centreY;
-    const float toDx = toObj.x() - centreX;
-    const float toDy = toObj.y() - centreY;
+    const float fromDx = fromObj.x();
+    const float fromDy = fromObj.y();
+    const float toDx = toObj.x();
+    const float toDy = toObj.y();
 
     // Ignore degenerate cases extremely close to the table centre to
     // avoid noisy angle estimates.

@@ -34,19 +34,27 @@ bool MainComponent::computeInsideMusicArea(
         return false;
     }
 
-    const auto bounds = getLocalBounds().toFloat();
+    // Inside-music check in table space: the musical surface is the
+    // disc of radius 1 centred at (0,0). ObjectInstance coordinates
+    // are expressed directly in that centre-origin system.
+    const float dx = obj.x();
+    const float dy = obj.y();
+    return (dx * dx + dy * dy) <= 1.0F;
+}
 
-    const float centreX = bounds.getX() + 0.5F * bounds.getWidth();
-    const float centreY = bounds.getY() + 0.5F * bounds.getHeight();
+// Helper to map an ObjectInstance on the table (centre-origin
+// coordinates with radius 1) to component-space pixels.
+juce::Point<float> MainComponent::objectTableToScreen(
+    const rectai::ObjectInstance& obj,
+    const juce::Rectangle<float>& bounds)
+{
+    const auto centre = bounds.getCentre();
     const float tableRadius =
         0.45F * std::min(bounds.getWidth(), bounds.getHeight());
 
-    const float x = bounds.getX() + obj.x() * bounds.getWidth();
-    const float y = bounds.getY() + obj.y() * bounds.getHeight();
-
-    const float dx = x - centreX;
-    const float dy = y - centreY;
-    return (dx * dx + dy * dy) <= tableRadius * tableRadius;
+    const float cx = centre.x + obj.x() * tableRadius;
+    const float cy = centre.y + obj.y() * tableRadius;
+    return {cx, cy};
 }
 
 void MainComponent::paint(juce::Graphics& g)
@@ -588,8 +596,9 @@ void MainComponent::paint(juce::Graphics& g)
                 continue;
             }
 
-            const auto cx = bounds.getX() + object.x() * bounds.getWidth();
-            const auto cy = bounds.getY() + object.y() * bounds.getHeight();
+            const auto centrePos = objectTableToScreen(object, bounds);
+            const auto cx = centrePos.x;
+            const auto cy = centrePos.y;
 
             juce::Line<float> line(centre.x, centre.y, cx, cy);
 
@@ -1033,10 +1042,12 @@ void MainComponent::paint(juce::Graphics& g)
                 continue;
             }
 
-            const auto fx = bounds.getX() + fromObj.x() * bounds.getWidth();
-            const auto fy = bounds.getY() + fromObj.y() * bounds.getHeight();
-            const auto tx = bounds.getX() + toObj.x() * bounds.getWidth();
-            const auto ty = bounds.getY() + toObj.y() * bounds.getHeight();
+            const auto fromPos = objectTableToScreen(fromObj, bounds);
+            const auto fx = fromPos.x;
+            const auto fy = fromPos.y;
+            const auto toPos = objectTableToScreen(toObj, bounds);
+            const auto tx = toPos.x;
+            const auto ty = toPos.y;
 
             const juce::Point<float> p1{fx, fy};
             const juce::Point<float> p2{tx, ty};
@@ -1362,8 +1373,9 @@ void MainComponent::paint(juce::Graphics& g)
                 object.logical_id() == rectai::MASTER_OUTPUT_ID) {
             continue;
         }
-        const auto cx = bounds.getX() + object.x() * bounds.getWidth();
-        const auto cy = bounds.getY() + object.y() * bounds.getHeight();
+        const auto centrePos = objectTableToScreen(object, bounds);
+        const auto cx = centrePos.x;
+        const auto cy = centrePos.y;
 
         // A module body is considered muted for colouring purposes
         // when all its effective routes to the master are muted at
@@ -2153,8 +2165,9 @@ void MainComponent::paint(juce::Graphics& g)
         if (object.docked() || object.logical_id() == rectai::MASTER_OUTPUT_ID) {
             continue;
         }
-        const auto cx = bounds.getX() + object.x() * bounds.getWidth();
-        const auto cy = bounds.getY() + object.y() * bounds.getHeight();
+        const auto centrePos = objectTableToScreen(object, bounds);
+        const auto cx = centrePos.x;
+        const auto cy = centrePos.y;
 
         // Simple sequencer: attach to any object whose logical_id starts
         // with "seq" for now. When the object is in the musical area

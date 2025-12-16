@@ -49,6 +49,12 @@ private:
     [[nodiscard]] bool computeInsideMusicArea(
         const rectai::ObjectInstance& obj) const;
 
+    // Map an ObjectInstance in table space (centre-origin, radius 1)
+    // to component-space pixels for a given bounds rectangle.
+    static juce::Point<float> objectTableToScreen(
+        const rectai::ObjectInstance& obj,
+        const juce::Rectangle<float>& bounds);
+
     void applyControlDropMuteIfNeeded(const juce::MouseEvent& event);
 
     bool loadAtlasResources();

@@ -60,8 +60,15 @@ void TrackingOscReceiver::handleObjectMessage(const juce::OSCMessage& message)
 
     const auto trackingId = static_cast<std::int64_t>(message[0].getInt32());
     const auto logicalId = message[1].getString().toStdString();
-    const auto x = message[2].getFloat32();
-    const auto y = message[3].getFloat32();
+
+    // The tracker sends normalised coordinates in [0,1] relative to the
+    // camera frame. Convert them to the centre-origin table coordinate
+    // system used by the Scene and UI, where the table centre is (0,0) and
+    // the table border lies at radius 1 (left edge X = -1, right edge X = +1).
+    const auto xNorm = message[2].getFloat32();
+    const auto yNorm = message[3].getFloat32();
+    const float x = 2.0F * xNorm - 1.0F;
+    const float y = 2.0F * yNorm - 1.0F;
     const auto angleDegrees = message[4].getFloat32();
 
     constexpr float kPi = juce::MathConstants<float>::pi;

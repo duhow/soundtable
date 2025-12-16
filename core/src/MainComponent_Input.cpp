@@ -46,10 +46,9 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
                 continue;
             }
 
-            const float cx = bounds.getX() +
-                             object.x() * bounds.getWidth();
-            const float cy = bounds.getY() +
-                             object.y() * bounds.getHeight();
+            const auto centrePos = objectTableToScreen(object, bounds);
+            const float cx = centrePos.x;
+            const float cy = centrePos.y;
 
             const float dx = static_cast<float>(event.position.x) - cx;
             const float dy = static_cast<float>(event.position.y) - cy;
@@ -193,10 +192,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 continue;
             }
 
-            const auto cx = bounds.getX() +
-                            object.x() * bounds.getWidth();
-            const auto cy = bounds.getY() +
-                            object.y() * bounds.getHeight();
+            const auto centrePos = objectTableToScreen(object, bounds);
+            const auto cx = centrePos.x;
+            const auto cy = centrePos.y;
 
             const auto dx = static_cast<float>(event.position.x) - cx;
             const auto dy = static_cast<float>(event.position.y) - cy;
@@ -268,8 +266,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             continue;
         }
 
-        const auto cx = bounds.getX() + object.x() * bounds.getWidth();
-        const auto cy = bounds.getY() + object.y() * bounds.getHeight();
+        const auto centrePos = objectTableToScreen(object, bounds);
+        const auto cx = centrePos.x;
+        const auto cy = centrePos.y;
 
         const bool insideMusic = isInsideMusicArea(object);
         float rotationAngle = 0.0F;
@@ -515,8 +514,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 object.docked()) {
             continue;
         }
-        const auto cx = bounds.getX() + object.x() * bounds.getWidth();
-        const auto cy = bounds.getY() + object.y() * bounds.getHeight();
+        const auto centrePos = objectTableToScreen(object, bounds);
+        const auto cx = centrePos.x;
+        const auto cy = centrePos.y;
 
         const auto dx = static_cast<float>(event.position.x) - cx;
         const auto dy = static_cast<float>(event.position.y) - cy;
@@ -705,10 +705,12 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 continue;
             }
 
-            const auto fx = bounds.getX() + fromObj.x() * bounds.getWidth();
-            const auto fy = bounds.getY() + fromObj.y() * bounds.getHeight();
-            const auto tx = bounds.getX() + toObj.x() * bounds.getWidth();
-            const auto ty = bounds.getY() + toObj.y() * bounds.getHeight();
+            const auto fromPos = objectTableToScreen(fromObj, bounds);
+            const auto fx = fromPos.x;
+            const auto fy = fromPos.y;
+            const auto toPos = objectTableToScreen(toObj, bounds);
+            const auto tx = toPos.x;
+            const auto ty = toPos.y;
 
             if (isPointNearSegment(click, {fx, fy}, {tx, ty}, maxDistanceSq)) {
                 const std::string key = makeConnectionKey(conn);
@@ -793,8 +795,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 continue;
             }
 
-            const auto cx = bounds.getX() + object.x() * bounds.getWidth();
-            const auto cy = bounds.getY() + object.y() * bounds.getHeight();
+            const auto centrePos = objectTableToScreen(object, bounds);
+            const auto cx = centrePos.x;
+            const auto cy = centrePos.y;
 
             if (isPointNearSegment(click, centre, {cx, cy}, maxDistanceSq)) {
                 // Calculate normalized position along the line (0=center, 1=object).
@@ -975,10 +978,9 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                     continue;
                 }
 
-                const auto cx = bounds.getX() +
-                                object.x() * bounds.getWidth();
-                const auto cy = bounds.getY() +
-                                object.y() * bounds.getHeight();
+                const auto centrePos = objectTableToScreen(object, bounds);
+                const auto cx = centrePos.x;
+                const auto cy = centrePos.y;
 
                 // Check intersection with the latest segment.
                 const bool intersects = rectai::ui::lineSegmentsIntersect(
@@ -1033,14 +1035,14 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                     continue;
                 }
 
-                const auto fx = bounds.getX() +
-                                fromObj.x() * bounds.getWidth();
-                const auto fy = bounds.getY() +
-                                fromObj.y() * bounds.getHeight();
-                const auto tx = bounds.getX() +
-                                toObj.x() * bounds.getWidth();
-                const auto ty = bounds.getY() +
-                                toObj.y() * bounds.getHeight();
+                const auto fromPos =
+                    objectTableToScreen(fromObj, bounds);
+                const auto toPos =
+                    objectTableToScreen(toObj, bounds);
+                const auto fx = fromPos.x;
+                const auto fy = fromPos.y;
+                const auto tx = toPos.x;
+                const auto ty = toPos.y;
 
                 const std::string key = makeConnectionKey(conn);
 
@@ -1128,8 +1130,12 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         }
 
         const auto& object = itObj->second;
-        const auto cx = bounds.getX() + object.x() * bounds.getWidth();
-        const auto cy = bounds.getY() + object.y() * bounds.getHeight();
+
+        const auto centre = bounds.getCentre();
+        const float tableRadius =
+            0.45F * std::min(bounds.getWidth(), bounds.getHeight());
+        const float cx = centre.x + object.x() * tableRadius;
+        const float cy = centre.y + object.y() * tableRadius;
 
         const bool insideMusic = isInsideMusicArea(object);
         float rotationAngle = 0.0F;
@@ -1192,6 +1198,8 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                     scene_.SetModuleParameter(object.logical_id(), "volume", value);
                 } else if (module->is<rectai::LoopModule>() ||
                            module->is<rectai::SampleplayModule>()) {
+                    // Loop and Sampleplay expose their main level as
+                    // "amp" instead of "gain".
                     scene_.SetModuleParameter(object.logical_id(), "amp", value);
                 } else {
                     scene_.SetModuleParameter(object.logical_id(), "gain", value);
@@ -1209,10 +1217,19 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         return;
     }
 
-    const float normX = (static_cast<float>(event.position.x) - bounds.getX()) /
-                        bounds.getWidth();
-    const float normY = (static_cast<float>(event.position.y) - bounds.getY()) /
-                        bounds.getHeight();
+    const auto centre = bounds.getCentre();
+    const float tableRadius =
+        0.45F * std::min(bounds.getWidth(), bounds.getHeight());
+
+    float tableX =
+        (static_cast<float>(event.position.x) - centre.x) / tableRadius;
+    float tableY =
+        (static_cast<float>(event.position.y) - centre.y) / tableRadius;
+
+    // Keep dragged objects within the canonical table radius so they
+    // remain on the blue disc and inside the [-1,1] coordinate system.
+    tableX = juce::jlimit(-1.0F, 1.0F, tableX);
+    tableY = juce::jlimit(-1.0F, 1.0F, tableY);
 
     auto objects = scene_.objects();
     const auto it = objects.find(draggedObjectId_);
@@ -1224,8 +1241,8 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     // and reject moves that would cause intersections with other
     // objects.
     constexpr float nodeRadius = 26.0F;
-    const float centreX = bounds.getX() + normX * bounds.getWidth();
-    const float centreY = bounds.getY() + normY * bounds.getHeight();
+    const float centreX = centre.x + tableX * tableRadius;
+    const float centreY = centre.y + tableY * tableRadius;
     const float minDist = 2.0F * nodeRadius;
     const float minDistSq = minDist * minDist;
 
@@ -1234,8 +1251,9 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
             continue;
         }
 
-        const float ox = bounds.getX() + otherObj.x() * bounds.getWidth();
-        const float oy = bounds.getY() + otherObj.y() * bounds.getHeight();
+        const auto otherPos = objectTableToScreen(otherObj, bounds);
+        const float ox = otherPos.x;
+        const float oy = otherPos.y;
         const float dx = centreX - ox;
         const float dy = centreY - oy;
         const float distSq = dx * dx + dy * dy;
@@ -1268,10 +1286,10 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         // Pointer has left the dock area: instantiate the object on the
         // table at the dragged position, marking it as undocked.
         updated = rectai::ObjectInstance(
-            updated.tracking_id(), updated.logical_id(), normX, normY,
+            updated.tracking_id(), updated.logical_id(), tableX, tableY,
             updated.angle_radians(), false);
     } else {
-        updated.set_position(normX, normY);
+        updated.set_position(tableX, tableY);
     }
 
     // Recompute and cache the inside-music-area flag for the

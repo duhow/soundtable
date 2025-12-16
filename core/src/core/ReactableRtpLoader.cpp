@@ -814,16 +814,17 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
   }
 
   // Normalise ObjectInstance positions when the patch clearly uses the
-  // original Reactable coordinate system (roughly [-1, +3]). For hand-built
-  // Rectai scenes and small tests that already use normalised [0,1] values
-  // we keep coordinates as-is. The heuristic is:
-  //   - Look only at non-docked objects (dock elements live in a separate UI
-  //     area where their x/y are not used directly for layout).
-  //   - If any of those lie outside [0,1] on either axis, treat the patch as
-  //     Reactable-native and map their positions from approximately [-1, 1]
-  //     into [0,1] using a simple affine transform around the table centre.
-  //   - Docked objects and the master Output tangible keep their original
-  //     coordinates.
+  // original Reactable coordinate system (roughly [-1, +3]). Our internal
+  // Scene model represents positions on the musical surface using a
+  // centre-origin system where the table centre is (0,0) and the table
+  // border lies at radius 1 (left edge X = -1, right edge X = +1, etc.).
+  //
+  // For hand-built Rectai scenes and small tests that already use
+  // centre-origin coordinates within [-1,1] we keep positions as-is. When a
+  // Reactable patch contains undocked tangibles with coordinates clearly
+  // outside that range (e.g. x ≈ 2.6 for dock elements), we clamp their
+  // on-table positions back into [-1,1] while leaving docked objects
+  // untouched.
   {
     const auto objectsSnapshot = scene.objects();
 
@@ -836,17 +837,15 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
 
       const float ox = obj.x();
       const float oy = obj.y();
-      if (ox < 0.0F || ox > 1.0F || oy < 0.0F || oy > 1.0F) {
+      if (ox < -1.0F || ox > 1.0F || oy < -1.0F || oy > 1.0F) {
         hasOutOfRangeUndocked = true;
         break;
       }
     }
 
     if (hasOutOfRangeUndocked) {
-      auto clampToUnitCentered = [](float v) noexcept {
-        const float clamped =
-            std::max(-1.0F, std::min(1.0F, v));
-        return 0.5F + 0.5F * clamped;
+      auto clampToTableRadius = [](float v) noexcept {
+        return std::max(-1.0F, std::min(1.0F, v));
       };
 
       for (const auto& [trackingId, obj] : objectsSnapshot) {
@@ -860,8 +859,8 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         }
 
         auto updated = obj;
-        const float nx = clampToUnitCentered(obj.x());
-        const float ny = clampToUnitCentered(obj.y());
+        const float nx = clampToTableRadius(obj.x());
+        const float ny = clampToTableRadius(obj.y());
         updated.set_position(nx, ny);
         scene.UpsertObject(updated);
       }
