@@ -1461,26 +1461,54 @@ void MainComponent::paint(juce::Graphics& g)
                 }
             }
 
-            const float handleY = juce::jmap(freqValue, 0.0F, 1.0F,
-                                             sliderBottom, sliderTop);
+            const juce::Colour freqBackgroundColour =
+                juce::Colours::white.withAlpha(0.35F);
+            const juce::Colour freqForegroundColour =
+                juce::Colours::white.withAlpha(1.0F);
 
-            // Draw the full bar path as a darker background.
-            g.setColour(juce::Colours::white.withAlpha(0.35F));
-            g.strokePath(freqArc, juce::PathStrokeType(7.0F));
+            const bool freqIsFull = (freqValue >= 0.999F);
+            const bool freqIsEmpty = (freqValue <= 0.001F);
 
-            // Draw the filled portion by clipping the same arc from
-            // the bottom of the bar up to the current value.
-            juce::Graphics::ScopedSaveState clipGuard(g);
-            const float clipPaddingX = 6.0F;
-            juce::Rectangle<int> filledClip(
-                static_cast<int>(cx - ringRadius - clipPaddingX),
-                static_cast<int>(handleY),
-                static_cast<int>(ringRadius * 2.0F + clipPaddingX * 2.0F),
-                static_cast<int>(sliderBottom - handleY + 4.0F));
-            g.reduceClipRegion(filledClip);
+            // When the control is at 0%, draw only the background
+            // arc so the bar appears completely empty, avoiding any
+            // tiny filled segment caused by clipping and
+            // anti-aliasing.
+            if (freqIsEmpty) {
+                g.setColour(freqBackgroundColour);
+                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+            } else {
+                const float handleY = juce::jmap(freqValue, 0.0F, 1.0F,
+                                                 sliderBottom, sliderTop);
 
-            g.setColour(juce::Colours::white.withAlpha(1.0F));
-            g.strokePath(freqArc, juce::PathStrokeType(7.0F));
+                juce::Colour effectiveFreqBackground = freqBackgroundColour;
+                juce::Colour effectiveFreqForeground = freqForegroundColour;
+
+                // When the control is at 100%, render the entire arc
+                // with the foreground colour so that any small gap
+                // between the background and filled regions becomes
+                // invisible.
+                if (freqIsFull) {
+                    effectiveFreqBackground = freqForegroundColour;
+                }
+
+                // Draw the full bar path as a darker background.
+                g.setColour(effectiveFreqBackground);
+                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+
+                // Draw the filled portion by clipping the same arc from
+                // the bottom of the bar up to the current value.
+                juce::Graphics::ScopedSaveState clipGuard(g);
+                const float clipPaddingX = 6.0F;
+                juce::Rectangle<int> filledClip(
+                    static_cast<int>(cx - ringRadius - clipPaddingX),
+                    static_cast<int>(handleY),
+                    static_cast<int>(ringRadius * 2.0F + clipPaddingX * 2.0F),
+                    static_cast<int>(sliderBottom - handleY + 4.0F));
+                g.reduceClipRegion(filledClip);
+
+                g.setColour(effectiveFreqForeground);
+                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+            }
         }
 
         // Right control (Gain): curved bar following the right semi-circle.
@@ -1506,7 +1534,7 @@ void MainComponent::paint(juce::Graphics& g)
                 }
             }
             g.setColour(juce::Colours::white.withAlpha(0.5F));
-            g.strokePath(gainArc, juce::PathStrokeType(2.0F));
+            g.strokePath(gainArc, juce::PathStrokeType(1.0F));
 
             const float handleY = juce::jmap(gainValue, 0.0F, 1.0F,
                                              sliderBottom, sliderTop);
@@ -1516,7 +1544,7 @@ void MainComponent::paint(juce::Graphics& g)
                 const float dx = std::sqrt(inside);
                 const float handleX = cx + dx;
                 g.setColour(juce::Colours::white);
-                g.fillEllipse(handleX - 6.0F, handleY - 6.0F, 12.0F, 12.0F);
+                g.fillEllipse(handleX - 4.0F, handleY - 4.0F, 8.0F, 8.0F);
             }
         }
 
