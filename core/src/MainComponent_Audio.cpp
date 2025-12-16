@@ -476,6 +476,11 @@ void MainComponent::timerCallback()
         if (auto* loopModule =
                 dynamic_cast<rectai::LoopModule*>(module)) {
             if (!obj.docked()) {
+                // One full revolution (360º) scrolls across the four
+                // Loop segments, so every ~90º the selected slot
+                // changes. We keep the underlying parameter
+                // continuous in [0,1] so the UI triangle can move
+                // smoothly with the fiducial rotation.
                 const float deltaSample = -diff / 360.0F;  // [-0.5, 0.5]
 
                 if (std::fabs(deltaSample) >
@@ -507,16 +512,10 @@ void MainComponent::timerCallback()
                     };
 
                     const int previousIndex = paramToIndex(clampedCurrent);
-                    int newIndex = paramToIndex(updated);
-
-                    // Snap al centro del segmento activo para que
-                    // la barra segmentada y el triángulo se
-                    // alineen de forma estable.
-                    const float newSampleParam =
-                        (static_cast<float>(newIndex) + 0.5F) / 4.0F;
+                    const int newIndex = paramToIndex(updated);
 
                     scene_.SetModuleParameter(obj.logical_id(), "sample",
-                                              newSampleParam);
+                                              updated);
 
                     if (newIndex != previousIndex) {
                         markLoopSampleLabelActive(loopModule->id());

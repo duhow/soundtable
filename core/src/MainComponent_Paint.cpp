@@ -1487,7 +1487,10 @@ void MainComponent::paint(juce::Graphics& g)
                 const float gap = 1.0F;
 
                 // Active segment index derived from the normalised
-                // sample parameter.
+                // sample parameter. We keep the raw parameter value
+                // for the triangle so it can move smoothly with the
+                // fiducial rotation, while the highlighted segment is
+                // still quantised to four slots.
                 float sampleParam = juce::jlimit(0.0F, 1.0F, freqValue);
                 int activeIndex = static_cast<int>(sampleParam * 4.0F);
                 if (activeIndex < 0) {
@@ -1509,10 +1512,17 @@ void MainComponent::paint(juce::Graphics& g)
                 const float angleBottom = std::asin(sinBottom);
 
                 for (int i = 0; i < segmentsCount; ++i) {
-                    const float segStartT = static_cast<float>(i) /
-                                             static_cast<float>(segmentsCount);
-                    const float segEndT = static_cast<float>(i + 1) /
-                                           static_cast<float>(segmentsCount);
+                    // Draw segments from bottom (i = 0) to top
+                    // (i = segmentsCount - 1) so that index 0
+                    // corresponde a la parte baja de la barra y el
+                    // último índice a la parte alta, alineados con el
+                    // movimiento del triángulo.
+                    const float segStartT = 1.0F -
+                        (static_cast<float>(i + 1) /
+                         static_cast<float>(segmentsCount));
+                    const float segEndT = 1.0F -
+                        (static_cast<float>(i) /
+                         static_cast<float>(segmentsCount));
 
                     const float segAngle0 = juce::jmap(
                         segStartT, 0.0F, 1.0F, angleTop, angleBottom);
@@ -1556,18 +1566,13 @@ void MainComponent::paint(juce::Graphics& g)
                     }
                 }
 
-                // Triangle selector: restore the original layout
-                // (triangle to the left of the bar, sliding
-                // vertically with the active segment) and then
-                // rotate the triangle shape 45° so that its tip
-                // touches the active segment.
-                const float activeTop = juce::jmap(
-                    static_cast<float>(activeIndex) / segmentsCount,
-                    0.0F, 1.0F, sliderTop, sliderBottom);
-                const float activeBottom = juce::jmap(
-                    static_cast<float>(activeIndex + 1) / segmentsCount,
-                    0.0F, 1.0F, sliderTop, sliderBottom);
-                const float triY = 0.5F * (activeTop + activeBottom);
+                // Triangle selector: triangle to the left of the bar,
+                // sliding vertically along the full Loop control. We
+                // keep the vertical position strictly proportional to
+                // the continuous `sample` parameter so that there is
+                // no visual jump when crossing segment boundaries.
+                const float triY = juce::jmap(
+                    sampleParam, 0.0F, 1.0F, sliderBottom, sliderTop);
 
                 const float dyTri = triY - cy;
                 const float insideTri =
