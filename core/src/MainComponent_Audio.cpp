@@ -1691,10 +1691,13 @@ void MainComponent::timerCallback()
                                            activeConnectionHold_
                                                ->connection_key));
 
-            // Process voice if level would be > 0 OR if it's being held
-            // for visualization.
-            if ((calculatedLevel > 0.0F || isBeingHeld) &&
-                voiceIndex < AudioEngine::kMaxVoices) {
+            // Always allocate a voice per generator route (while
+            // within the voice budget) so that the audio engine's
+            // envelope can control the actual audible level,
+            // including release/decay tails, even when the
+            // instantaneous chain level or Sequencer-controlled
+            // gain drop to zero.
+            if (voiceIndex < AudioEngine::kMaxVoices) {
                 voices[voiceIndex].frequency = frequency;
                 // Output level: 0 if muted/held, otherwise normal
                 // level.

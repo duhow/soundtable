@@ -393,59 +393,29 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const bool isOn = lvl > 1.0e-4;
 
                     // Consume any explicit retrigger request coming
-                    // from the UI thread (e.g. Sequencer-driven
-                    // note events for Oscillator modules). When a
+                    // from the UI thread (e.g. Sequencer-driven note
+                    // events for Oscillator modules). When a
                     // retrigger is pending we unconditionally start a
-                    // new attack phase regardless of level
-                    // transitions so that each sequencer step can
-                    // generate a fresh envelope pulse even when the
-                    // voice level stays > 0.
+                    // new envelope cycle regardless of level
+                    // transitions so que cada step pueda generar un
+                    // pulso independiente.
                     const bool retrigger =
                         voiceEnvRetrigger_[v].exchange(
                             false, std::memory_order_acq_rel);
 
-                    const bool noteOn =
-                        retrigger || (!wasOn && isOn);
-                    const bool noteOff =
-                        !retrigger && wasOn && !isOn;
-
-                    if (noteOn) {
-                        // Note-on: restart envelope at attack.
-                        voiceEnvPhase_[v] = EnvelopePhase::kAttack;
-                        voiceEnvTimeInPhase_[v] = 0.0;
-                        voiceEnvValue_[v] = 0.0;
-                        // Capture the current target level as the
-                        // base amplitude for this envelope cycle so
-                        // that the release/decay tail can fade out
-                        // smoothly even if the target level later
-                        // drops to zero (e.g. when a Sequencer step
-                        // disables the oscillator).
-                        voiceEnvBaseLevel_[v] = lvl;
-                    } else if (noteOff) {
-                        // Note-off: enter release from current
-                        // envelope level.
-                        voiceEnvPhase_[v] = EnvelopePhase::kRelease;
-                        voiceEnvTimeInPhase_[v] = 0.0;
-                    }
+                    const bool noteOn = retrigger || (!wasOn && isOn);
+                    // Note-off basado en nivel solo se usa en el modo
+                    // AR clásico (sin `duration`). Para envelopes con
+                    // `duration > 0` el final de la nota está
+                    // gobernado únicamente por el tiempo.
 
                     voicePrevTargetLevel_[v] = lvl;
-
-                    // Advance envelope one sample based on the
-                    // configured attack/release times. For now we
-                    // treat decay/duration as future extensions and
-                    // implement a simple AR envelope that ramps up
-                    // on note-on and ramps down on note-off.
-                    const double sr = sampleRate_ > 0.0 ? sampleRate_
-                                                         : 44100.0;
-                    const double dt = (sr > 0.0) ? (1.0 / sr) : 0.0;
-
-                    auto phase = voiceEnvPhase_[v];
-                    double value = voiceEnvValue_[v];
-                    double tInPhase = voiceEnvTimeInPhase_[v];
 
                     const float attackMs = voices_[v].attackMs.load(
                         std::memory_order_relaxed);
                     const float releaseMs = voices_[v].releaseMs.load(
+                        std::memory_order_relaxed);
+                    const float durationMs = voices_[v].durationMs.load(
                         std::memory_order_relaxed);
 
                     const double attackSeconds =
@@ -454,62 +424,153 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const double releaseSeconds =
                         std::max(0.0, static_cast<double>(releaseMs) /
                                             1000.0);
+                    const double durationSeconds =
+                        std::max(0.0,
+                                 static_cast<double>(durationMs) /
+                                     1000.0);
 
-                    switch (phase) {
-                        case EnvelopePhase::kIdle:
-                            value = 0.0;
-                            break;
-                        case EnvelopePhase::kAttack: {
-                            if (attackSeconds <= 0.0) {
-                                value = 1.0;
-                                phase = EnvelopePhase::kSustain;
-                                tInPhase = 0.0;
-                            } else {
-                                tInPhase += dt;
-                                const double norm =
-                                    std::min(1.0, tInPhase /
-                                                        attackSeconds);
-                                value = norm;
-                                if (norm >= 1.0) {
-                                    phase = EnvelopePhase::kSustain;
-                                    tInPhase = 0.0;
-                                }
-                            }
-                            break;
-                        }
-                        case EnvelopePhase::kDecay:
-                            // Not used yet; kept for future
-                            // refinement when mapping full ADSR.
-                            phase = EnvelopePhase::kSustain;
-                            value = 1.0;
-                            tInPhase = 0.0;
-                            break;
-                        case EnvelopePhase::kSustain:
-                            value = 1.0;
-                            break;
-                        case EnvelopePhase::kRelease: {
-                            if (releaseSeconds <= 0.0) {
+                    const bool hasOneShot = durationSeconds > 0.0;
+
+                    if (noteOn) {
+                        // Note-on: restart envelope en el inicio del
+                        // ciclo y captura el nivel base para este
+                        // trigger.
+                        voiceEnvPhase_[v] = EnvelopePhase::kAttack;
+                        voiceEnvTimeInPhase_[v] = 0.0;
+                        voiceEnvValue_[v] = 0.0;
+                        voiceEnvBaseLevel_[v] = lvl;
+                    }
+
+                    const double sr = sampleRate_ > 0.0 ? sampleRate_
+                                                         : 44100.0;
+                    const double dt = (sr > 0.0) ? (1.0 / sr) : 0.0;
+
+                    auto phase = voiceEnvPhase_[v];
+                    double value = voiceEnvValue_[v];
+                    double tInPhase = voiceEnvTimeInPhase_[v];
+
+                    if (hasOneShot) {
+                        // Modo one-shot gobernado por `duration`: la
+                        // envolvente recorre Attack→Decay hasta llegar
+                        // a cero en `durationMs`, sin depender de un
+                        // note-off explícito ni del valor actual de
+                        // `level`.
+                        const double totalSeconds = durationSeconds;
+                        const double decaySeconds =
+                            std::max(0.0, totalSeconds - attackSeconds);
+
+                        switch (phase) {
+                            case EnvelopePhase::kIdle:
                                 value = 0.0;
-                                phase = EnvelopePhase::kIdle;
-                                tInPhase = 0.0;
-                            } else {
-                                tInPhase += dt;
-                                const double norm =
-                                    std::min(1.0, tInPhase /
-                                                        releaseSeconds);
-                                value = std::max(0.0, 1.0 - norm);
-                                if (norm >= 1.0) {
+                                break;
+                            case EnvelopePhase::kAttack: {
+                                if (attackSeconds <= 0.0) {
+                                    value = 1.0;
+                                    phase = EnvelopePhase::kDecay;
+                                    tInPhase = 0.0;
+                                } else {
+                                    tInPhase += dt;
+                                    const double norm = std::min(
+                                        1.0, tInPhase / attackSeconds);
+                                    value = norm;
+                                    if (norm >= 1.0) {
+                                        phase = EnvelopePhase::kDecay;
+                                        tInPhase = 0.0;
+                                    }
+                                }
+                                break;
+                            }
+                            case EnvelopePhase::kDecay:
+                            case EnvelopePhase::kSustain:
+                            case EnvelopePhase::kRelease: {
+                                if (decaySeconds <= 0.0) {
+                                    value = 0.0;
                                     phase = EnvelopePhase::kIdle;
                                     tInPhase = 0.0;
-                                    // When the envelope reaches the
-                                    // idle state, clear the base
-                                    // level so that subsequent output
-                                    // is fully silent until the next
-                                    // note-on.
-                                    voiceEnvBaseLevel_[v] = 0.0;
+                                } else {
+                                    tInPhase += dt;
+                                    const double norm = std::min(
+                                        1.0, tInPhase / decaySeconds);
+                                    value = std::max(0.0, 1.0 - norm);
+                                    if (norm >= 1.0) {
+                                        value = 0.0;
+                                        phase = EnvelopePhase::kIdle;
+                                        tInPhase = 0.0;
+                                        voiceEnvBaseLevel_[v] = 0.0;
+                                    }
                                 }
+                                break;
                             }
-                            break;
+                        }
+                    } else {
+                        // Modo AR clásico: attack/release gobernados
+                        // por transiciones del nivel objetivo.
+                        const bool noteOff = wasOn && !isOn && !retrigger;
+
+                        if (noteOn) {
+                            voiceEnvPhase_[v] = EnvelopePhase::kAttack;
+                            voiceEnvTimeInPhase_[v] = 0.0;
+                            voiceEnvValue_[v] = 0.0;
+                            voiceEnvBaseLevel_[v] = lvl;
+                            phase = EnvelopePhase::kAttack;
+                            tInPhase = 0.0;
+                            value = 0.0;
+                        } else if (noteOff) {
+                            voiceEnvPhase_[v] = EnvelopePhase::kRelease;
+                            voiceEnvTimeInPhase_[v] = 0.0;
+                            phase = EnvelopePhase::kRelease;
+                            tInPhase = 0.0;
+                        }
+
+                        switch (phase) {
+                            case EnvelopePhase::kIdle:
+                                value = 0.0;
+                                break;
+                            case EnvelopePhase::kAttack: {
+                                if (attackSeconds <= 0.0) {
+                                    value = 1.0;
+                                    phase = EnvelopePhase::kSustain;
+                                    tInPhase = 0.0;
+                                } else {
+                                    tInPhase += dt;
+                                    const double norm = std::min(
+                                        1.0, tInPhase / attackSeconds);
+                                    value = norm;
+                                    if (norm >= 1.0) {
+                                        phase = EnvelopePhase::kSustain;
+                                        tInPhase = 0.0;
+                                    }
+                                }
+                                break;
+                            }
+                            case EnvelopePhase::kDecay:
+                                // Reservado para ADSR completo.
+                                phase = EnvelopePhase::kSustain;
+                                value = 1.0;
+                                tInPhase = 0.0;
+                                break;
+                            case EnvelopePhase::kSustain:
+                                value = 1.0;
+                                break;
+                            case EnvelopePhase::kRelease: {
+                                if (releaseSeconds <= 0.0) {
+                                    value = 0.0;
+                                    phase = EnvelopePhase::kIdle;
+                                    tInPhase = 0.0;
+                                } else {
+                                    tInPhase += dt;
+                                    const double norm = std::min(
+                                        1.0, tInPhase / releaseSeconds);
+                                    value = std::max(0.0, 1.0 - norm);
+                                    if (norm >= 1.0) {
+                                        value = 0.0;
+                                        phase = EnvelopePhase::kIdle;
+                                        tInPhase = 0.0;
+                                        voiceEnvBaseLevel_[v] = 0.0;
+                                    }
+                                }
+                                break;
+                            }
                         }
                     }
 
