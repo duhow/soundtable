@@ -157,15 +157,24 @@ private:
 
     // When true, Sequencer steps modulate the volume (velocity) of
     // destination modules: note velocity in Sampleplay and the
-    // "gain" parameter in Oscillator. When false (default), the
-    // Sequencer only controls pitch/trigger and volume is assumed
-    // to be controlled by other MIDI sources.
-    bool sequencerControlsVolume_{false};
+    // "gain" parameter in Oscillator. When false, the Sequencer only
+    // controls pitch/trigger and volume is assumed to be controlled
+    // by other MIDI sources.
+    bool sequencerControlsVolume_{true};
 
     // Set of module ids that are currently contributing audible audio
     // to the master bus. Used by the visual layer to decide which
     // lines should display a waveform instead of a plain line.
     std::unordered_set<std::string> modulesWithActiveAudio_;
+
+    // Optional note-off time in beats for modules whose gain is being
+    // gated directly by the Sequencer (for now, Oscillator modules
+    // connected to a Sequencer). When the global transport position
+    // reaches or exceeds this beat, the corresponding module's gain
+    // is forced to zero so that the audible note length matches the
+    // musical figure encoded in the Sequencer track `speed` when
+    // `speed_type="binary"`.
+    std::unordered_map<std::string, double> moduleNoteOffBeats_;
 
     // Mapping from module id to the AudioEngine voice index currently
     // representing its audio chain (generator and optional downstream

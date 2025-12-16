@@ -375,12 +375,29 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const bool wasOn = lastTarget > 1.0e-4;
                     const bool isOn = lvl > 1.0e-4;
 
-                    if (!wasOn && isOn) {
+                    // Consume any explicit retrigger request coming
+                    // from the UI thread (e.g. Sequencer-driven
+                    // note events for Oscillator modules). When a
+                    // retrigger is pending we unconditionally start a
+                    // new attack phase regardless of level
+                    // transitions so that each sequencer step can
+                    // generate a fresh envelope pulse even when the
+                    // voice level stays > 0.
+                    const bool retrigger =
+                        voiceEnvRetrigger_[v].exchange(
+                            false, std::memory_order_acq_rel);
+
+                    const bool noteOn =
+                        retrigger || (!wasOn && isOn);
+                    const bool noteOff =
+                        !retrigger && wasOn && !isOn;
+
+                    if (noteOn) {
                         // Note-on: restart envelope at attack.
                         voiceEnvPhase_[v] = EnvelopePhase::kAttack;
                         voiceEnvTimeInPhase_[v] = 0.0;
                         voiceEnvValue_[v] = 0.0;
-                    } else if (wasOn && !isOn) {
+                    } else if (noteOff) {
                         // Note-off: enter release from current
                         // envelope level.
                         voiceEnvPhase_[v] = EnvelopePhase::kRelease;
@@ -1132,6 +1149,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             }
         }
     }
+}
+
+void AudioEngine::triggerVoiceEnvelope(const int index)
+{
+    if (index < 0 || index >= kMaxVoices) {
+        return;
+    }
+
+    voiceEnvRetrigger_[index].store(true, std::memory_order_release);
 }
 
 bool AudioEngine::loadLoopSampleFromFile(const std::string& moduleId,

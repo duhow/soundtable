@@ -2,6 +2,17 @@
 
 ## 2025-12-16
 
+### Sincronía del Sequencer con el transporte global (beats, Loops y pulsos)
+- La lógica de avance del `Sequencer` en `MainComponent_Audio::timerCallback` se ha ajustado para que el índice de step de audio ya no dependa de un acumulador interno específico (`sequencerAudioPhase_`), sino de la **misma posición global en beats** que utilizan el motor de Loops y los pulsos visuales centrales.
+- En lugar de incrementar una fase propia por frame (`sequencerAudioPhase_ += beatsThisFrame`) y derivar de ella el índice de step, ahora se calcula explícitamente la posición de transporte continua en beats como `transportPositionBeats = transportBeats_ + beatPhase_` y, a partir de ahí, se obtiene el step activo con:
+  - `beatsPerStep = 1.0 / 4.0` (16 steps por compás de 4/4, semicorcheas),
+  - `stepPhase = transportPositionBeats / beatsPerStep`,
+  - `newAudioStep = floor(stepPhase) % SequencerPreset::kNumSteps`.
+- Esto garantiza que:
+  - El `Sequencer` recorre **exactamente 16 steps en 4 beats** para el caso típico `speed=1` (semicorchea) documentado en `research/sequencer.md`,
+  - Los pasos del `Sequencer` quedan **fase-bloqueados** con los Loops (que ya usan `loopGlobalBeatCounter_` + `loopBeatPhase_`) y con los pulsos visuales de BPM, evitando pequeños desfases acumulados entre relojes independientes.
+- La firma externa del runtime no cambia (se mantiene un `runSequencerStep(stepIndex)` que se ejecuta únicamente cuando el índice de step cambia), pero internamente el cálculo de `newAudioStep` pasa a compartir la misma noción de “beat” que el resto de la sesión, reforzando la coherencia entre Loops de audio, notas de `Oscillator` disparadas por `Sequencer` y el beat central que se dibuja en la UI.
+
 ### Sequencer v1 basado en pulsos (steps/volumes) y versionado
 - Se ha introducido un campo de versión en `rectai::SequencerModule` (`core/src/core/AudioModules.h`), expuesto mediante `version()` y `set_version(int)`. El valor se interpreta como la versión del tangible Sequencer en el `.rtp`; cuando el atributo `version` no está presente en la etiqueta `<tangible type="Sequencer" ...>`, el módulo se inicializa por defecto con versión 1 (modo legado de pulsos), reservando versiones ≥2 para futuros modos melódicos/avanzados.
 - En el loader de sesiones Reactable (`core/src/core/ReactableRtpLoader.cpp`), el bloque que trata `type == "Sequencer"` ahora lee el atributo opcional `version` usando `ParseInt(attrs, "version", 1)` y lo pasa al módulo mediante `seq->set_version(sequencer_version)`. El atributo `version` ya no se vuelca como parámetro numérico genérico del módulo. El resto de atributos numéricos del tangible (`current_track`, `autoseq_on`, `noteedit_on`, `duration`, `num_tracks`, `offset`, etc.) siguen copiándose en parámetros internos del `SequencerModule` como antes.
@@ -67,6 +78,36 @@
   en `.rtp` tienen un efecto audible: los osciladores y loops ya no
   reaccionan con saltos bruscos de nivel, sino que respetan rampas de
   entrada/salida según los tiempos de ataque y release de la sesión.
+
+#### Extensión: retrigger de envelope por paso de Sequencer
+- Se ha ampliado la lógica de envolvente por voz en `AudioEngine` para
+  que, además de las transiciones de nivel 0↔>0, pueda reaccionar a
+  **disparos explícitos** procedentes del runtime del `Sequencer`.
+  Cada voz mantiene ahora un flag atómico `voiceEnvRetrigger_[v]` que
+  se marca desde el hilo de UI y se consume en el callback de audio;
+  cuando está activo, la envolvente de esa voz reinicia la fase de
+  `attack` independientemente de si el nivel actual era ya > 0.
+- Se ha añadido el método público `AudioEngine::triggerVoiceEnvelope(int)
+ `, que marca el flag de retrigger para una voz concreta. Este método
+  se utiliza desde `MainComponent_Audio` cuando un módulo
+  `SequencerModule` avanza un paso activo hacia un `OscillatorModule`
+  conectado.
+- En `MainComponent_Audio::timerCallback`, dentro del lambda
+  `runSequencerStep`, la rama que trata destinos `OscillatorModule`
+  mantiene el comportamiento previo (v2: puede sobreescribir `freq`
+  a partir de `step.pitch`; cuando `sequencerControlsVolume_` está
+  activo, mapea `velocity01` a `gain`), pero ahora además localiza el
+  índice de voz asignado al oscilador en `moduleVoiceIndex_` y llama a
+  `audioEngine_.triggerVoiceEnvelope(voiceIndex)` para cada paso
+  habilitado.
+- Con este cambio, incluso cuando una secuencia mantiene varios pasos
+  consecutivos con `velocity01 > 0` (es decir, el nivel del oscilador
+  no llega a caer a cero entre beats), cada beat activo del Sequencer
+  **reinicia la envolvente** del Oscillator. En la práctica, los
+  módulos de tipo Oscillator conectados a un Sequencer pasan a seguir
+  las notas del secuenciador mediante pulsos de envolvente por paso,
+  respetando los tiempos de ataque/release definidos en el `<envelope>`
+  del módulo, en lugar de mantener una envolvente en sustain continuo.
 
 ### Normalización y límites para ADSR y `midifreq`
 - El parser de `<envelope>` en `ReactableRtpLoader.cpp` ahora aplica
@@ -416,7 +457,13 @@
 - El título del instrumento activo de los módulos `Sampleplay` (texto que se pinta a la derecha del nodo) ahora se muestra de forma destacada solo durante unos segundos tras una interacción relevante y luego se desvanece progresivamente. `MainComponent` mantiene un mapa `sampleplayLabelLastChangeSeconds_` que asocia el id de módulo con un timestamp en segundos; este valor se actualiza tanto cuando un `SampleplayModule` entra en el área musical (al arrastrar el tangible desde el dock o desde fuera del círculo) como cuando se cambia de instrumento o banco con click derecho (`CycleInstrument` / `CycleBank`). En `MainComponent_Paint.cpp`, la sección de render del título de Sampleplay consulta dicho timestamp y calcula una alpha: el texto permanece al 100% hasta 3 segundos después del último cambio y, entre los 3 y 3.5 segundos, hace un fade lineal hasta desaparecer; si no existe aún entrada en el mapa (escenas cargadas al inicio), la primera vez que se pinta se inicializa el temporizador para garantizar un comportamiento consistente. De esta forma, el nombre del instrumento es claramente visible justo después de colocar o reconfigurar un Sampleplay, pero la UI se limpia automáticamente tras un breve periodo de inactividad.
 
 ### Control opcional de volumen desde el Sequencer
-- En `MainComponent` se ha añadido el flag `sequencerControlsVolume_` (por defecto `true`) que gobierna si el runtime del `SequencerModule` está autorizado a modificar el volumen de los módulos destino. Cuando está activado, los pasos del secuenciador siguen modulando la velocidad de las notas disparadas en `Sampleplay` (multiplicando `velocity01` de cada step en `runSequencerStep`) y escribiendo el parámetro `gain` de los `OscillatorModule` conectados, forzando además `gain = 0.0` en los pasos desactivados para garantizar silencios claros. Cuando se desactiva este flag, el Sequencer sigue controlando pitch/trigger (frecuencia destino y disparo de notas) pero deja de escalar la velocidad de las notas y no toca el parámetro `gain` en osciladores ni fuerza silencio en pasos vacíos, permitiendo que el volumen llegue desde otras fuentes MIDI o controladores globales sin ser sobreescrito por el patrón del secuenciador.
+- En `MainComponent` se ha añadido el flag `sequencerControlsVolume_` (por defecto `true`) que gobierna si el runtime del `SequencerModule` está autorizado a modificar el volumen de los módulos destino. Cuando está activado (valor por defecto actual), los pasos del secuenciador siguen modulando la velocidad de las notas disparadas en `Sampleplay` (multiplicando `velocity01` de cada step en `runSequencerStep`) y escribiendo el parámetro `gain` de los `OscillatorModule` conectados, forzando además `gain = 0.0` en los pasos desactivados para garantizar silencios claros: si un Oscillator está conectado a un Sequencer y el paso correspondiente tiene `enabled = 0`, el oscilador no suena en ese beat. Cuando se desactiva este flag, el Sequencer sigue controlando pitch/trigger (frecuencia destino y disparo de notas) pero deja de escalar la velocidad de las notas y no toca el parámetro `gain` en osciladores ni fuerza silencio en pasos vacíos, permitiendo que el volumen llegue desde otras fuentes MIDI o controladores globales sin ser sobreescrito por el patrón del secuenciador.
+
+### Duración de nota derivada de `speed` (figura binaria)
+- Aunque `SequenceTrack` ya almacenaba los campos `speed` y `speed_type` de cada `<sequence>` del `.rtp`, hasta ahora el runtime del Sequencer no los utilizaba y todas las notas tenían una duración efectiva ligada al envelope del destino o a cambios manuales de `gain`. Se ha dado el primer paso para respetar la semántica original de Reactable donde, con `speed_type="binary"`, el entero `speed` codifica la **figura musical** de la nota: `0=fusa (1/32)`, `1=semicorchea (1/16)`, `2=corchea (1/8)`, `3=negra (1/4)`, `4=blanca (2/4)`, `5=redonda (4/4)`.
+- En `MainComponent_Audio.cpp` se ha introducido el helper `binarySpeedToBeats(int)` (en un namespace anónimo) que mapea estos valores a longitudes en beats asumiendo compás 4/4 y negra=1 beat: `0→1/8` (0.125 beats), `1→1/4`, `2→1/2`, `3→1`, `4→2`, `5→4`. Este helper sólo se aplica cuando el `SequenceTrack.speed_type` es exactamente `"binary"`; para otros tipos el runtime mantiene, por ahora, una duración por defecto de negra (1 beat).
+- El runtime del Sequencer en `runSequencerStep` consulta ahora, para cada `SequencerModule`, el `SequenceTrack` asociado al preset activo (`tracks()[current_preset]`) y, cuando `sequencerControlsVolume_` es verdadero y el destino es un `OscillatorModule`, calcula una `noteLengthBeats` llamando a `binarySpeedToBeats(track.speed)`. Con esa longitud programa un **note-off en beats** para el módulo destino almacenándolo en `moduleNoteOffBeats_[oscModule->id()] = transportBeats_ + noteLengthBeats`.
+- `MainComponent` mantiene el mapa `moduleNoteOffBeats_` y, en cada `timerCallback`, calcula la posición global de transporte como `transportBeats_ + beatPhase_`. Para cada entrada cuya hora de corte se haya alcanzado o superado, fuerza `Scene::SetModuleParameter(moduleId, "gain", 0.0F)` (sólo si el módulo sigue siendo un `OscillatorModule`) y elimina la entrada del mapa. De esta forma, mientras un Oscillator esté conectado a un Sequencer y `sequencerControlsVolume_` sea `true`, el valor `speed` de su `SequenceTrack` determina cuánto tiempo permanece el `gain` distinto de cero tras cada disparo de paso, aproximando la duración audible de la nota a la figura binaria especificada en el patch.
 
 ### Scroll con rueda en el dock de módulos
 - `MainComponent` implementa ahora `mouseWheelMove` para permitir hacer scroll vertical en el dock derecho usando la rueda del ratón siempre que el cursor esté dentro del área del dock. El manejo de la rueda reutiliza el mismo cálculo de límites que el drag vertical del dock (`minOffset` basado en `contentHeight` y `availableHeight`), actualizando `dockScrollOffset_` mediante un pequeño desplazamiento en píxeles proporcional a `wheel.deltaY` y forzando un `repaint()`. De este modo, cuando hay más módulos dockeados de los que caben en pantalla, el usuario puede navegar por la lista tanto arrastrando con el ratón como empleando la rueda, sin afectar al resto de la superficie musical.

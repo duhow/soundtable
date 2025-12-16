@@ -17,6 +17,35 @@ using rectai::ui::generateConnectionFromModules;
 
 #include <optional>
 
+namespace {
+
+// Map Reactable Sequencer `speed` values (with `speed_type="binary"`)
+// to note lengths expressed in beats, assuming a 4/4 meter where a
+// quarter note is one beat. This matches the original table:
+//   0 = 1/32, 1 = 1/16, 2 = 1/8, 3 = 1/4, 4 = 2/4, 5 = 4/4.
+[[nodiscard]] double binarySpeedToBeats(const int speed)
+{
+    // Clamp speed to the supported range [0,5].
+    const int clamped = std::clamp(speed, 0, 5);
+    switch (clamped) {
+    case 0:
+        return 1.0 / 8.0;   // 1/32 note = 0.125 beats.
+    case 1:
+        return 1.0 / 4.0;   // 1/16 note = 0.25 beats.
+    case 2:
+        return 1.0 / 2.0;   // 1/8 note = 0.5 beats.
+    case 3:
+        return 1.0;         // 1/4 note = 1 beat.
+    case 4:
+        return 2.0;         // 2/4 note = 2 beats.
+    case 5:
+    default:
+        return 4.0;         // 4/4 note = 4 beats.
+    }
+}
+
+}  // namespace
+
 void MainComponent::refreshInsideMusicAreaFlags()
 {
     // Take a snapshot so we can upsert safely while iterating.
@@ -2183,9 +2212,14 @@ void MainComponent::timerCallback()
                     continue;
                 }
 
-                // 2) Oscillator: actualiza freq/gain a partir del
-                // MidiNoteEvent; el motor de audio recogerá los
-                // cambios en el siguiente tick.
+                // 2) Oscillator: update freq/gain based on the
+                // MidiNoteEvent; the audio engine will pick up these
+                // changes on the next tick. Additionally, when the
+                // Sequencer is allowed to control volume, we derive a
+                // note length in beats from the SequenceTrack
+                // `speed` (for `speed_type="binary"`) and schedule a
+                // gain gate so that the audible note duration matches
+                // the musical figure.
                 if (auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
                         dstModule)) {
                     // In Sequencer v1 (pulse mode) we keep the
@@ -2223,6 +2257,49 @@ void MainComponent::timerCallback()
                         scene_.SetModuleParameter(oscModule->id(), "gain",
                                                   gainParam);
                     }
+
+                    // If the Sequencer is driving volume, schedule a
+                    // note-off time for this Oscillator so that its
+                    // gain is forced to zero after the figure length
+                    // specified by the SequenceTrack `speed` when
+                    // `speed_type` is "binary". This approximates the
+                    // original Reactable behavior where the speed of a
+                    // sequence encodes the rhythmic value of its
+                    // notes.
+                    if (sequencerControlsVolume_) {
+                        double noteLengthBeats = 1.0;  // default: quarter.
+
+                        const auto& tracks = seqModule->tracks();
+                        if (presetIndex >= 0 &&
+                            presetIndex < static_cast<int>(tracks.size())) {
+                            const rectai::SequenceTrack& track =
+                                tracks[static_cast<std::size_t>(presetIndex)];
+                            if (track.speed_type == "binary") {
+                                noteLengthBeats =
+                                    binarySpeedToBeats(track.speed);
+                            }
+                        }
+
+                        const double noteOffBeat =
+                            transportBeats_ + noteLengthBeats;
+                        moduleNoteOffBeats_[oscModule->id()] = noteOffBeat;
+                    }
+
+                    // Retrigger the per-voice amplitude envelope for
+                    // the Oscillator mapped to this module so that
+                    // each active Sequencer step produces a fresh
+                    // ADSR-style pulse, even when the underlying
+                    // voice level does not toggle between 0 y >0.
+                    const auto voiceIt =
+                        moduleVoiceIndex_.find(oscModule->id());
+                    if (voiceIt != moduleVoiceIndex_.end()) {
+                        const int voiceIndex = voiceIt->second;
+                        if (voiceIndex >= 0 &&
+                            voiceIndex < AudioEngine::kMaxVoices) {
+                            audioEngine_.triggerVoiceEnvelope(
+                                voiceIndex);
+                        }
+                    }
                 }
             }
         }
@@ -2230,7 +2307,8 @@ void MainComponent::timerCallback()
 
     // Spawn a new pulse on every beat; every 4th beat is stronger.
     const double bps = bpm_ / 60.0;  // beats per second
-    beatPhase_ += bps * dt;
+    const double beatsThisFrame = bps * dt;
+    beatPhase_ += beatsThisFrame;
     if (beatPhase_ >= 1.0) {
         beatPhase_ -= 1.0;
 
@@ -2252,19 +2330,37 @@ void MainComponent::timerCallback()
         // transport using FluidSynth.
         triggerSampleplayNotesOnBeat(strong);
 
-        // Advance Sequencer audio step: one step per beat so that
-        // presets like the demo C-major scale follow the tempo
-        // claramente (una nota por beat).
-        const int audioStepsPerBar = rectai::SequencerPreset::kNumSteps;
-        if (audioStepsPerBar > 0) {
-            sequencerAudioStep_ =
-                (sequencerAudioStep_ + 1) % audioStepsPerBar;
-            runSequencerStep(sequencerAudioStep_);
-        }
-
         ++beatIndex_;
         if (beatIndex_ >= 4) {
             beatIndex_ = 0;
+        }
+    }
+
+    // Advance Sequencer audio step at 16 steps per bar (sixteenth
+    // notes) so that, for a 4/4 meter, a full 16-step pattern is
+    // traversed over 4 beats. The step index is now derived from the
+    // same global transport position in beats (integer beats
+    // `transportBeats_` + fractional `beatPhase_`) that drives Loop
+    // playback and the central BPM pulses, ensuring all components
+    // stay phase-locked.
+    const int audioStepsPerBar = rectai::SequencerPreset::kNumSteps;
+    if (audioStepsPerBar > 0) {
+        // Derive the current step index from the global transport
+        // position (integer beats + fractional phase) using a fixed
+        // beats-per-step. This keeps the Sequencer grid exactly in
+        // sync with Loops and the visual beat pulses.
+        const double transportPositionBeats = transportBeats_ + beatPhase_;
+        const double beatsPerStep = 1.0 / 4.0;  // 16 steps over 4 beats.
+        const double stepPhase =
+            (beatsPerStep > 0.0)
+                ? (transportPositionBeats / beatsPerStep)
+                : 0.0;
+        const int newAudioStep = static_cast<int>(std::floor(stepPhase)) %
+                                 audioStepsPerBar;
+
+        if (newAudioStep != sequencerAudioStep_) {
+            sequencerAudioStep_ = newAudioStep;
+            runSequencerStep(sequencerAudioStep_);
         }
     }
 
@@ -2272,6 +2368,45 @@ void MainComponent::timerCallback()
     // that Loop modules can use a continuous beat position (integer
     // beats + phase) when aligning playback across samples.
     audioEngine_.setLoopBeatPhase(beatPhase_);
+
+    // Apply pending note-off gates for modules whose gain is being
+    // controlled directly from the Sequencer (currently Oscillator
+    // modules). We compare the global transport position in beats
+    // against the scheduled note-off time and, once reached, force
+    // their gain to zero so that the audible note duration matches
+    // the figure derived from the Sequencer track speed.
+    if (!moduleNoteOffBeats_.empty()) {
+        const double transportPosition = transportBeats_ + beatPhase_;
+
+        std::vector<std::string> toErase;
+        toErase.reserve(moduleNoteOffBeats_.size());
+
+        const auto& modulesLocal = scene_.modules();
+
+        for (const auto& [moduleId, noteOffBeat] : moduleNoteOffBeats_) {
+            if (transportPosition < noteOffBeat) {
+                continue;
+            }
+
+            const auto modIt = modulesLocal.find(moduleId);
+            if (modIt == modulesLocal.end() || modIt->second == nullptr) {
+                toErase.push_back(moduleId);
+                continue;
+            }
+
+            if (auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
+                    modIt->second.get())) {
+                juce::ignoreUnused(oscModule);
+                scene_.SetModuleParameter(moduleId, "gain", 0.0F);
+            }
+
+            toErase.push_back(moduleId);
+        }
+
+        for (const auto& id : toErase) {
+            moduleNoteOffBeats_.erase(id);
+        }
+    }
 
     // Advance connection flow phase (used for pulses along edges).
     connectionFlowPhase_ += dt;

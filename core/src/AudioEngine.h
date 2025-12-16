@@ -117,6 +117,13 @@ public:
     // updated coefficients on the next callback.
     void setVoiceFilter(int index, int mode, double cutoffHz, float q);
 
+    // Explicitly retriggers the amplitude envelope for a given
+    // voice. This is used by Sequencer-driven Oscillator chains so
+    // that each active step can start a fresh envelope cycle even
+    // when the underlying voice level does not toggle between 0 and
+    // a non-zero value.
+    void triggerVoiceEnvelope(int index);
+
     // SoundFont / Sampleplay integration ---------------------------------
 
     // Associates a SoundFont2 file path with the internal
@@ -304,6 +311,11 @@ private:
     double voiceEnvValue_[kMaxVoices]{};        // [0,1] envelope amplitude
     double voiceEnvTimeInPhase_[kMaxVoices]{};  // seconds elapsed in phase
     double voicePrevTargetLevel_[kMaxVoices]{}; // last seen target level
+    // Pending envelope retrigger flags per voice, set from the UI
+    // thread and consumed on the audio thread. When true, the next
+    // audio callback iteration will restart the envelope in the
+    // attack phase regardless of level transitions.
+    std::atomic<bool> voiceEnvRetrigger_[kMaxVoices]{};
 
     // Per-voice state-variable filters implemented using JUCE's DSP
     // module for improved stability and sound quality.
