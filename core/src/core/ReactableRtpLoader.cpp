@@ -813,6 +813,61 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
     scene.UpsertObject(obj);
   }
 
+  // Normalise ObjectInstance positions when the patch clearly uses the
+  // original Reactable coordinate system (roughly [-1, +3]). For hand-built
+  // Rectai scenes and small tests that already use normalised [0,1] values
+  // we keep coordinates as-is. The heuristic is:
+  //   - Look only at non-docked objects (dock elements live in a separate UI
+  //     area where their x/y are not used directly for layout).
+  //   - If any of those lie outside [0,1] on either axis, treat the patch as
+  //     Reactable-native and map their positions from approximately [-1, 1]
+  //     into [0,1] using a simple affine transform around the table centre.
+  //   - Docked objects and the master Output tangible keep their original
+  //     coordinates.
+  {
+    const auto objectsSnapshot = scene.objects();
+
+    bool hasOutOfRangeUndocked = false;
+    for (const auto& [trackingId, obj] : objectsSnapshot) {
+      (void)trackingId;
+      if (obj.docked()) {
+        continue;
+      }
+
+      const float ox = obj.x();
+      const float oy = obj.y();
+      if (ox < 0.0F || ox > 1.0F || oy < 0.0F || oy > 1.0F) {
+        hasOutOfRangeUndocked = true;
+        break;
+      }
+    }
+
+    if (hasOutOfRangeUndocked) {
+      auto clampToUnitCentered = [](float v) noexcept {
+        const float clamped =
+            std::max(-1.0F, std::min(1.0F, v));
+        return 0.5F + 0.5F * clamped;
+      };
+
+      for (const auto& [trackingId, obj] : objectsSnapshot) {
+        (void)trackingId;
+        if (obj.docked()) {
+          // Docked objects live in the toolbar; their logical x/y
+          // are not used for the musical surface, so keep them as
+          // loaded from the patch.
+          scene.UpsertObject(obj);
+          continue;
+        }
+
+        auto updated = obj;
+        const float nx = clampToUnitCentered(obj.x());
+        const float ny = clampToUnitCentered(obj.y());
+        updated.set_position(nx, ny);
+        scene.UpsertObject(updated);
+      }
+    }
+  }
+
   // Derive rectai::Connection instances from hardlinks stored in DelayModule
   // instances. For each hardlink `to` id, we connect the delay's audio output
   // to the target module's main audio input. These connections are marked as

@@ -355,10 +355,14 @@ private:
     // ------------------------------------------------------------------
     // Loop modules
 
-    struct LoopSample {
+    struct LoopSharedBuffer {
         std::vector<float> interleavedData;  // [L,R,L,R,...]
         int numFrames{0};
         double sourceSampleRate{0.0};
+    };
+
+    struct LoopSample {
+        std::shared_ptr<LoopSharedBuffer> buffer;
         int beats{0};
     };
 
@@ -469,6 +473,13 @@ private:
     // Non-copyable helper to access the AudioFormatManager without
     // reinitialising it on every load.
     juce::AudioFormatManager loopFormatManager_;
+
+    // Cache of decoded loop buffers keyed by absolute path so that
+    // multiple LoopModule instances or slots referencing the same
+    // audio file can share storage instead of re-decoding the file
+    // into separate buffers.
+    std::unordered_map<std::string, std::shared_ptr<LoopSharedBuffer>>
+        loopSampleCache_;
 
     // Set to true when the audio device initialisation succeeded but
     // reported zero output channels (e.g. "no channels"). Used by
