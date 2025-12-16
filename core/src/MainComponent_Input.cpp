@@ -1083,7 +1083,11 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         updated.set_position(normX, normY);
     }
 
-    const bool isNowInsideMusic = isInsideMusicArea(updated);
+    // Recompute and cache the inside-music-area flag for the
+    // updated object at its new position before writing it back
+    // into the Scene.
+    const bool isNowInsideMusic = computeInsideMusicArea(updated);
+    updated.set_inside_music_area(isNowInsideMusic);
     scene_.UpsertObject(updated);
 
     // When a module becomes active on the musical surface (either by

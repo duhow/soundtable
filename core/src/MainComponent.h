@@ -35,6 +35,19 @@ private:
     [[nodiscard]] bool isInsideMusicArea(
         const rectai::ObjectInstance& obj) const;
 
+    // Recompute and cache the inside-music-area flag on all
+    // objects in the Scene so that hot paths (paint, audio) can
+    // query a simple attribute instead of re-evaluating the
+    // geometry every time.
+    void refreshInsideMusicAreaFlags();
+
+    // Compute whether a given object lies inside the current
+    // musical area based on the component bounds. This does not
+    // mutate the Scene; it is used by refreshInsideMusicAreaFlags
+    // and by input handlers when an object is being dragged.
+    [[nodiscard]] bool computeInsideMusicArea(
+        const rectai::ObjectInstance& obj) const;
+
     void applyControlDropMuteIfNeeded(const juce::MouseEvent& event);
 
     bool loadAtlasResources();

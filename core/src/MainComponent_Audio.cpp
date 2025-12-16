@@ -17,6 +17,19 @@ using rectai::ui::generateConnectionFromModules;
 
 #include <optional>
 
+void MainComponent::refreshInsideMusicAreaFlags()
+{
+    // Take a snapshot so we can upsert safely while iterating.
+    const auto objectsSnapshot = scene_.objects();
+    for (const auto& [id, obj] : objectsSnapshot) {
+        juce::ignoreUnused(id);
+        auto updated = obj;
+        const bool inside = computeInsideMusicArea(updated);
+        updated.set_inside_music_area(inside);
+        scene_.UpsertObject(updated);
+    }
+}
+
 void MainComponent::toggleHardlinkBetweenObjects(
     const std::int64_t objectIdA, const std::int64_t objectIdB)
 {
@@ -414,6 +427,11 @@ void MainComponent::rotationTrackingUpdate(std::unordered_map<std::int64_t, floa
 
 void MainComponent::timerCallback()
 {
+    // Keep the per-object inside-music-area flag in sync with the
+    // current component bounds and object positions before running
+    // any audio or visual mapping for this tick.
+    refreshInsideMusicAreaFlags();
+
     // Map scene state to audio parameters using AudioModule metadata.
     // Multiple generator modules can be active at once; we map each
     // active generator to an independent AudioEngine voice so that
@@ -778,6 +796,11 @@ void MainComponent::timerCallback()
                 if (alreadyConnected) {
                     continue;
                 }
+
+                // Keep the per-object inside-music-area flag in sync with the
+                // current component bounds and object positions before running
+                // any audio or visual mapping for this tick.
+                refreshInsideMusicAreaFlags();
 
                 // Score candidate: modules more near to each other get
                 // higher score (distancia menor).

@@ -16,7 +16,8 @@ ObjectInstance::ObjectInstance(const std::int64_t tracking_id,
       x_(x),
       y_(y),
       angle_radians_(angle_radians),
-      docked_(docked) {}
+      docked_(docked),
+      inside_music_area_(false) {}
 
 void ObjectInstance::set_position(const float x, const float y)
 {
@@ -27,6 +28,11 @@ void ObjectInstance::set_position(const float x, const float y)
 void ObjectInstance::set_angle_radians(const float angle_radians)
 {
   angle_radians_ = angle_radians;
+}
+
+void ObjectInstance::set_inside_music_area(const bool inside_music_area)
+{
+  inside_music_area_ = inside_music_area;
 }
 
 AudioModule::AudioModule(std::string id, const ModuleType type,

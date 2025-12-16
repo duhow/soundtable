@@ -661,6 +661,7 @@
 - El loader de patches Reactable (`ReactableRtpLoader.cpp`) ahora lee el atributo `docked` de cada `<tangible>` y lo propaga al construir el `ObjectInstance` correspondiente, manteniendo el resto de la semántica (tracking_id como `id`, posición `x`,`y` y ángulo en radianes).
 - La función `MainComponent::isInsideMusicArea` utiliza ahora este flag: cualquier objeto marcado como `docked` se considera automáticamente fuera del área musical, incluso si sus coordenadas geométricas cayeran dentro del círculo de la mesa.
 - Con este cambio, los tangibles acoplados (`docked=1` en `default.rtp`, como Tonalizer, Volume, Tempo, LFO, Loop, Sampleplay, etc.) se tratan como módulos “apartados” que no participan en las conexiones espaciales ni en las heurísticas del área musical, alineando la semántica con el comportamiento esperado de la Reactable original.
+ - Además, `ObjectInstance` incorpora ahora un flag `inside_music_area` que se recalcula en `MainComponent::refreshInsideMusicAreaFlags` (y al arrastrar objetos desde la UI) para que toda la lógica de audio y pintura consulte un atributo precalculado en lugar de revaluar la geometría de `isInsideMusicArea` en cada llamada.
 
 ### Semántica de `Output` (master) y visualización del nodo central
 - El tangible `type="Output"` del patch Reactable se interpreta ahora explícitamente como el **master** de la escena y ya no se representa como un módulo normal en la mesa (no aparece como nodo ni en la barra de dock).

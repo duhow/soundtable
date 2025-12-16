@@ -19,6 +19,21 @@ bool MainComponent::isInsideMusicArea(
         return false;
     }
 
+    // Hot callers (paint, audio, input) rely on a cached flag in
+    // ObjectInstance so that we do not need to recompute the
+    // geometry for every query. The flag is maintained by
+    // refreshInsideMusicAreaFlags() and by input handlers when an
+    // object is dragged.
+    return obj.inside_music_area();
+}
+
+bool MainComponent::computeInsideMusicArea(
+    const rectai::ObjectInstance& obj) const
+{
+    if (obj.docked()) {
+        return false;
+    }
+
     const auto bounds = getLocalBounds().toFloat();
 
     const float centreX = bounds.getX() + 0.5F * bounds.getWidth();

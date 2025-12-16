@@ -24,8 +24,14 @@ class ObjectInstance {
   [[nodiscard]] float angle_radians() const { return angle_radians_; }
   [[nodiscard]] bool docked() const { return docked_; }
 
+  [[nodiscard]] bool inside_music_area() const
+  {
+    return inside_music_area_;
+  }
+
   void set_position(float x, float y);
   void set_angle_radians(float angle_radians);
+  void set_inside_music_area(bool inside_music_area);
 
  private:
   std::int64_t tracking_id_{0};
@@ -34,6 +40,7 @@ class ObjectInstance {
   float y_{0.0F};
   float angle_radians_{0.0F};
   bool docked_{false};
+  bool inside_music_area_{false};
 };
 
 // High-level category so UI/logic can reason about module families.

@@ -377,11 +377,17 @@ MainComponent::MainComponent(AudioEngine& audioEngine)
             -1, rectai::MASTER_OUTPUT_ID, 0.5F, 0.1F, 0.0F));
     }
 
-    // After the scene has been populated, attempt to resolve and load
-    // SoundFont2 files for any Sampleplay modules present in the
-    // patch. The loader stores the raw filename from the .rtp file;
-    // here we look it up under com.reactable/Soundfonts/ and validate
-    // it via SampleplayModule::LoadSoundfont.
+    // After the scene has been populated, recompute the cached flag
+    // that marks which objects lie inside the musical area so that
+    // early paint/audio passes can rely on this attribute without
+    // recomputing geometry.
+    refreshInsideMusicAreaFlags();
+
+    // Attempt to resolve and load SoundFont2 files for any
+    // Sampleplay modules present in the patch. The loader stores the
+    // raw filename from the .rtp file; here we look it up under
+    // com.reactable/Soundfonts/ and validate it via
+    // SampleplayModule::LoadSoundfont.
     loadSampleplaySoundfonts();
 
     // Load Reactable icon atlas (atlas_2048.png + atlas_2048.xml) so that
