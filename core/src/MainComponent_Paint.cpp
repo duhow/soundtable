@@ -1434,7 +1434,12 @@ void MainComponent::paint(juce::Graphics& g)
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
         gainValue = juce::jlimit(0.0F, 1.0F, gainValue);
 
-        const float sliderMargin = 6.0F;
+        // Vertical span of the side arcs: make them almost
+        // complete semi-circles while leaving a small gap at the
+        // top so the radial audio line (and its waveform) can pass
+        // cleanly between both bars. The same margin is used at the
+        // bottom to keep the overall shape balanced.
+        const float sliderMargin = 3.0F;
         const float sliderTop = cy - ringRadius + sliderMargin;
         const float sliderBottom = cy + ringRadius - sliderMargin;
 

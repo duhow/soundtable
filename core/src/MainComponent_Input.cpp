@@ -257,7 +257,11 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     // and starts a drag gesture from there.
     const float nodeRadius = 26.0F;
     const float ringRadius = nodeRadius + 10.0F;
-    const float sliderMargin = 6.0F;
+    // Match the visual geometry of the side Freq/Gain arcs: they
+    // almost complete a semi-circle around the node, with a small
+    // gap at the top so the radial audio line can pass between
+    // both bars without being occluded.
+    const float sliderMargin = 3.0F;
 
     for (const auto& [id, object] : objects) {
         if (object.logical_id() == rectai::MASTER_OUTPUT_ID) {

@@ -2,6 +2,11 @@
 
 ## 2025-12-16
 
+### Extensión de los arcos laterales Freq/Gain casi hasta el semi-círculo completo
+- Se ha ajustado el recorrido vertical de las barras laterales de frecuencia y volumen en `MainComponent_Paint.cpp` para que los arcos izquierdo (Freq) y derecho (Gain) abracen casi todo el semi-círculo alrededor del nodo, dejando solo un pequeño hueco en la parte superior. Esto se consigue reduciendo el margen vertical `sliderMargin` de `6.0F` a `3.0F`, de modo que las barras comienzan y terminan más cerca de los puntos extremos del círculo sin llegar a cerrarse del todo.
+- El hueco superior está pensado específicamente para que la línea radial de audio (y su waveform animada) pueda atravesar el nodo sin quedar tapada por las barras laterales: el módulo se sigue rotando de forma que su "arriba" local se alinee con la línea al centro, y el pequeño gap en la parte superior del anillo queda exactamente en esa dirección radial.
+- En `MainComponent_Input.cpp` se ha actualizado la geometría de hit-test de los controles laterales (cálculo de `sliderTop`/`sliderBottom` y lambdas `isOnFreqControlBar`/`isOnGainControlBar`) para usar el mismo `sliderMargin = 3.0F`. Con ello, el área clicable de las barras coincide con el nuevo recorrido visual casi completo del semi-círculo, evitando desajustes entre lo que se ve y dónde responde el control al hacer click o arrastrar.
+
 ### Ajuste de grosor en barras laterales de frecuencia y volumen
 - Se ha refinado la representación visual de los controles laterales en los módulos con `uses_frequency_control()` y/o `uses_gain_control()` para que resulten más finos y discretos. En `MainComponent_Paint.cpp` el trazo de la barra de frecuencia (arco izquierdo) pasa de un grosor de `7.0F` a `5.0F` tanto para el fondo atenuado como para la parte rellena que indica el valor actual, haciendo la barra 2 píxeles más delgada sin cambiar su recorrido geométrico.
 - La barra de volumen/ganancia (arco derecho) reduce su grosor de trazo de `2.0F` a `1.0F`, de modo que el control lateral de nivel se percibe menos pesado visualmente y no compite con el cuerpo del módulo ni con la forma de onda que se dibuja sobre las líneas de audio.
