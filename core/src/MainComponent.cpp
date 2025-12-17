@@ -99,6 +99,19 @@ void MainComponent::renderTableBackgroundIfNeeded(
     tableBackgroundDirty_ = false;
 }
 
+void MainComponent::repaintWithRateLimit()
+{
+    const double nowSeconds =
+        juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    constexpr double kMaxRepaintsPerSecond = 60.0;
+    const double minRepaintInterval = 1.0 / kMaxRepaintsPerSecond;
+
+    if (nowSeconds - lastRepaintSeconds_ >= minRepaintInterval) {
+        repaint();
+        lastRepaintSeconds_ = nowSeconds;
+    }
+}
+
 void MainComponent::invalidateDockBackground()
 {
     dockBackgroundDirty_ = true;

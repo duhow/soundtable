@@ -224,7 +224,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         boundsCopy.removeFromRight(dockWidthMain);
     touchStartedInDock_ = dockAreaMain.contains(event.position);
 
-    repaint();
+    repaintWithRateLimit();
 
     draggedObjectId_ = 0;
     sideControlObjectId_ = 0;
@@ -516,7 +516,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 }
             }
 
-            repaint();
+            repaintWithRateLimit();
             return;
         }
 
@@ -559,7 +559,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                                           value);
             }
 
-            repaint();
+            repaintWithRateLimit();
             return;
         }
     }
@@ -799,7 +799,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                     splitPoint,
                     isCurrentlyMuted};
 
-                repaint();
+                repaintWithRateLimit();
                 return;
             }
         }
@@ -901,7 +901,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                     isRadialMuted
                 };
 
-                repaint();
+                repaintWithRateLimit();
                 break;
             }
         }
@@ -1165,7 +1165,10 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         }
     }
 
-    repaint();
+    // NOTE: Used for drag cursor and cut cursor trail (red).
+    // Use the shared repaint rate-limit helper so that input-driven
+    // repaints respect the same 60 fps cap as timer-driven ones.
+    repaintWithRateLimit();
 
     // Dragging the dock scroll area (vertical scroll / pagination).
     if (isDraggingDockScroll_) {

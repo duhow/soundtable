@@ -2604,8 +2604,6 @@ void MainComponent::timerCallback()
     // frequency. This keeps waveform visualisations and widgets
     // smooth while avoiding calling into JUCE's paint pipeline more
     // often than necessary.
-    constexpr double kMaxRepaintsPerSecond = 60.0;
-    const double minRepaintInterval = 1.0 / kMaxRepaintsPerSecond;
 
     // Skip repaints entirely when the scene is visually idle to
     // reduce CPU usage. We only refresh the UI when there is some
@@ -2617,9 +2615,7 @@ void MainComponent::timerCallback()
          nowSeconds - bpmLastChangeSeconds_ <= 6.0) ||
         activeConnectionHold_.has_value();
 
-    if (hasVisualActivity &&
-        nowSeconds - lastRepaintSeconds_ >= minRepaintInterval) {
-        repaint();
-        lastRepaintSeconds_ = nowSeconds;
+    if (hasVisualActivity) {
+        repaintWithRateLimit();
     }
 }

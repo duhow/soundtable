@@ -282,6 +282,11 @@ private:
     void invalidateTableBackground();
     void renderTableBackgroundIfNeeded(const juce::Rectangle<int>& bounds);
 
+    // Request a repaint while enforcing a global rate-limit so
+    // that the UI does not exceed the target frame rate even when
+    // multiple sources (timer, input handlers) trigger repaints.
+    void repaintWithRateLimit();
+
     void invalidateDockBackground();
     void renderDockBackgroundIfNeeded(
         const juce::Rectangle<int>& dockBounds);
