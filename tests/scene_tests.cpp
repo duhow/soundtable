@@ -659,6 +659,63 @@ int main()
         assert(hardlinkCount == 2U);
     }
 
+    // Dynamic connections can be promoted to hardlinks and demoted
+    // back to dynamic connections without violating per-module
+    // routing limits.
+    {
+        Scene s;
+
+        auto osc = std::make_unique<OscillatorModule>("osc1");
+        auto filter = std::make_unique<FilterModule>("filter1");
+
+        assert(s.AddModule(std::move(osc)));
+        assert(s.AddModule(std::move(filter)));
+
+        // Start with a single dynamic connection osc1 -> filter1.
+        Connection dyn{.from_module_id = "osc1",
+                       .from_port_name = "out",
+                       .to_module_id = "filter1",
+                       .to_port_name = "in",
+                       .is_hardlink = false};
+        assert(s.AddConnection(dyn));
+
+        // Promote that connection to a hardlink by removing the
+        // dynamic edge and inserting a new hardlink edge with the
+        // same endpoints. Scene::AddConnection must accept this
+        // because hardlinks are not counted towards the dynamic
+        // per-module limit.
+        assert(s.RemoveConnection(dyn));
+
+        Connection hard{.from_module_id = "osc1",
+                        .from_port_name = "out",
+                        .to_module_id = "filter1",
+                        .to_port_name = "in",
+                        .is_hardlink = true};
+        assert(s.AddConnection(hard));
+
+        assert(s.connections().size() == 1U);
+        const Connection& cHard = s.connections().front();
+        assert(cHard.is_hardlink);
+
+        // Demote back to a dynamic connection by removing the
+        // hardlink and re-inserting a non-hardlink edge. This
+        // mirrors the behaviour used when toggling collisions in
+        // the UI: a promoted hardlink returns to its original
+        // dynamic state.
+        assert(s.RemoveConnection(hard));
+
+        Connection dyn2{.from_module_id = "osc1",
+                        .from_port_name = "out",
+                        .to_module_id = "filter1",
+                        .to_port_name = "in",
+                        .is_hardlink = false};
+        assert(s.AddConnection(dyn2));
+
+        assert(s.connections().size() == 1U);
+        const Connection& cDyn = s.connections().front();
+        assert(!cDyn.is_hardlink);
+    }
+
     // A module can have one dynamic connection to another module and
     // an additional non-hardlink connection to the master Output (-1).
     {

@@ -667,21 +667,23 @@ void MainComponent::timerCallback()
         }
 
         // Detect new collisions between objects (touching circles) and
-        // toggle hardlinks on each new contact event.
+        // toggle hardlinks on each new contact event. Use the same
+        // centre-origin table mapping as the renderer so that the
+        // collision radius matches the visual node circles.
         std::unordered_set<std::string> currentPairs;
         for (std::size_t i = 0; i < inside.size(); ++i) {
             const auto idA = inside[i].first;
             const auto* objA = inside[i].second;
-            const float ax = bounds.getX() + objA->x() * bounds.getWidth();
-            const float ay = bounds.getY() + objA->y() * bounds.getHeight();
+            const auto posA = objectTableToScreen(*objA, bounds);
+            const float ax = posA.x;
+            const float ay = posA.y;
 
             for (std::size_t j = i + 1; j < inside.size(); ++j) {
                 const auto idB = inside[j].first;
                 const auto* objB = inside[j].second;
-                const float bx =
-                    bounds.getX() + objB->x() * bounds.getWidth();
-                const float by =
-                    bounds.getY() + objB->y() * bounds.getHeight();
+                const auto posB = objectTableToScreen(*objB, bounds);
+                const float bx = posB.x;
+                const float by = posB.y;
 
                 const float dx = bx - ax;
                 const float dy = by - ay;
