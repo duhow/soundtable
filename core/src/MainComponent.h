@@ -58,6 +58,7 @@ private:
     void applyControlDropMuteIfNeeded(const juce::MouseEvent& event);
 
     bool loadAtlasResources();
+    bool unloadAtlasResources();
 
     AudioEngine& audioEngine_;
     rectai::Scene scene_;
@@ -230,6 +231,13 @@ private:
     std::unordered_map<std::string, AtlasSprite> atlasSprites_;
     bool atlasLoaded_{false};
 
+    // Cache of pre-scaled atlas icons keyed by sprite id and
+    // destination size. This avoids re-sampling the large atlas
+    // image on every frame when drawing module and dock icons; the
+    // cached images remain in SingleChannel format so they can still
+    // be tinted at paint time via Graphics::setColour.
+    std::unordered_map<std::string, juce::Image> atlasIconCache_;
+
     // Dock (right-hand strip) scroll state.
     float dockScrollOffset_{0.0F};
     bool isDraggingDockScroll_{false};
@@ -245,6 +253,16 @@ private:
 
     void invalidateTableBackground();
     void renderTableBackgroundIfNeeded(const juce::Rectangle<int>& bounds);
+
+    // Retrieve or lazily create a pre-scaled SingleChannel icon
+    // image for the given atlas sprite id and destination size. The
+    // returned image can be drawn with drawImageAt after setting the
+    // desired tint colour on the Graphics context. Returns an
+    // invalid image if the sprite is not found or the atlas is not
+    // loaded.
+    [[nodiscard]] juce::Image getCachedAtlasIcon(const std::string& iconId,
+                                                 int destWidth,
+                                                 int destHeight);
 
     void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
                                       std::int64_t objectIdB);

@@ -1221,9 +1221,9 @@ void MainComponent::paint(juce::Graphics& g)
                 (!involvesSampleplay ? audioConnEndpointsActive
                                      : !explicitlyMuted);
 
-              const float fromLevel = getModuleVisualLevel(fromModulePtr);
-              const float toLevel = getModuleVisualLevel(toModulePtr);
-              const float connectionLevel = juce::jmax(fromLevel, toLevel);
+            const float fromLevel = getModuleVisualLevel(fromModulePtr);
+            const float toLevel = getModuleVisualLevel(toModulePtr);
+            const float connectionLevel = juce::jmax(fromLevel, toLevel);
 
             // Check if this connection is marked for mute toggle.
             const bool isConnectionMarkedForCut =
@@ -2480,8 +2480,6 @@ void MainComponent::paint(juce::Graphics& g)
                     const auto spriteIt = atlasSprites_.find(iconId);
                     if (spriteIt != atlasSprites_.end() &&
                         atlasImage_.isValid()) {
-                        const auto& src = spriteIt->second.bounds;
-
                         // Dynamically tint the icon based on the background
                         // brightness.
                         const float brightness = bodyColour.getBrightness();
@@ -2500,11 +2498,18 @@ void MainComponent::paint(juce::Graphics& g)
                         const int destH =
                             juce::roundToInt(iconBounds.getHeight());
 
-                        // Draw the atlas icon within the computed bounds.
-                        g.drawImage(atlasImage_, destX, destY, destW, destH,
-                                    src.getX(), src.getY(), src.getWidth(),
-                                    src.getHeight());
-                        drewAtlasIcon = true;
+                        auto iconImage =
+                            getCachedAtlasIcon(iconId, destW, destH);
+                        if (iconImage.isValid()) {
+                            g.drawImageAt(iconImage, destX, destY);
+                            drewAtlasIcon = true;
+                        } else {
+                            const auto& src = spriteIt->second.bounds;
+                            g.drawImage(atlasImage_, destX, destY, destW,
+                                        destH, src.getX(), src.getY(),
+                                        src.getWidth(), src.getHeight());
+                            drewAtlasIcon = true;
+                        }
                     }
                 }
 

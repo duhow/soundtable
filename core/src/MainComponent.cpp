@@ -602,6 +602,50 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     startTimerHz(240);
 }
 
+juce::Image MainComponent::getCachedAtlasIcon(const std::string& iconId,
+                                              int destWidth,
+                                              int destHeight)
+{
+    if (!atlasLoaded_ || iconId.empty() || !atlasImage_.isValid() ||
+        destWidth <= 0 || destHeight <= 0) {
+        return {};
+    }
+
+    const auto spriteIt = atlasSprites_.find(iconId);
+    if (spriteIt == atlasSprites_.end()) {
+        return {};
+    }
+
+    const auto key = iconId + "#" + std::to_string(destWidth) + "x" +
+                     std::to_string(destHeight);
+
+    const auto cacheIt = atlasIconCache_.find(key);
+    if (cacheIt != atlasIconCache_.end() && cacheIt->second.isValid() &&
+        cacheIt->second.getWidth() == destWidth &&
+        cacheIt->second.getHeight() == destHeight) {
+        return cacheIt->second;
+    }
+
+    const auto& src = spriteIt->second.bounds;
+    if (src.getWidth() <= 0 || src.getHeight() <= 0) {
+        return {};
+    }
+
+    juce::Image scaled(juce::Image::SingleChannel, destWidth, destHeight,
+                       true);
+    {
+        juce::Graphics g(scaled);
+        // Copy the alpha mask from the atlas into the target image,
+        // resampling to the requested size. The resulting
+        // SingleChannel image can then be tinted at paint time.
+        g.drawImage(atlasImage_, 0, 0, destWidth, destHeight, src.getX(),
+                    src.getY(), src.getWidth(), src.getHeight());
+    }
+
+    atlasIconCache_[key] = scaled;
+    return scaled;
+}
+
 void MainComponent::resized()
 {
     invalidateTableBackground();

@@ -4,30 +4,30 @@
 
 using rectai::ui::colourFromArgb;
 
+// Return false as result of failed loading resources.
+bool MainComponent::unloadAtlasResources() {
+    atlasLoaded_ = false;
+    atlasImage_ = juce::Image();
+    atlasSprites_.clear();
+    atlasIconCache_.clear();
+    return false;
+}
+
 bool MainComponent::loadAtlasResources()
 {
     const juce::File pngFile = rectai::ui::loadFile("Resources/atlas_2048.png");
     if (!pngFile.existsAsFile()) {
-        atlasLoaded_ = false;
-        atlasImage_ = juce::Image();
-        atlasSprites_.clear();
-        return false;
+        return unloadAtlasResources();
     }
 
     const juce::File xmlFile = rectai::ui::loadFile("Resources/atlas_2048.xml");
     if (!xmlFile.existsAsFile()) {
-        atlasLoaded_ = false;
-        atlasImage_ = juce::Image();
-        atlasSprites_.clear();
-        return false;
+        return unloadAtlasResources();
     }
 
     juce::Image image = juce::ImageFileFormat::loadFrom(pngFile);
     if (!image.isValid()) {
-        atlasLoaded_ = false;
-        atlasImage_ = juce::Image();
-        atlasSprites_.clear();
-        return false;
+        return unloadAtlasResources();
     }
 
     // Convert to alpha mask (SingleChannel) so that drawing it uses the
@@ -44,10 +44,7 @@ bool MainComponent::loadAtlasResources()
     juce::XmlDocument doc(xmlFile);
     std::unique_ptr<juce::XmlElement> root(doc.getDocumentElement());
     if (root == nullptr || !root->hasTagName("atlas")) {
-        atlasLoaded_ = false;
-        atlasImage_ = juce::Image();
-        atlasSprites_.clear();
-        return false;
+        return unloadAtlasResources();
     }
 
     std::unordered_map<std::string, AtlasSprite> sprites;
@@ -77,11 +74,9 @@ bool MainComponent::loadAtlasResources()
         atlasImage_ = std::move(image);
         atlasSprites_ = std::move(sprites);
         atlasLoaded_ = true;
+        atlasIconCache_.clear();
         return true;
     }
 
-    atlasLoaded_ = false;
-    atlasImage_ = juce::Image();
-    atlasSprites_.clear();
-    return false;
+    return unloadAtlasResources();
 }
