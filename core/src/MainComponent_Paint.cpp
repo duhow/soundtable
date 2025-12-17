@@ -1321,17 +1321,16 @@ void MainComponent::paint(juce::Graphics& g)
                         delta.x * delta.x + delta.y * delta.y);
                     const int segmentsForWaveform =
                         static_cast<int>(lineLength / 5.0F);
-                    const int periodSamples =
-                        estimateWaveformPeriod(tempWave,
-                                               kWaveformPoints);
+                    // NOTE: (keep) CPU expensive per-frame period estimation, but accurate for user view.
+                    const int periodSamples = estimateWaveformPeriod(tempWave, kWaveformPoints);
 
-                        const bool tiled = !involvesSampleplay;
+                    const bool tiled = !involvesSampleplay;
                         drawWaveformOnLine(
                             p1, splitPoint, waveformAmplitude,
                         waveformThickness, tempWave,
-                            periodSamples, norm,
-                            juce::jmax(1, segmentsForWaveform),
-                            /*tiled=*/tiled);
+                        periodSamples, norm,
+                        juce::jmax(1, segmentsForWaveform),
+                        /*tiled=*/tiled);
                     drewWave = true;
                 }
 
@@ -1380,19 +1379,23 @@ void MainComponent::paint(juce::Graphics& g)
                         norm = 1.0F / maxAbs;
                     }
 
-                    if (norm > 0.0F) {
+                    // Skip waveform rendering for connections with a very
+                    // low visual level; a straight line is visually
+                    // sufficient and significantly cheaper to rasterise.
+                    if (norm > 0.0F && connectionLevel > 0.05F) {
                         const float waveformAmplitude =
                             10.0F * connectionLevel;
                         const float waveformThickness = 1.2F;
-                        const int periodSamples =
-                            estimateWaveformPeriod(tempWave,
-                                                   kWaveformPoints);
+                        // Avoid per-frame period estimation here – for
+                        // connection waveforms a single non-tiled
+                        // buffer span is enough.
+                        const int periodSamples = kWaveformPoints;
 
                         const bool tiled = !involvesSampleplay;
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
                             waveformThickness, tempWave,
-                            periodSamples, norm, 64,
+                            periodSamples, norm, 72,
                             /*tiled=*/tiled);
                         drewWave = true;
                     }
@@ -1425,16 +1428,19 @@ void MainComponent::paint(juce::Graphics& g)
                         norm = 1.0F / maxAbs;
                     }
 
-                    if (norm > 0.0F) {
-                        const int periodSamples =
-                            estimateWaveformPeriod(tempWave,
-                                                   kWaveformPoints);
-
-                        // Use the same activeColour (including
-                        // yellow when marked for cut) so that
-                        // all audio-carrying connections share
-                        // the same mute/hover visual behaviour.
+                    // Skip waveform rendering for connections with a very
+                    // low visual level; a straight line is visually
+                    // sufficient and significantly cheaper to rasterise.
+                    if (norm > 0.0F && connectionLevel > 0.05F) {
+                        // Use the same activeColour (including yellow when
+                        // marked for cut) so that all audio-carrying
+                        // connections share the same mute/hover visual
+                        // behaviour.
                         g.setColour(activeColour);
+                        // Avoid per-frame period estimation here – for
+                        // connection waveforms a single non-tiled
+                        // buffer span is enough.
+                        const int periodSamples = kWaveformPoints;
                         const bool tiled = !involvesSampleplay;
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
