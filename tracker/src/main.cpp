@@ -20,6 +20,7 @@
 #include "OscSender.h"
 #include "TrackerEngine.h"
 #include "TrackerState.h"
+#include "TuioNegotiation.h"
 
 namespace {
 
@@ -64,6 +65,17 @@ bool hasNoDownscaleFlag(int argc, char** argv)
 	for (int i = 1; i < argc; ++i) {
 		const std::string arg{argv[i]};
 		if (arg == "--no-downscale") {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool hasOscFlag(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		if (arg == "--osc") {
 			return true;
 		}
 	}
@@ -137,6 +149,7 @@ int main(int argc, char** argv)
 	const auto mode = parseMode(argc, argv);
 	const bool debugView = hasDebugViewFlag(argc, argv);
 	const bool noDownscale = hasNoDownscaleFlag(argc, argv);
+	const bool forceOsc = hasOscFlag(argc, argv);
 	const auto requestedResolution = parseResolutionArg(argc, argv);
 
 	cv::VideoCapture capture(0);
@@ -154,10 +167,27 @@ int main(int argc, char** argv)
 				  << " Core will not receive tracking updates." << std::endl;
 	}
 
+	rectai::tracker::TuioOutputMode outputMode = rectai::tracker::TuioOutputMode::LegacyOsc;
+	if (oscSender.isOk()) {
+		if (forceOsc) {
+			std::cout << "[rectai-tracker] Forcing legacy OSC output via --osc" << std::endl;
+			outputMode = rectai::tracker::TuioOutputMode::LegacyOsc;
+		} else {
+			outputMode = rectai::tracker::TuioOutputMode::Tuio11;
+			// Fire a best-effort TUIO hello so the core can log
+			// tracker identity and version. We no longer wait for an ACK.
+			if (!oscSender.sendHelloTuio11("rectai-tracker", "0.1.0")) {
+				std::cerr << "[rectai-tracker] Failed to send /tuio/hello announcement" << std::endl;
+			}
+		}
+	}
+
 	rectai::tracker::TrackerEngine trackerEngine;
 	rectai::tracker::TrackerState trackerState;
 	rectai::tracker::TrackedObjectList lastStableObjectsForDebug;
+	std::unordered_map<int, rectai::tracker::TrackedObject> lastStableById;
 	std::string initError;
+	int tuioFrameSeq = 0;
 
 	// Require several consecutive detections of the same fiducial ID,
 	// with only small spatial jitter between frames, before considering
@@ -173,6 +203,7 @@ int main(int argc, char** argv)
 	int framesWithoutDetections = 0;
 	bool lowProcessingRate = false;
 	double lastProcessingTimeSec = static_cast<double>(cv::getTickCount()) / cv::getTickFrequency();
+	double lastStableUpdateSec = 0.0;
 
 	if (mode == RunMode::Live) {
 		int width = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_WIDTH));
@@ -220,7 +251,15 @@ int main(int argc, char** argv)
 				const float y = 0.5F;
 				const float angleDegrees = 0.0F;
 
-				(void)oscSender.sendObject(1, "osc1", x, y, angleDegrees);
+				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11) {
+					const float angleRad = angleDegrees *
+						( static_cast<float>(M_PI) / 180.0F );
+					(void)oscSender.sendTuio2DobjAlive({1});
+					(void)oscSender.sendTuio2DobjSet(1, 1, x, y, angleRad);
+					(void)oscSender.sendTuio2DobjFseq(tuioFrameSeq++);
+				} else {
+					(void)oscSender.sendObject(1, "osc1", x, y, angleDegrees);
+				}
 			}
 		} else {
 			rectai::tracker::TrackedObjectList objects;
@@ -331,29 +370,98 @@ int main(int argc, char** argv)
 			trackerState.update(stableObjects);
 			lastStableObjectsForDebug = stableObjects;
 
+			// Estimate per-object velocities (normalised units per second)
+			// and angular velocity from the last stable sample.
+			const double dtSec = (lastStableUpdateSec > 0.0)
+			                        ? (nowSec - lastStableUpdateSec)
+			                        : 0.0;
+			lastStableUpdateSec = nowSec;
+
 			if (oscSender.isOk()) {
-				for (const auto& obj : stableObjects) {
-					const std::string logicalId = mapLogicalId(obj.id);
-					const float angleDegrees = obj.angle_rad *
-						(180.0F / static_cast<float>(M_PI));
-					std::cout << "[rectai-tracker] fiducial " << obj.id
-							<< " -> logicalId=" << logicalId
-							<< " x=" << obj.x_norm
-							<< " y=" << obj.y_norm
-							<< " angle_deg=" << angleDegrees << '\n';
-					(void)oscSender.sendObject(obj.id, logicalId,
+				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11) {
+					std::vector<std::int32_t> aliveIds;
+					aliveIds.reserve(stableObjects.size());
+					for (const auto& obj : stableObjects) {
+						aliveIds.push_back(obj.id);
+					}
+					(void)oscSender.sendTuio2DobjAlive(aliveIds);
+					for (const auto& obj : stableObjects) {
+						const float angleRad = obj.angle_rad;
+
+						// Map physical fiducial ID to logical module ID
+						// and use that as the TUIO symbol ID.
+						const std::string logicalIdStr = mapLogicalId(obj.id);
+						int symbolId = obj.id;
+						try {
+							if (!logicalIdStr.empty()) {
+								symbolId = std::stoi(logicalIdStr);
+							}
+						} catch (const std::exception&) {
+							// Fallback: keep the physical id if parsing fails.
+						}
+
+						// Approximate velocities using the difference between
+						// the current and last stable pose for this id.
+						float vx = 0.0F;
+						float vy = 0.0F;
+						float omega = 0.0F;
+						if (dtSec > 0.0) {
+							if (const auto it = lastStableById.find(obj.id);
+							    it != lastStableById.end()) {
+								const auto& prev = it->second;
+								vx = (obj.x_norm - prev.x_norm) /
+								     static_cast<float>(dtSec);
+								vy = (obj.y_norm - prev.y_norm) /
+								     static_cast<float>(dtSec);
+								float dAngle = obj.angle_rad - prev.angle_rad;
+								// Wrap angular difference into [-pi, pi] to
+								// avoid spikes on wrap-around.
+								const float pi = static_cast<float>(M_PI);
+								if (dAngle > pi) {
+									dAngle -= 2.0F * pi;
+								} else if (dAngle < -pi) {
+									dAngle += 2.0F * pi;
+								}
+								omega = dAngle / static_cast<float>(dtSec);
+							}
+						}
+
+						(void)oscSender.sendTuio2DobjSet(
+						    obj.id, symbolId, obj.x_norm, obj.y_norm,
+						    angleRad, vx, vy, omega);
+					}
+					(void)oscSender.sendTuio2DobjFseq(tuioFrameSeq++);
+
+				} else {
+					for (const auto& obj : stableObjects) {
+						const std::string logicalId = mapLogicalId(obj.id);
+						const float angleDegrees = obj.angle_rad *
+							(180.0F / static_cast<float>(M_PI));
+						std::cout << "[rectai-tracker] fiducial " << obj.id
+								<< " -> logicalId=" << logicalId
+								<< " x=" << obj.x_norm
+								<< " y=" << obj.y_norm
+								<< " angle_deg=" << angleDegrees << '\n';
+						(void)oscSender.sendObject(obj.id, logicalId,
 								 obj.x_norm, obj.y_norm, angleDegrees);
-				}
+					}
 
-
-				// Any id that has been missing for several frames is treated as
-				// removed from the musical area, similar to a TUIO remove event.
-				const auto removedIds = trackerState.collectRemovals(15);
-				for (const int id : removedIds) {
-					std::cout << "[rectai-tracker] fiducial " << id
-						      << " removed from tracking" << '\n';
-					(void)oscSender.sendRemove(id);
+					// Any id that has been missing for several frames is treated as
+					// removed from the musical area, similar to a TUIO remove event.
+					const auto removedIds = trackerState.collectRemovals(15);
+					for (const int id : removedIds) {
+						std::cout << "[rectai-tracker] fiducial " << id
+							      << " removed from tracking" << '\n';
+						(void)oscSender.sendRemove(id);
+					}
 				}
+			}
+
+			// Update last stable poses after emitting messages so that
+			// the next frame can use them to compute velocities.
+			lastStableById.clear();
+			for (const auto& obj : stableObjects) {
+				lastStableById[obj.id] = obj;
 			}
 		}
 

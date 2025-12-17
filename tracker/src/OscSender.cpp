@@ -86,6 +86,126 @@ bool OscSender::sendRemove(const std::int32_t trackingId)
     return sendMessage("/rectai/remove", ",i", trackingId);
 }
 
+bool OscSender::sendTuio2DobjSet(const std::int32_t sessionId,
+                                 const std::int32_t symbolId,
+                                 const float x,
+                                 const float y,
+                                 const float angleRadians,
+                                 const float vx,
+                                 const float vy,
+                                 const float angularVelocity)
+{
+    if (!isOk()) {
+        return false;
+    }
+
+    // Address: /tuio/2Dobj
+    // Type tags: ",siiffffffff" (string, int32, int32,
+    //                             8 floats: x, y, a, X, Y, A, m, r)
+    // We use:
+    //   - "set" as the command string.
+    //   - sessionId, symbolId
+    //   - x, y, angleRadians
+    //   - X, Y, A taken from velocity arguments (vx, vy, angularVelocity)
+    //   - m, r set to 0.0f for now.
+    std::string buffer;
+    buffer.reserve(128);
+
+    appendPaddedString("/tuio/2Dobj", buffer);
+    appendPaddedString(",siiffffffff", buffer);
+
+    appendPaddedString("set", buffer);
+    appendInt32(sessionId, buffer);
+    appendInt32(symbolId, buffer);
+    appendFloat32(x, buffer);
+    appendFloat32(y, buffer);
+    appendFloat32(angleRadians, buffer);
+    appendFloat32(vx, buffer);            // X (linear velocity X)
+    appendFloat32(vy, buffer);            // Y (linear velocity Y)
+    appendFloat32(angularVelocity, buffer);  // A (angular velocity)
+    appendFloat32(0.0F, buffer);          // m (motion speed, unused)
+    appendFloat32(0.0F, buffer);          // r (rotation accel, unused)
+
+    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
+    return sent == static_cast<ssize_t>(buffer.size());
+}
+
+bool OscSender::sendTuio2DobjAlive(
+    const std::vector<std::int32_t>& sessionIds)
+{
+    if (!isOk()) {
+        return false;
+    }
+
+    std::string buffer;
+    buffer.reserve(64 + static_cast<std::size_t>(sessionIds.size()) * 8U);
+
+    appendPaddedString("/tuio/2Dobj", buffer);
+
+    // One string ("alive") plus N int32 values.
+    std::string typeTags = ",s";
+    typeTags.reserve(2 + sessionIds.size());
+    for (std::size_t i = 0; i < sessionIds.size(); ++i) {
+        typeTags.push_back('i');
+    }
+    appendPaddedString(typeTags, buffer);
+
+    appendPaddedString("alive", buffer);
+    for (const auto id : sessionIds) {
+        appendInt32(id, buffer);
+    }
+
+    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
+    return sent == static_cast<ssize_t>(buffer.size());
+}
+
+bool OscSender::sendTuio2DobjFseq(const std::int32_t frameSeq)
+{
+    if (!isOk()) {
+        return false;
+    }
+
+    std::string buffer;
+    buffer.reserve(64);
+
+    appendPaddedString("/tuio/2Dobj", buffer);
+    appendPaddedString(",si", buffer);
+
+    appendPaddedString("fseq", buffer);
+    appendInt32(frameSeq, buffer);
+
+    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
+    return sent == static_cast<ssize_t>(buffer.size());
+}
+
+bool OscSender::sendHelloTuio11(const std::string& trackerId,
+                                const std::string& trackerVersion)
+{
+    if (!isOk()) {
+        return false;
+    }
+
+    // Address: /tuio/hello
+    // Type tags: ",sss" (string trackerId, string tuioVersion,
+    //                       string trackerVersion)
+    constexpr const char* kAddress = "/tuio/hello";
+    constexpr const char* kTypeTags = ",sss";
+    constexpr const char* kTuioVersion = "1.1";
+
+    std::string buffer;
+    buffer.reserve(128);
+
+    appendPaddedString(kAddress, buffer);
+    appendPaddedString(kTypeTags, buffer);
+
+    appendPaddedString(trackerId, buffer);
+    appendPaddedString(kTuioVersion, buffer);
+    appendPaddedString(trackerVersion, buffer);
+
+    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
+    return sent == static_cast<ssize_t>(buffer.size());
+}
+
 bool OscSender::sendMessage(const std::string& address,
                             const std::string& typeTags,
                             const std::string& logicalId,

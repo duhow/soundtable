@@ -198,15 +198,20 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
 
 void MainComponent::mouseDown(const juce::MouseEvent& event)
 {
+    handlePointerDown(event.position, event.mods);
+}
+
+void MainComponent::handlePointerDown(juce::Point<float> position,
+                                      const juce::ModifierKeys& mods)
+{
     const auto bounds = getLocalBounds().toFloat();
     const float radius = 30.0F;
-
-    const bool isRightClick = event.mods.isRightButtonDown();
+    const bool isRightClick = mods.isRightButtonDown();
 
     // Track touch interface state for visual feedback.
     isTouchActive_ = true;
     isTouchHeld_ = false;
-    currentTouchPosition_ = event.position;
+    currentTouchPosition_ = position;
     touchTrail_.clear();
     touchCutConnections_.clear();
     touchCutObjects_.clear();
@@ -222,7 +227,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     auto boundsCopy = bounds;
     juce::Rectangle<float> dockAreaMain =
         boundsCopy.removeFromRight(dockWidthMain);
-    touchStartedInDock_ = dockAreaMain.contains(event.position);
+    touchStartedInDock_ = dockAreaMain.contains(position);
 
     repaintWithRateLimit();
 
@@ -252,8 +257,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             const auto cx = centrePos.x;
             const auto cy = centrePos.y;
 
-            const auto dx = static_cast<float>(event.position.x) - cx;
-            const auto dy = static_cast<float>(event.position.y) - cy;
+            const auto dx = static_cast<float>(position.x) - cx;
+            const auto dy = static_cast<float>(position.y) - cy;
             const auto distanceSquared = dx * dx + dy * dy;
 
             if (distanceSquared > radius * radius) {
@@ -290,7 +295,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 // right-clicking switches to the next logical bank
                 // (e.g. drums ↔ synth) using the default preset
                 // associated with that bank.
-                if (event.mods.isCtrlDown()) {
+                if (mods.isCtrlDown()) {
                     sampleModule->CycleBank();
                 } else {
                     sampleModule->CycleInstrument();
@@ -412,7 +417,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             gainHandleX = cx + dx;
         }
 
-        juce::Point<float> click = event.position;
+        juce::Point<float> click = position;
         if (insideMusic) {
             click = click.transformedBy(
                 juce::AffineTransform::rotation(-rotationAngle, cx, cy));
@@ -574,8 +579,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         const auto cx = centrePos.x;
         const auto cy = centrePos.y;
 
-        const auto dx = static_cast<float>(event.position.x) - cx;
-        const auto dy = static_cast<float>(event.position.y) - cy;
+        const auto dx = static_cast<float>(position.x) - cx;
+        const auto dy = static_cast<float>(position.y) - cy;
         const auto distanceSquared = dx * dx + dy * dy;
 
         if (distanceSquared <= radius * radius) {
@@ -636,8 +641,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                 const float cx = dockAreaPick.getX() +
                                  dockAreaPick.getWidth() * 0.5F;
 
-                const float dx = static_cast<float>(event.position.x) - cx;
-                const float dy = static_cast<float>(event.position.y) - cy;
+                const float dx = static_cast<float>(position.x) - cx;
+                const float dy = static_cast<float>(position.y) - cy;
                 const float distanceSquared = dx * dx + dy * dy;
 
                 if (distanceSquared <= nodeRadiusDock * nodeRadiusDock) {
@@ -653,9 +658,9 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             calculateDockWidth(dockBounds.getWidth());
         juce::Rectangle<float> dockAreaDrag =
             dockBounds.removeFromRight(dockWidthDrag);
-        if (dockAreaDrag.contains(event.position)) {
+        if (dockAreaDrag.contains(position)) {
             isDraggingDockScroll_ = true;
-            dockLastDragY_ = static_cast<float>(event.position.y);
+            dockLastDragY_ = static_cast<float>(position.y);
             return;
         }
     }
@@ -665,7 +670,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
     // or near a connection between instruments to toggle the source's mute.
     if (draggedObjectId_ == 0) {
         const auto centre = bounds.getCentre();
-        const auto click = event.position;
+        const auto click = position;
         constexpr float maxDistance = 6.0F;
         const float maxDistanceSq = maxDistance * maxDistance;
 
@@ -924,8 +929,8 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
             0.45F * std::min(localBounds.getWidth(),
                               localBounds.getHeight());
 
-        const float dx = static_cast<float>(event.position.x) - centre.x;
-        const float dy = static_cast<float>(event.position.y) - centre.y;
+        const float dx = static_cast<float>(position.x) - centre.x;
+        const float dy = static_cast<float>(position.y) - centre.y;
         const float distSq = dx * dx + dy * dy;
 
         if (distSq <= tableRadius * tableRadius) {
@@ -936,17 +941,23 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 
 void MainComponent::mouseDrag(const juce::MouseEvent& event)
 {
+    handlePointerDrag(event.position, event.mods);
+}
+
+void MainComponent::handlePointerDrag(juce::Point<float> position,
+                                      const juce::ModifierKeys& mods)
+{
     const auto bounds = getLocalBounds().toFloat();
 
     // Update touch state during drag.
     isTouchHeld_ = true;
-    currentTouchPosition_ = event.position;
+    currentTouchPosition_ = position;
 
     // Add point to trail only if touch started in window area (not dock).
     if (!touchStartedInDock_) {
         const double currentTime =
             juce::Time::getMillisecondCounterHiRes() / 1000.0;
-        touchTrail_.push_back({event.position, currentTime});
+        touchTrail_.push_back({position, currentTime});
 
         // Remove old points that have fully faded out and limit trail size.
         if (kEnableTrailFade) {
@@ -1205,7 +1216,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                 ? (availableHeight - contentHeight)
                 : 0.0F;
 
-        const float currentY = static_cast<float>(event.position.y);
+            const float currentY = static_cast<float>(position.y);
         const float dy = currentY - dockLastDragY_;
         dockLastDragY_ = currentY;
 
@@ -1242,7 +1253,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
                 juce::MathConstants<float>::halfPi;
         }
 
-        juce::Point<float> mousePos = event.position;
+        juce::Point<float> mousePos = position;
         if (insideMusic) {
             mousePos = mousePos.transformedBy(
                 juce::AffineTransform::rotation(-rotationAngle, cx, cy));
@@ -1314,9 +1325,9 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         0.45F * std::min(bounds.getWidth(), bounds.getHeight());
 
     float tableX =
-        (static_cast<float>(event.position.x) - centre.x) / tableRadius;
+        (static_cast<float>(position.x) - centre.x) / tableRadius;
     float tableY =
-        (static_cast<float>(event.position.y) - centre.y) / tableRadius;
+        (static_cast<float>(position.y) - centre.y) / tableRadius;
 
     // Keep dragged objects within the canonical table radius so they
     // remain on the blue disc and inside the [-1,1] coordinate system.
@@ -1369,7 +1380,7 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
         juce::Rectangle<float> dockArea =
             dockBounds.removeFromRight(dockWidth);
 
-        if (dockArea.contains(event.position)) {
+        if (dockArea.contains(position)) {
             // Still inside the dock: do not change Scene; the icon in the
             // dock is the visual feedback while the user aims the drag.
             return;
@@ -1429,14 +1440,19 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
     // If CONTROL is held while dragging a module inside the musical
     // area, apply a safety mute by setting its volume to 0 as soon as
     // it is on the table.
-    applyControlDropMuteIfNeeded(event);
+    applyControlDropMuteIfNeeded(mods);
 
     repaint();
 }
 
 void MainComponent::mouseUp(const juce::MouseEvent& event)
 {
-    juce::ignoreUnused(event);
+    handlePointerUp(event.mods);
+}
+
+void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
+{
+    juce::ignoreUnused(mods);
 
     const auto& objects = scene_.objects();
     const auto& connections = scene_.connections();
@@ -1706,10 +1722,45 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
     isDraggingDockScroll_ = false;
 }
 
-void MainComponent::applyControlDropMuteIfNeeded(
-    const juce::MouseEvent& event)
+void MainComponent::handleTuioCursorDown(const float normX,
+                                         const float normY)
 {
-    if (!event.mods.isCtrlDown()) {
+    const auto bounds = getLocalBounds().toFloat();
+    juce::Point<float> position{bounds.getX() + normX * bounds.getWidth(),
+                                bounds.getY() + normY * bounds.getHeight()};
+
+    juce::Logger::writeToLog(
+        "[rectai-core] TUIO cursor DOWN at px=" +
+        juce::String(position.x, 1) + "," +
+        juce::String(position.y, 1));
+
+    handlePointerDown(position, juce::ModifierKeys{});
+}
+
+void MainComponent::handleTuioCursorMove(const float normX,
+                                         const float normY)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    juce::Point<float> position{bounds.getX() + normX * bounds.getWidth(),
+                                bounds.getY() + normY * bounds.getHeight()};
+
+    juce::Logger::writeToLog(
+        "[rectai-core] TUIO cursor MOVE at px=" +
+        juce::String(position.x, 1) + "," +
+        juce::String(position.y, 1));
+
+    handlePointerDrag(position, juce::ModifierKeys{});
+}
+
+void MainComponent::handleTuioCursorUp()
+{
+    handlePointerUp(juce::ModifierKeys{});
+}
+
+void MainComponent::applyControlDropMuteIfNeeded(
+    const juce::ModifierKeys& mods)
+{
+    if (!mods.isCtrlDown()) {
         return;
     }
 

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Minimal OSC sender for the rectai-tracker.
 // This is a very small, custom implementation that only supports
@@ -27,6 +28,36 @@ public:
                     float angleDegrees);
 
     bool sendRemove(std::int32_t trackingId);
+
+    // Sends a basic TUIO 1.1 2Dobj "set" message:
+    //   /tuio/2Dobj set s_id i_id x y a X Y A m r
+    // We populate s_id, i_id, x, y, a and the velocity
+    // components X, Y, A (linear X/Y and angular velocity).
+    // The motion speed (m) and rotation acceleration (r)
+    // are currently left at zero.
+    bool sendTuio2DobjSet(std::int32_t sessionId,
+                          std::int32_t symbolId,
+                          float x,
+                          float y,
+                          float angleRadians,
+                          float vx = 0.0F,
+                          float vy = 0.0F,
+                          float angularVelocity = 0.0F);
+
+    // Sends a TUIO 1.1 2Dobj "alive" message listing the currently
+    // active session ids.
+    bool sendTuio2DobjAlive(const std::vector<std::int32_t>& sessionIds);
+
+    // Sends a TUIO 1.1 2Dobj "fseq" message with the given frame
+    // sequence number.
+    bool sendTuio2DobjFseq(std::int32_t frameSeq);
+
+    // Sends a /tuio/hello negotiation message advertising TUIO 1.1
+    // support from rectai-tracker. This is a small, custom message
+    // understood by rectai-core and is not part of the standard
+    // Reactable protocol.
+    bool sendHelloTuio11(const std::string& trackerId,
+                         const std::string& trackerVersion);
 
 private:
     bool sendMessage(const std::string& address,

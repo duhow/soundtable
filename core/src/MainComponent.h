@@ -61,7 +61,23 @@ private:
         const rectai::ObjectInstance& obj,
         const juce::Rectangle<float>& bounds);
 
-    void applyControlDropMuteIfNeeded(const juce::MouseEvent& event);
+    // Generic pointer handlers shared by mouse and external TUIO
+    // cursor input.
+    void handlePointerDown(juce::Point<float> position,
+                           const juce::ModifierKeys& mods);
+    void handlePointerDrag(juce::Point<float> position,
+                           const juce::ModifierKeys& mods);
+    void handlePointerUp(const juce::ModifierKeys& mods);
+
+    // Entry points used by TrackingOscReceiver to mirror TUIO 2Dcur
+    // events into the same interaction model as the mouse. The
+    // coordinates are normalised in [0,1] over the full component
+    // bounds and projected to pixels internally.
+    void handleTuioCursorDown(float normX, float normY);
+    void handleTuioCursorMove(float normX, float normY);
+    void handleTuioCursorUp();
+
+    void applyControlDropMuteIfNeeded(const juce::ModifierKeys& mods);
 
     bool loadAtlasResources();
     bool unloadAtlasResources();

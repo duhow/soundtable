@@ -17,12 +17,21 @@ class ObjectInstance {
   ObjectInstance(std::int64_t tracking_id, std::string logical_id, float x,
                  float y, float angle_radians, bool docked = false);
 
+  ObjectInstance(std::int64_t tracking_id, std::string logical_id, float x,
+                 float y, float angle_radians, float velocity_x,
+                 float velocity_y, float angular_velocity,
+                 bool docked = false);
+
   [[nodiscard]] std::int64_t tracking_id() const { return tracking_id_; }
   [[nodiscard]] const std::string& logical_id() const { return logical_id_; }
   [[nodiscard]] float x() const { return x_; }
   [[nodiscard]] float y() const { return y_; }
   [[nodiscard]] float angle_radians() const { return angle_radians_; }
   [[nodiscard]] bool docked() const { return docked_; }
+
+  [[nodiscard]] float velocity_x() const { return velocity_x_; }
+  [[nodiscard]] float velocity_y() const { return velocity_y_; }
+  [[nodiscard]] float angular_velocity() const { return angular_velocity_; }
 
   [[nodiscard]] bool inside_music_area() const
   {
@@ -39,6 +48,9 @@ class ObjectInstance {
   float x_{0.0F};
   float y_{0.0F};
   float angle_radians_{0.0F};
+  float velocity_x_{0.0F};
+  float velocity_y_{0.0F};
+  float angular_velocity_{0.0F};
   bool docked_{false};
   bool inside_music_area_{false};
 };

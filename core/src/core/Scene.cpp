@@ -19,6 +19,24 @@ ObjectInstance::ObjectInstance(const std::int64_t tracking_id,
       docked_(docked),
       inside_music_area_(false) {}
 
+ObjectInstance::ObjectInstance(const std::int64_t tracking_id,
+                               std::string logical_id, const float x,
+                               const float y, const float angle_radians,
+                               const float velocity_x,
+                               const float velocity_y,
+                               const float angular_velocity,
+                               const bool docked)
+    : tracking_id_(tracking_id),
+      logical_id_(std::move(logical_id)),
+      x_(x),
+      y_(y),
+      angle_radians_(angle_radians),
+      velocity_x_(velocity_x),
+      velocity_y_(velocity_y),
+      angular_velocity_(angular_velocity),
+      docked_(docked),
+      inside_music_area_(false) {}
+
 void ObjectInstance::set_position(const float x, const float y)
 {
   x_ = x;

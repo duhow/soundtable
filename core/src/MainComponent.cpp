@@ -487,6 +487,20 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
         }
     };
 
+    // Bridge TUIO cursor events from the OSC receiver into the same
+    // interaction model used by regular mouse input. Las coordenadas
+    // llegan normalizadas en [0,1] sobre todo el componente.
+    trackingOscReceiver_.setTuioCursorCallbacks(
+        [this](float normX, float normY, std::int32_t /*sessionId*/) {
+            handleTuioCursorDown(normX, normY);
+        },
+        [this](float normX, float normY, std::int32_t /*sessionId*/) {
+            handleTuioCursorMove(normX, normY);
+        },
+        [this](std::int32_t /*sessionId*/) {
+            handleTuioCursorUp();
+        });
+
     const auto loadLoopSamples = [this]() {
         const auto& modules = scene_.modules();
 

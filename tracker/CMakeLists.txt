@@ -11,6 +11,7 @@ find_package(OpenCV REQUIRED core imgproc videoio highgui)
 add_executable(rectai-tracker
     src/main.cpp
     src/OscSender.cpp
+    src/TuioNegotiation.cpp
     src/TrackerTypes.h
     src/TrackerState.cpp
     src/TrackerEngine.cpp
