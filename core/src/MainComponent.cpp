@@ -15,11 +15,93 @@
 #include "core/SoundfontUtils.h"
 #include "MainComponentHelpers.h"
 
+void MainComponent::invalidateTableBackground()
+{
+    tableBackgroundDirty_ = true;
+}
+
+void MainComponent::renderTableBackgroundIfNeeded(
+    const juce::Rectangle<int>& bounds)
+{
+    const int width = bounds.getWidth();
+    const int height = bounds.getHeight();
+
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    const bool sizeChanged = tableBackgroundCache_.isNull() ||
+                             tableBackgroundCache_.getWidth() != width ||
+                             tableBackgroundCache_.getHeight() != height;
+
+    if (!sizeChanged && !tableBackgroundDirty_) {
+        return;
+    }
+
+    tableBackgroundCache_ = juce::Image(juce::Image::ARGB, width, height,
+                                        true);
+    juce::Graphics g(tableBackgroundCache_);
+
+    // Match the previous behaviour: solid black background behind
+    // the coloured table disc and its soft outer ring.
+    g.fillAll(juce::Colours::black);
+
+    const auto floatBounds = bounds.toFloat();
+    const auto centre = floatBounds.getCentre();
+    const float tableRadius =
+        0.45F * std::min(floatBounds.getWidth(), floatBounds.getHeight());
+
+    const bool hasAudioInitError = audioEngine_.hasInitialisationError();
+
+    const juce::Colour tableColour = hasAudioInitError
+                                         ? juce::Colour::fromRGB(
+                                               0x80, 0x1a, 0x1a)
+                                         : juce::Colour::fromRGB(
+                                               0x00, 0x1a, 0x80);
+
+    const float borderThickness = 40.0F;
+    const float outerRadius = tableRadius + borderThickness;
+
+    {
+        juce::Graphics::ScopedSaveState borderState(g);
+
+        juce::Path borderRing;
+        borderRing.addEllipse(centre.x - outerRadius,
+                              centre.y - outerRadius,
+                              outerRadius * 2.0F,
+                              outerRadius * 2.0F);
+        borderRing.addEllipse(centre.x - tableRadius,
+                              centre.y - tableRadius,
+                              tableRadius * 2.0F,
+                              tableRadius * 2.0F);
+        borderRing.setUsingNonZeroWinding(false);
+
+        juce::ColourGradient borderGradient(tableColour, centre.x, centre.y,
+                                            juce::Colours::black, centre.x,
+                                            centre.y + outerRadius, true);
+
+        const double innerStop =
+            static_cast<double>(tableRadius / outerRadius);
+        borderGradient.addColour(innerStop, tableColour);
+        borderGradient.addColour(1.0, juce::Colours::black);
+
+        g.setGradientFill(borderGradient);
+        g.fillPath(borderRing);
+    }
+
+    g.setColour(tableColour);
+    g.fillEllipse(centre.x - tableRadius, centre.y - tableRadius,
+                  tableRadius * 2.0F, tableRadius * 2.0F);
+
+    tableBackgroundDirty_ = false;
+}
+
 MainComponent::MainComponent(AudioEngine& audioEngine,
                              juce::String initialSessionPath)
     : audioEngine_(audioEngine)
 {
     setSize(1280, 720);
+    invalidateTableBackground();
 
     // Load initial Reactable patch. If an explicit session file was
     // provided on the command line, try that first; otherwise fall
@@ -102,7 +184,6 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             }
 
             // Remember the instrument names declared in the .rtp
-            // file in order; this sequence define logical banks
             // (index 0 → drums, index 1 → synths, etc.) that we will
             // later map to actual SoundFont presets by name.
             std::vector<std::string> preferredInstrumentNames;
@@ -508,17 +589,23 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
 
     // Periodically map scene state to audio parameters and refresh the
     // UI. Use a relatively high update rate so that waveform
-    // visualisations and other animations feel responsive y el
-    // disparo de pasos del Sequencer tenga jitter mínimo respecto al
-    // transporte de audio.
+    // visualisations and other animations feel responsive and the
+    // Sequencer step triggering jitter remains low relative to the
+    // audio transport.
     lastTimerSeconds_ =
         juce::Time::getMillisecondCounterHiRes() / 1000.0;
-    // Aumentar la frecuencia del timer reduce la cuantización
-    // temporal de los pasos del Sequencer (que actualmente se
-    // avanzan desde `timerCallback` a partir de `transportBeats()`)
-    // y hace que cada nota se dispare más cerca de su beat ideal.
-    // 240 Hz → resolución nominal ≈4.2 ms.
+    // Increasing the timer frequency reduces the temporal
+    // quantisation of Sequencer steps (which are currently
+    // advanced from `timerCallback` using `transportBeats()`) and
+    // makes each note fire closer to its ideal beat. 240 Hz
+    // corresponds to a nominal resolution of ~4.2 ms.
     startTimerHz(240);
+}
+
+void MainComponent::resized()
+{
+    invalidateTableBackground();
+    juce::Component::resized();
 }
 
 void MainComponent::markSampleplayInstrumentLabelActive(

@@ -126,6 +126,15 @@ private:
     // changes.
     double lastTimerSeconds_{0.0};
 
+    // Cached background image for the static table geometry
+    // (black backdrop, coloured disc and soft outer ring). This is
+    // rendered only when the component bounds or the table colour
+    // change, so that hot paint paths can simply blit the cached
+    // image instead of rebuilding gradients and edge tables every
+    // frame.
+    juce::Image tableBackgroundCache_;
+    bool tableBackgroundDirty_{true};
+
     // Master output (type=Output in .rtp) presentation state.
     juce::Colour masterColour_{juce::Colours::white};
     bool masterMuted_{false};
@@ -233,6 +242,9 @@ private:
     [[nodiscard]] float calculateDockWidth(float boundsWidth) const {
         return juce::jmin(kDockMaxWidth, boundsWidth * kDockWidthRatio);
     }
+
+    void invalidateTableBackground();
+    void renderTableBackgroundIfNeeded(const juce::Rectangle<int>& bounds);
 
     void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
                                       std::int64_t objectIdB);

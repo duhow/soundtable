@@ -2,6 +2,12 @@
 
 ## 2025-12-17
 
+### Caché de fondo estático de la mesa en rectai-core
+- En la UI principal (`MainComponent`) se ha añadido una caché de imagen (`juce::Image tableBackgroundCache_`) para el fondo estático de la mesa (fondo negro, disco central azul/rojo y anillo de gradiente que se funde con el negro). Este fondo se renderiza ahora en un buffer off-screen únicamente cuando cambian el tamaño del componente o el color de la mesa, reutilizándose en todos los repaints posteriores mediante un simple `drawImageAt` en `paint()`.
+- Para soportar esta caché se han introducido dos helpers privados en `MainComponent`:
+  - `invalidateTableBackground()`, que marca la caché como sucia (se llama en el constructor y en `resized()`), y
+  - `renderTableBackgroundIfNeeded(const juce::Rectangle<int>& bounds)`, que recrea la imagen si el tamaño ha cambiado o la caché está marcada como sucia y dibuja en ella el mismo fondo que antes se generaba directamente en `paint()` (incluyendo gradiente y disco sólido).
+- El bloque de pintado del fondo en `MainComponent_Paint.cpp` se ha sustituido por una llamada a `renderTableBackgroundIfNeeded()` seguida de un blit de `tableBackgroundCache_`. El resto de la lógica de `paint` (waveforms, conexiones, pulsos, dock, etc.) permanece inalterada. Este cambio reduce sensiblemente el trabajo por frame en reposo, ya que las rutas calientes de JUCE (`EdgeTable`, `PixelARGB::set/getNativeARGB`, gradientes radiales) dejan de ejecutarse a 240 Hz y solo se recalculan cuando la geometría de la mesa cambia.
 ### Mute-on-hold coherente para Loop, Sampleplay y Oscillator
 - Se ha extendido la lógica de **mute temporal al mantener pulsado sobre una línea de audio (mute on hold)** para que afecte de forma coherente a todos los módulos que generan sonido, no sólo a `Oscillator`. Hasta ahora, al mantener el ratón sobre la radial de un módulo `Loop`, la línea se partía visualmente pero el audio del loop seguía sonando; con este cambio, la salida de audio también queda silenciada mientras dura el gesto.
 - En `MainComponent_Audio.cpp` se ha añadido un chequeo explícito de `activeConnectionHold_` en dos puntos:
