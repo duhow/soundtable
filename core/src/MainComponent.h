@@ -104,7 +104,7 @@ private:
     std::unordered_set<std::string> promotedHardlinkPairs_;
 
     // Transport / tempo visualisation.
-    double bpm_{120.0};
+    float bpm_{120.0F};
     double beatPhase_{0.0};
     int beatIndex_{0};
 

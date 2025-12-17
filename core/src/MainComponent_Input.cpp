@@ -139,12 +139,12 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
             // TempoModule: fine-grained BPM nudging.
             if (auto* tempoModule =
                     dynamic_cast<rectai::TempoModule*>(module)) {
-                const double baseStep =
-                    event.mods.isShiftDown() ? 5.0 : 1.0;
-                const double step =
+                const float baseStep =
+                    event.mods.isShiftDown() ? 5.0F : 1.0F;
+                const float step =
                     (wheelDelta > 0.0F) ? baseStep : -baseStep;
-                double newBpm = bpm_ + step;
-                newBpm = juce::jlimit(40.0, 400.0, newBpm);
+                const float newBpm =
+                    rectai::TempoModule::ClampBpm(bpm_ + step);
 
                 if (newBpm == bpm_) {
                     return;
@@ -158,7 +158,7 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
                 // with the global BPM so that serialisation and
                 // other consumers observe the updated tempo value.
                 scene_.SetModuleParameter(tempoModule->id(), "tempo",
-                                            static_cast<float>(bpm_));
+                                          bpm_);
 
                 toRepaint = true;
             }
@@ -348,13 +348,7 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
         float gainValue = 0.5F;
         if (moduleForObject != nullptr) {
             if (isTempoModule) {
-                const double minBpm = 40.0;
-                const double maxBpm = 400.0;
-                const double clampedBpm =
-                    juce::jlimit(minBpm, maxBpm, bpm_);
-                const double norm =
-                    (clampedBpm - minBpm) / (maxBpm - minBpm);
-                freqValue = static_cast<float>(norm);
+                freqValue = rectai::TempoModule::NormalisedFromBpm(bpm_);
             } else if (moduleForObject->is<rectai::LoopModule>()) {
                 // Loop modules use the left bar to select the
                 // current sample slot via the normalised "sample"
@@ -472,19 +466,16 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
                                            0.0F, 1.0F);
 
             if (isTempoModule) {
-                const double minBpm = 40.0;
-                const double maxBpm = 400.0;
-                const double newBpm =
-                    minBpm + (maxBpm - minBpm) *
-                                 static_cast<double>(value);
-                bpm_ = juce::jlimit(minBpm, maxBpm, newBpm);
+                const float newBpm =
+                    rectai::TempoModule::BpmFromNormalised(value);
+                bpm_ = rectai::TempoModule::ClampBpm(newBpm);
 
                 bpmLastChangeSeconds_ =
                     juce::Time::getMillisecondCounterHiRes() /
                     1000.0;
 
                 scene_.SetModuleParameter(object.logical_id(), "tempo",
-                                          static_cast<float>(bpm_));
+                                          bpm_);
             } else {
                 const auto& modulesForFreq = scene_.modules();
                 const auto modItFreq =
@@ -1261,19 +1252,16 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
             if (modItFreq != modulesForFreq.end() &&
                 modItFreq->second != nullptr &&
                 modItFreq->second->is<rectai::TempoModule>()) {
-                const double minBpm = 40.0;
-                const double maxBpm = 400.0;
-                const double newBpm =
-                    minBpm + (maxBpm - minBpm) *
-                                 static_cast<double>(value);
-                bpm_ = juce::jlimit(minBpm, maxBpm, newBpm);
+                const float newBpm =
+                    rectai::TempoModule::BpmFromNormalised(value);
+                bpm_ = rectai::TempoModule::ClampBpm(newBpm);
 
                 bpmLastChangeSeconds_ =
                     juce::Time::getMillisecondCounterHiRes() /
                     1000.0;
 
                 scene_.SetModuleParameter(object.logical_id(), "tempo",
-                                          static_cast<float>(bpm_));
+                                          bpm_);
             } else {
                 scene_.SetModuleParameter(object.logical_id(), "freq", value);
             }

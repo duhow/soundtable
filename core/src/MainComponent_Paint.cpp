@@ -1554,13 +1554,7 @@ void MainComponent::paint(juce::Graphics& g)
         bool showGainControl = false;
         if (moduleForObject != nullptr) {
             if (isTempoModule) {
-                const double minBpm = 40.0;
-                const double maxBpm = 400.0;
-                const double clampedBpm =
-                    juce::jlimit(minBpm, maxBpm, bpm_);
-                const double norm =
-                    (clampedBpm - minBpm) / (maxBpm - minBpm);
-                freqValue = static_cast<float>(norm);
+                freqValue = rectai::TempoModule::NormalisedFromBpm(bpm_);
             } else if (moduleForObject->is<rectai::LoopModule>()) {
                 // For Loop modules, the left bar represents the
                 // currently selected sample slot via the normalised
@@ -2255,7 +2249,7 @@ void MainComponent::paint(juce::Graphics& g)
         // Tempo controller overlay: show the current global BPM as a
         // small integer label positioned just outside the node circle,
         // so it remains legible. The underlying value is kept as a
-        // double in `bpm_` but rendered without decimals, and only
+        // float in `bpm_` but rendered without decimals, and only
         // appears briefly after tempo changes.
         if (moduleForObject != nullptr && bpmLabelAlpha > 0.0) {
             const auto* tempoModule =

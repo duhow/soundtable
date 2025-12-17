@@ -57,6 +57,18 @@
   - El volumen audible de un Oscillator conectado a un Sequencer está gobernado por la combinación `min(gain_módulo, factor_Sequencer)`.
   - El usuario ve siempre el volumen máximo permitido para ese módulo (bola blanca) y, cuando el Sequencer atenúa la señal, observa la bola gris moverse por debajo hasta donde llegue el paso actual, sin que ésta pueda **superar** nunca la altura de la bola blanca.
 
+## 2025-12-17
+
+### Unificación de BPM global y helpers en TempoModule
+- Se ha introducido en `TempoModule` un rango canónico de BPM (`kMinBpm=40`, `kMaxBpm=400`) junto con helpers estáticos `ClampBpm`, `BpmFromNormalised` y `NormalisedFromBpm` que encapsulan el mapeo entre valores normalizados [0,1] y BPM reales. Estos helpers usan `std::clamp` y viven en el header de `AudioModules`, evitando dependencias directas de JUCE en los headers de dominio.
+- `MainComponent` pasa a almacenar el BPM global como `float bpm_` en lugar de `double`, ya que no se necesita más precisión para la sesión en marcha. Al cargar un patch (`LoadReactablePatchFromFile`), el valor inicial de `bpm_` se toma del parámetro lógico `tempo` del `TempoModule` (si existe) y se normaliza mediante `TempoModule::ClampBpm`.
+- Toda la interacción de UI que modifica el tempo (rueda de ratón sobre el nodo de Tempo, clicks y drags en la barra lateral izquierda interpretada como control de tempo, y la rotación del tangible de Tempo en el bucle de audio) reutiliza ahora los helpers de `TempoModule`:
+  - En `MainComponent_Input.cpp`, los gestos de rueda sobre el `TempoModule` ajustan `bpm_` en pasos de ±1 BPM (o ±5 BPM con Shift) usando `ClampBpm`, y sincronizan el parámetro `tempo` del módulo asignando directamente el `float bpm_` sin conversiones intermedias a `double`.
+  - En los clicks y drags sobre la barra lateral de Tempo, la posición vertical se mapea a BPM utilizando `BpmFromNormalised` y se muestra la barra leyendo `NormalisedFromBpm(bpm_)`, eliminando la lógica duplicada de límites [40,400] y normalización que había repartida por varios archivos.
+  - En `MainComponent_Audio.cpp`, la rotación del tangible Tempo convierte el delta angular en `deltaBpm` `float` y aplica `TempoModule::ClampBpm` para obtener el nuevo `bpm_`, actualizando a continuación el parámetro lógico `tempo` del módulo.
+- El pintado de la barra lateral de Tempo y de la etiqueta numérica de BPM (`MainComponent_Paint.cpp`) utiliza ahora `TempoModule::NormalisedFromBpm(bpm_)` para derivar la posición de la barra y sigue mostrando el valor entero de BPM a partir del `float bpm_`, con el mismo comportamiento de fade basado en `bpmLastChangeSeconds_`.
+- En `AudioEngine`, el tempo global de loops (`loopGlobalBpm_`) se ha cambiado de `std::atomic<double>` a `std::atomic<float>` y el setter `setLoopGlobalTempo` ahora recibe un `float`. El motor de audio sigue convirtiendo este valor a `double` solo en el cálculo intermedio de `beatsPerSecond`, pero el almacenamiento y la API expuesta se mantienen en `float` para alinearse con `MainComponent::bpm_`. `MainComponent_Audio` continúa llamando a `audioEngine_.setLoopGlobalTempo(bpm_)` en cada tick del timer para mantener los loops sincronizados con el tempo global.
+
 ## 2025-12-16
 
 ### Suavizado de ataque en la envolvente de Oscillator para evitar clicks

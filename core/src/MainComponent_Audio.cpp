@@ -590,19 +590,14 @@ void MainComponent::timerCallback()
             // Match the control sense used for frequency so
             // clockwise/counter-clockwise behaviour stays
             // consistent across controllers.
-            const double deltaBpm =
-                static_cast<double>(-diff / 5.0F);
+            const float deltaBpm = -diff / 5.0F;
             if (std::fabs(deltaBpm) <=
-                std::numeric_limits<double>::epsilon()) {
+                std::numeric_limits<float>::epsilon()) {
                 continue;
             }
 
-            double newBpm = bpm_ + deltaBpm;
-            if (newBpm < 40.0) {
-                newBpm = 40.0;
-            } else if (newBpm > 400.0) {
-                newBpm = 400.0;
-            }
+            const float newBpm =
+                rectai::TempoModule::ClampBpm(bpm_ + deltaBpm);
 
             bpm_ = newBpm;
 
@@ -615,8 +610,7 @@ void MainComponent::timerCallback()
             // Keep the logical Tempo module parameter in sync with the
             // session BPM so that future serialisation and loaders can
             // observe the updated tempo.
-            scene_.SetModuleParameter(module->id(), "tempo",
-                                        static_cast<float>(bpm_));
+            scene_.SetModuleParameter(module->id(), "tempo", bpm_);
         }
 
         // ------------------------------------------------------------------

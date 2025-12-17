@@ -146,10 +146,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
 
                 const float tempoValue = tempoModule->GetParameterOrDefault(
                     "tempo", 120.0F);
-                const double clamped = juce::jlimit(40.0, 400.0,
-                                                    static_cast<double>(
-                                                        tempoValue));
-                bpm_ = clamped;
+                bpm_ = rectai::TempoModule::ClampBpm(tempoValue);
                 break;
             }
             return true;

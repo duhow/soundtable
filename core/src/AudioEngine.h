@@ -265,7 +265,7 @@ public:
     // their playback rate so that their length corresponds to the
     // given number of beats at the current BPM. The mapping is
     // intentionally simple and pitch-shifts the audio.
-    void setLoopGlobalTempo(double bpm);
+    void setLoopGlobalTempo(float bpm);
 
     // Updates the fractional beat phase [0,1) for the loop transport
     // so that Loop modules can derive a continuous beat position when
@@ -567,7 +567,7 @@ private:
         loopModulesSnapshot_;
 
     // Global tempo in BPM used for approximate loop sync.
-    std::atomic<double> loopGlobalBpm_{120.0};
+    std::atomic<float> loopGlobalBpm_{120.0F};
 
     // Global transport position in beats driven from the audio
     // thread. This is derived from the current BPM and sample

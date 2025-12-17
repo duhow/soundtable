@@ -217,14 +217,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         }
     }
 
-    const double bpm = loopGlobalBpm_.load(std::memory_order_relaxed);
+    const float bpm = loopGlobalBpm_.load(std::memory_order_relaxed);
 
     // Advance the global transport position in beats using the
     // current BPM and sample rate. This provides a high-precision
     // audio-driven clock that can be queried from the UI so that
     // Sequencer timing and visual beat pulses remain locked to the
     // actual audio stream instead of the GUI timer.
-    const double beatsPerSecond = (bpm > 0.0) ? (bpm / 60.0) : 0.0;
+    const double beatsPerSecond =
+        (bpm > 0.0F) ? (static_cast<double>(bpm) / 60.0) : 0.0;
     const double blockDurationSeconds =
         (sampleRate_ > 0.0)
             ? (static_cast<double>(numSamples) / sampleRate_)
@@ -1501,9 +1502,9 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
     }
 }
 
-void AudioEngine::setLoopGlobalTempo(const double bpm)
+void AudioEngine::setLoopGlobalTempo(const float bpm)
 {
-    const double clamped = bpm > 0.0 ? bpm : 0.0;
+    const float clamped = bpm > 0.0F ? bpm : 0.0F;
     loopGlobalBpm_.store(clamped, std::memory_order_relaxed);
 }
 

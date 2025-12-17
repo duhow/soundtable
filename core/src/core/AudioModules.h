@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <algorithm>
 
 #include "core/Scene.h"
 
@@ -194,6 +195,30 @@ class TempoModule : public AudioModule {
         [[nodiscard]] bool is_global_controller() const override
         {
                 return true;
+        }
+
+        // Canonical BPM range for the global Tempo controller.
+        static constexpr float kMinBpm = 40.0F;
+        static constexpr float kMaxBpm = 400.0F;
+
+        // Clamp a raw BPM value to the supported range.
+        [[nodiscard]] static float ClampBpm(float bpm)
+        {
+                return std::clamp(bpm, kMinBpm, kMaxBpm);
+        }
+
+        // Map a normalised [0,1] value to a BPM in [kMinBpm,kMaxBpm].
+        [[nodiscard]] static float BpmFromNormalised(float value01)
+        {
+                const float clamped = std::clamp(value01, 0.0F, 1.0F);
+                return kMinBpm + (kMaxBpm - kMinBpm) * clamped;
+        }
+
+        // Convert a BPM value in the valid range back to [0,1].
+        [[nodiscard]] static float NormalisedFromBpm(float bpm)
+        {
+                const float clamped = ClampBpm(bpm);
+                return (clamped - kMinBpm) / (kMaxBpm - kMinBpm);
         }
 };
 
