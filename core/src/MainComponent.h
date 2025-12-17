@@ -97,6 +97,13 @@ private:
     // detect new collision events as objects move.
     std::unordered_set<std::string> activeHardlinkCollisions_;
 
+    // Flag used to avoid mutating the initial hardlink topology on
+    // session load: the first time we evaluate collisions we only
+    // populate activeHardlinkCollisions_ without toggling, so that
+    // modules that start already near each other (or near the centre
+    // master) do not immediately change their hardlink state.
+    bool hardlinkCollisionsInitialised_{false};
+
     // Module-level pairs for which an existing dynamic connection has been
     // temporarily promoted to a hardlink. When the hardlink is toggled
     // off again, these pairs restore their original non-hardlink

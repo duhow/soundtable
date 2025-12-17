@@ -729,10 +729,16 @@ void MainComponent::timerCallback()
 
                 if (activeHardlinkCollisions_.find(pairKey) ==
                     activeHardlinkCollisions_.end()) {
-                    // New collision event between these two objects:
-                    // toggle the hardlink connection if allowed.
-                    toggleHardlinkBetweenObjects(entryA.id, entryB.id);
-                    activeHardlinkCollisions_.insert(pairKey);
+                    // On first evaluation after loading a session we
+                    // only seed the collision set so that existing
+                    // hardlinks are preserved; subsequent re-contacts
+                    // after separation will toggle as usual.
+                    if (!hardlinkCollisionsInitialised_) {
+                        activeHardlinkCollisions_.insert(pairKey);
+                    } else {
+                        toggleHardlinkBetweenObjects(entryA.id, entryB.id);
+                        activeHardlinkCollisions_.insert(pairKey);
+                    }
                 }
             }
         }
@@ -773,8 +779,13 @@ void MainComponent::timerCallback()
 
                 if (activeHardlinkCollisions_.find(pairKey) ==
                     activeHardlinkCollisions_.end()) {
-                    toggleHardlinkBetweenObjects(entry.id, *masterObjectId);
-                    activeHardlinkCollisions_.insert(pairKey);
+                    if (!hardlinkCollisionsInitialised_) {
+                        activeHardlinkCollisions_.insert(pairKey);
+                    } else {
+                        toggleHardlinkBetweenObjects(entry.id,
+                                                     *masterObjectId);
+                        activeHardlinkCollisions_.insert(pairKey);
+                    }
                 }
             }
         }
@@ -790,6 +801,10 @@ void MainComponent::timerCallback()
                 ++it;
             }
         }
+
+        // Mark collisions as initialised after the first pass so that
+        // future contact events can safely toggle hardlinks.
+        hardlinkCollisionsInitialised_ = true;
 
         // Remove hardlink connections whose endpoints are outside the
         // musical area.
