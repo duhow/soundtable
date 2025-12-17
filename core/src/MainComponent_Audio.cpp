@@ -2606,5 +2606,15 @@ void MainComponent::timerCallback()
         sequencerStep_ = newStep;
     }
 
-    repaint();
+    // Limit the maximum repaint rate independently from the timer
+    // frequency. This keeps waveform visualisations and widgets
+    // smooth while avoiding calling into JUCE's paint pipeline more
+    // often than necessary.
+    constexpr double kMaxRepaintsPerSecond = 60.0;
+    const double minRepaintInterval = 1.0 / kMaxRepaintsPerSecond;
+
+    if (nowSeconds - lastRepaintSeconds_ >= minRepaintInterval) {
+        repaint();
+        lastRepaintSeconds_ = nowSeconds;
+    }
 }

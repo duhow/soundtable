@@ -140,6 +140,13 @@ private:
     // changes.
     double lastTimerSeconds_{0.0};
 
+    // Last repaint timestamp (seconds) used to cap the maximum UI
+    // refresh rate independently of the timer frequency. This allows
+    // us to run audio/logic updates at a higher rate while keeping
+    // the more expensive paint calls at a lower, but still smooth,
+    // cadence.
+    double lastRepaintSeconds_{0.0};
+
     // Cached background image for the static table geometry
     // (black backdrop, coloured disc and soft outer ring). This is
     // rendered only when the component bounds or the table colour

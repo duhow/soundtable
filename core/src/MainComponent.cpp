@@ -604,8 +604,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     // visualisations and other animations feel responsive and the
     // Sequencer step triggering jitter remains low relative to the
     // audio transport.
-    lastTimerSeconds_ =
+    const double nowSeconds =
         juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    lastTimerSeconds_ = nowSeconds;
+    lastRepaintSeconds_ = nowSeconds;
     // Increasing the timer frequency reduces the temporal
     // quantisation of Sequencer steps (which are currently
     // advanced from `timerCallback` using `transportBeats()`) and

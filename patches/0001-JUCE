@@ -1,0 +1,17 @@
+# source: https://forum.juce.com/t/graphics-rendering-performance-and-optimization/12370/9
+# works in most apps that don't blend images over things
+diff --git a/JUCE/modules/juce_graphics/colour/juce_PixelFormats.h b/JUCE/modules/juce_graphics/colour/juce_PixelFormats.h
+index 70ebf300da..35bb7fdf55 100644
+--- a/JUCE/modules/juce_graphics/colour/juce_PixelFormats.h
++++ b/JUCE/modules/juce_graphics/colour/juce_PixelFormats.h
+@@ -50,7 +50,9 @@ inline uint32 maskPixelComponents (uint32 x) noexcept
+ 
+ inline uint32 clampPixelComponents (uint32 x) noexcept
+ {
+-    return (x | (0x01000100 - maskPixelComponents (x))) & 0x00ff00ff;
++    // return (x | (0x01000100 - maskPixelComponents (x))) & 0x00ff00ff;
++    // XXX when we know we dont need clamping !!
++    return x;
+ }
+ 
+ //==============================================================================
