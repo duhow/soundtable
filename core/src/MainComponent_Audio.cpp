@@ -656,14 +656,30 @@ void MainComponent::timerCallback()
         const float maxDist = 2.0F * collisionRadius - 4.0F;  // >=4 px overlap
         const float maxDistSq = maxDist * maxDist;
 
-        // Objects currently inside the musical area.
-        std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
-            inside;
+        // Objects currently inside the musical area along with their
+        // screen-space positions so that both module↔module and
+        // module↔centre collisions can reuse the same mapping.
+        struct InsideEntry {
+            std::int64_t id;
+            const rectai::ObjectInstance* obj{nullptr};
+            float sx{0.0F};
+            float sy{0.0F};
+        };
+
+        std::vector<InsideEntry> inside;
         inside.reserve(objects.size());
         for (const auto& [objId, obj] : objects) {
-            if (isInsideMusicArea(obj)) {
-                inside.emplace_back(objId, &obj);
+            if (!isInsideMusicArea(obj)) {
+                continue;
             }
+
+            const auto pos = objectTableToScreen(obj, bounds);
+            InsideEntry entry;
+            entry.id = objId;
+            entry.obj = &obj;
+            entry.sx = pos.x;
+            entry.sy = pos.y;
+            inside.push_back(entry);
         }
 
         // Detect new collisions between objects (touching circles) and
@@ -672,18 +688,33 @@ void MainComponent::timerCallback()
         // collision radius matches the visual node circles.
         std::unordered_set<std::string> currentPairs;
         for (std::size_t i = 0; i < inside.size(); ++i) {
-            const auto idA = inside[i].first;
-            const auto* objA = inside[i].second;
-            const auto posA = objectTableToScreen(*objA, bounds);
-            const float ax = posA.x;
-            const float ay = posA.y;
+            const auto& entryA = inside[i];
+            const auto* objA = entryA.obj;
+
+            // Ignore collisions involving the invisible Output/master
+            // module (id MASTER_OUTPUT_ID). Its logical route is always
+            // represented by the radial line from the object to the
+            // centre of the table and is managed via implicit
+            // module→MASTER_OUTPUT_ID connections plus per-connection
+            // mute state, not by creating/removing hardlinks through
+            // physical collisions.
+            if (objA->logical_id() == rectai::MASTER_OUTPUT_ID) {
+                continue;
+            }
+
+            const float ax = entryA.sx;
+            const float ay = entryA.sy;
 
             for (std::size_t j = i + 1; j < inside.size(); ++j) {
-                const auto idB = inside[j].first;
-                const auto* objB = inside[j].second;
-                const auto posB = objectTableToScreen(*objB, bounds);
-                const float bx = posB.x;
-                const float by = posB.y;
+                const auto& entryB = inside[j];
+                const auto* objB = entryB.obj;
+
+                if (objB->logical_id() == rectai::MASTER_OUTPUT_ID) {
+                    continue;
+                }
+
+                const float bx = entryB.sx;
+                const float by = entryB.sy;
 
                 const float dx = bx - ax;
                 const float dy = by - ay;
@@ -692,21 +723,65 @@ void MainComponent::timerCallback()
                     continue;
                 }
 
-                const std::string pairKey = makeObjectPairKey(idA, idB);
+                const std::string pairKey =
+                    makeObjectPairKey(entryA.id, entryB.id);
                 currentPairs.insert(pairKey);
 
                 if (activeHardlinkCollisions_.find(pairKey) ==
                     activeHardlinkCollisions_.end()) {
                     // New collision event between these two objects:
                     // toggle the hardlink connection if allowed.
-                    toggleHardlinkBetweenObjects(idA, idB);
+                    toggleHardlinkBetweenObjects(entryA.id, entryB.id);
+                    activeHardlinkCollisions_.insert(pairKey);
+                }
+            }
+        }
+
+        // Detect collisions between modules and the centre of the table
+        // to toggle hardlinks between those modules and the invisible
+        // Output/master module (id MASTER_OUTPUT_ID). From the user's
+        // perspective this corresponds to "bumping" a tangible against
+        // the central node to promote/demote its route to the master.
+        std::optional<std::int64_t> masterObjectId;
+        for (const auto& [objId, obj] : objects) {
+            if (obj.logical_id() == rectai::MASTER_OUTPUT_ID) {
+                masterObjectId = objId;
+                break;
+            }
+        }
+
+        if (masterObjectId.has_value()) {
+            const float centreX = bounds.getCentreX();
+            const float centreY = bounds.getCentreY();
+
+            for (const auto& entry : inside) {
+                if (entry.obj == nullptr ||
+                    entry.obj->logical_id() == rectai::MASTER_OUTPUT_ID) {
+                    continue;
+                }
+
+                const float dx = entry.sx - centreX;
+                const float dy = entry.sy - centreY;
+                const float distSq = dx * dx + dy * dy;
+                if (distSq > maxDistSq) {
+                    continue;
+                }
+
+                const std::string pairKey = makeObjectPairKey(
+                    entry.id, *masterObjectId);
+                currentPairs.insert(pairKey);
+
+                if (activeHardlinkCollisions_.find(pairKey) ==
+                    activeHardlinkCollisions_.end()) {
+                    toggleHardlinkBetweenObjects(entry.id, *masterObjectId);
                     activeHardlinkCollisions_.insert(pairKey);
                 }
             }
         }
 
         // Clear pairs that are no longer colliding so that a future
-        // contact between them can toggle the hardlink again.
+        // contact between them (including module↔master centre bumps)
+        // can toggle the hardlink again.
         for (auto it = activeHardlinkCollisions_.begin();
              it != activeHardlinkCollisions_.end();) {
             if (currentPairs.find(*it) == currentPairs.end()) {

@@ -384,6 +384,26 @@ int main()
         // When no muted attribute is present on <hardlink>, the
         // connection should start unmuted.
         assert(!c.muted);
+
+        // Attempts to add additional connections with the same
+        // endpoints (whether as hardlinks or dynamic connections)
+        // must be rejected so that Delay(10) only ever has a single
+        // connection to the master Output (-1).
+        Connection duplicateHard{
+            .from_module_id = "10",
+            .from_port_name = "out",
+            .to_module_id = rectai::MASTER_OUTPUT_ID,
+            .to_port_name = "in",
+            .is_hardlink = true};
+        assert(!loaded_scene.AddConnection(duplicateHard));
+
+        Connection duplicateDynamic{
+            .from_module_id = "10",
+            .from_port_name = "out",
+            .to_module_id = rectai::MASTER_OUTPUT_ID,
+            .to_port_name = "in",
+            .is_hardlink = false};
+        assert(!loaded_scene.AddConnection(duplicateDynamic));
     }
 
     // Hardlink-based connection creation with muted="1".
