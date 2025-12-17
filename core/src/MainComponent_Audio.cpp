@@ -2607,7 +2607,18 @@ void MainComponent::timerCallback()
     constexpr double kMaxRepaintsPerSecond = 60.0;
     const double minRepaintInterval = 1.0 / kMaxRepaintsPerSecond;
 
-    if (nowSeconds - lastRepaintSeconds_ >= minRepaintInterval) {
+    // Skip repaints entirely when the scene is visually idle to
+    // reduce CPU usage. We only refresh the UI when there is some
+    // form of ongoing visual activity (audio, pulses, BPM label or
+    // an active hold/mute gesture).
+    const bool hasVisualActivity =
+        !modulesWithActiveAudio_.empty() || !pulses_.empty() ||
+        (bpmLastChangeSeconds_ > 0.0 &&
+         nowSeconds - bpmLastChangeSeconds_ <= 6.0) ||
+        activeConnectionHold_.has_value();
+
+    if (hasVisualActivity &&
+        nowSeconds - lastRepaintSeconds_ >= minRepaintInterval) {
         repaint();
         lastRepaintSeconds_ = nowSeconds;
     }

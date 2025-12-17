@@ -38,8 +38,11 @@ void MainComponent::renderTableBackgroundIfNeeded(
         return;
     }
 
-    tableBackgroundCache_ = juce::Image(juce::Image::ARGB, width, height,
-                                        true);
+    // The table background is fully opaque (solid black + coloured
+    // disc and gradient ring), so we can use an RGB image without
+    // alpha to reduce per-pixel blending work when blitting.
+    tableBackgroundCache_ = juce::Image(juce::Image::RGB, width, height,
+                                        false);
     juce::Graphics g(tableBackgroundCache_);
 
     // Match the previous behaviour: solid black background behind
@@ -101,6 +104,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     : audioEngine_(audioEngine)
 {
     setSize(1280, 720);
+    // MainComponent fully covers its bounds with an opaque background
+    // (black backdrop + coloured table image), so hint JUCE that it
+    // does not require clearing or blending with underlying content.
+    setOpaque(true);
     invalidateTableBackground();
 
     // Load initial Reactable patch. If an explicit session file was

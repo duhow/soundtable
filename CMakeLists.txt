@@ -6,15 +6,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Opciones generales del proyecto
+# Project-wide options
 option(RECTAI_ENABLE_TRACKER "Build the tracker service" ON)
 option(RECTAI_BUILD_TESTS "Build C++ tests" ON)
 
-# Fuentes de la librería externa reacTIVision/libfidtrack que generan
-# muchos warnings de conversion/sign-conversion/float-conversion.
-# Los tratamos como código de terceros y desactivamos esos avisos solo
-# para estos ficheros, manteniendo un nivel de warnings alto en el
-# código propio.
+# External reacTIVision/libfidtrack sources that generate many
+# conversion/sign-conversion/float-conversion warnings. Treat them as
+# third-party code and relax those warnings only for these files,
+# while keeping a high warning level on our own code.
 set(REACTIVISION_SOURCES
     ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/segment.c
     ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/fidtrackX.c
@@ -29,13 +28,57 @@ if (NOT MSVC)
     )
 endif()
 
+# Optional CPU-specific optimization flags (non-MSVC toolchains).
+option(RECTAI_ENABLE_CPU_OPTIMIZATIONS "Enable CPU-specific optimization flags (e.g. -march/-mtune)" ON)
+
+if (RECTAI_ENABLE_CPU_OPTIMIZATIONS AND NOT MSVC)
+    include(CheckCXXCompilerFlag)
+
+    set(RECTAI_CPU_OPT_FLAGS "")
+
+    check_cxx_compiler_flag("-march=native" RECTAI_HAS_MARCH_NATIVE)
+    if (RECTAI_HAS_MARCH_NATIVE)
+        list(APPEND RECTAI_CPU_OPT_FLAGS "-march=native")
+    endif()
+
+    check_cxx_compiler_flag("-mtune=native" RECTAI_HAS_MTUNE_NATIVE)
+    if (RECTAI_HAS_MTUNE_NATIVE)
+        list(APPEND RECTAI_CPU_OPT_FLAGS "-mtune=native")
+    endif()
+
+    foreach(flag IN LISTS RECTAI_CPU_OPT_FLAGS)
+        add_compile_options(
+            "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:${flag}>"
+        )
+    endforeach()
+endif()
+
+# Global floating-point and frame-pointer flags for GCC/Clang.
+if (NOT MSVC)
+    # Use -ffast-math in Release/RelWithDebInfo to allow more
+    # aggressive floating-point optimizations in performance builds.
+    add_compile_options(
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-ffast-math>"
+    )
+
+    # Keep frame pointers in Debug builds for better profiling and
+    # easier stack traces.
+    add_compile_options(
+        "$<$<CONFIG:Debug>:-fno-omit-frame-pointer>"
+    )
+endif()
+
 include(CTest)
 
-# Ruta para JUCE como submódulo (esperado en JUCE/)
+# Path to JUCE as a submodule (expected at JUCE/)
 set(JUCE_DIR "${CMAKE_SOURCE_DIR}/JUCE" CACHE PATH "Path to JUCE source directory")
 
 if (NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
-    message(WARNING "JUCE no encontrado en ${JUCE_DIR}. Añade JUCE como submódulo: git submodule add https://github.com/juce-framework/JUCE.git JUCE")
+    message(WARNING "JUCE not found in ${JUCE_DIR}. Add JUCE as a submodule: git submodule add https://github.com/juce-framework/JUCE.git JUCE")
+endif()
+
+if (NOT EXISTS "${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack/fidtrackX.c")
+    message(WARNING "reacTIVision not found in ${CMAKE_SOURCE_DIR}/reacTIVision. Run: git clone https://github.com/mkalten/reacTIVision")
 endif()
 
 add_subdirectory(core)
