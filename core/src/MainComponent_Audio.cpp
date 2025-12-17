@@ -52,8 +52,16 @@ void MainComponent::refreshInsideMusicAreaFlags()
     const auto objectsSnapshot = scene_.objects();
     for (const auto& [id, obj] : objectsSnapshot) {
         juce::ignoreUnused(id);
+
+        // Recompute the inside-music flag in table space. Avoid
+        // touching the Scene when the flag has not changed since the
+        // previous tick to keep UpsertObject traffic minimal.
+        const bool inside = computeInsideMusicArea(obj);
+        if (inside == obj.inside_music_area()) {
+            continue;
+        }
+
         auto updated = obj;
-        const bool inside = computeInsideMusicArea(updated);
         updated.set_inside_music_area(inside);
         scene_.UpsertObject(updated);
     }
