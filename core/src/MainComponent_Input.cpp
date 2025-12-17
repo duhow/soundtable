@@ -1090,6 +1090,17 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
 
             // Check intersections with module-to-module connections.
             for (const auto& conn : scene_.connections()) {
+                // Skip explicit connections that target the
+                // invisible Output/master (id MASTER_OUTPUT_ID).
+                // Cutting the object→centre radial already toggles
+                // the implicit module→master route; including these
+                // edges here would cause a double toggle (radial
+                // + connection) for the same underlying path,
+                // effectively cancelling the mute.
+                if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                    continue;
+                }
+
                 const auto fromIt = std::find_if(
                     objects.begin(), objects.end(),
                     [&conn](const auto& pair) {

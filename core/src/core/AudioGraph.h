@@ -33,6 +33,7 @@ public:
         std::string to_module_id;
         std::string to_port_name;
         bool is_hardlink{false};
+        bool muted{false};
         PortSignalKind signal_kind{PortSignalKind::kAudio};
     };
 

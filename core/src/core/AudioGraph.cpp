@@ -71,6 +71,7 @@ void AudioGraph::RebuildFromScene(const Scene& scene)
         edge.to_module_id = conn.to_module_id;
         edge.to_port_name = conn.to_port_name;
         edge.is_hardlink = conn.is_hardlink;
+        edge.muted = conn.muted;
         edge.signal_kind = InferSignalKind(modules, conn);
 
         edges_.push_back(std::move(edge));

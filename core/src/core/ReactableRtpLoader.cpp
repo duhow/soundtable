@@ -329,6 +329,18 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
   // Map from tangible numeric id -> module id string.
   std::unordered_map<int, std::string> tangible_to_module_id;
 
+  // Hardlinks declared inside tangible blocks (currently Delay tangibles).
+  // We keep them as a separate list so that we can attach additional
+  // metadata such as per-connection mute flags without changing the
+  // DelayModule API.
+  struct PendingHardlink {
+    std::string from_module_id;
+    int target_tangible_id{0};
+    bool muted{false};
+  };
+
+  std::vector<PendingHardlink> pending_hardlinks;
+
   // Iterate tangibles.
   std::size_t pos = xml.find("<tangibles");
   if (pos == std::string::npos) {
@@ -609,7 +621,9 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         const auto env_tag = ExtractTagContent(xml, env_pos, &env_end);
         delay->mutable_envelope() = ParseEnvelope(env_tag);
       }
-      // hardlink(s)
+      // Tangible-level hardlink(s). Each <hardlink> tag may optionally
+      // declare muted="1" to start that connection in a muted state
+      // from the perspective of the loaded Scene/UI.
       std::size_t hl_pos = FindTag(xml, "hardlink", inner_start, inner_end);
       while (hl_pos != std::string::npos) {
         std::size_t hl_end = 0U;
@@ -618,6 +632,10 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
         const int target_id = ParseInt(hl_attrs, "to", 0);
         if (target_id != 0) {
           delay->mutable_hardlink_targets().push_back(target_id);
+
+          const bool muted = ParseBool(hl_attrs, "muted", false);
+          pending_hardlinks.push_back(
+              PendingHardlink{module_id, target_id, muted});
         }
         hl_pos = FindTag(xml, "hardlink", hl_end, inner_end);
       }
@@ -947,35 +965,26 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
     }
   }
 
-  // Derive rectai::Connection instances from hardlinks stored in DelayModule
-  // instances. For each hardlink `to` id, we connect the delay's audio output
-  // to the target module's main audio input. These connections are marked as
-  // `is_hardlink = true` so that the Scene/UI can treat them as logically
-  // active regardless of geometric connection constraints.
-  for (const auto& [module_id, module_ptr] : scene.modules()) {
-    if (module_ptr == nullptr) {
+  // Derive rectai::Connection instances from hardlinks declared in
+  // the original Reactable patch. For each hardlink `to` id we
+  // connect the source module's audio output to the target module's
+  // main audio input. These connections are marked as hardlinks in
+  // the Scene model and can also carry an initial muted state.
+  for (const auto& hl : pending_hardlinks) {
+    const auto it = tangible_to_module_id.find(hl.target_tangible_id);
+    if (it == tangible_to_module_id.end()) {
       continue;
     }
 
-    const auto* delay = dynamic_cast<const DelayModule*>(module_ptr.get());
-    if (delay == nullptr) {
-      continue;
-    }
+    const std::string& target_module_id = it->second;
 
-    for (const int target_tangible_id : delay->hardlink_targets()) {
-      const auto it = tangible_to_module_id.find(target_tangible_id);
-      if (it == tangible_to_module_id.end()) {
-        continue;
-      }
-      const std::string& target_module_id = it->second;
-
-      Connection connection{.from_module_id = module_id,
-                            .from_port_name = "out",
-                            .to_module_id = target_module_id,
-                            .to_port_name = "in",
-                            .is_hardlink = true};
-      (void)scene.AddConnection(connection);
-    }
+    Connection connection{.from_module_id = hl.from_module_id,
+                          .from_port_name = "out",
+                          .to_module_id = target_module_id,
+                          .to_port_name = "in",
+                          .is_hardlink = true,
+                          .muted = hl.muted};
+    (void)scene.AddConnection(connection);
   }
 
   // Auto-connect Oscillator modules to the closest Filter module when

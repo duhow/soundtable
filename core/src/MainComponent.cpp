@@ -128,6 +128,21 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                 rectai::ui::colourFromArgb(metadata.master_colour_argb);
             masterMuted_ = metadata.master_muted;
 
+            // Seed per-connection mute state from the Scene model.
+            // Reactable hardlinks can declare muted="1" and the
+            // loader maps that into Connection::muted. Mirror that
+            // into mutedConnections_ so that the visual and audio
+            // mute state matches the session on load.
+            mutedConnections_.clear();
+            for (const auto& conn : scene_.connections()) {
+                if (!conn.muted) {
+                    continue;
+                }
+                const std::string key =
+                    rectai::ui::makeConnectionKey(conn);
+                mutedConnections_.insert(key);
+            }
+
             // If the loaded scene contains a Tempo module, initialise
             // the global BPM from its `tempo` parameter so that visual
             // pulses and transport widgets match the patch settings.

@@ -788,8 +788,12 @@ void MainComponent::paint(juce::Graphics& g)
             // connection to the master Output (MASTER_OUTPUT_ID) is
             // muted at the connection level. We derive that state by
             // checking for a module -> MASTER_OUTPUT_ID connection in
-            // mutedConnections_.
+            // mutedConnections_. Additionally, if that route is a
+            // hardlink, we reflect it in the radial colour so that
+            // hardlinked paths to the master are visually prioritised
+            // over purely dynamic ones.
             bool isRadialMuted = false;
+            bool hasHardlinkToMaster = false;
             {
                 for (const auto& conn : scene_.connections()) {
                     if (conn.from_module_id != object.logical_id() ||
@@ -797,11 +801,17 @@ void MainComponent::paint(juce::Graphics& g)
                         continue;
                     }
 
+                    if (conn.is_hardlink) {
+                        hasHardlinkToMaster = true;
+                    }
+
                     const std::string key = makeConnectionKey(conn);
                     if (mutedConnections_.find(key) !=
                         mutedConnections_.end()) {
                         isRadialMuted = true;
-                        break;
+                        // Still continue scanning so that
+                        // hasHardlinkToMaster can be set even when
+                        // the first matching connection is muted.
                     }
                 }
             }
@@ -944,10 +954,13 @@ void MainComponent::paint(juce::Graphics& g)
                  (isFilterModule && hasSampleplayUpstream));
 
             if (sampleplayRadialActive) {
+                const auto baseColour = hasHardlinkToMaster
+                                            ? juce::Colours::red
+                                            : juce::Colours::white;
                 const auto radialColour =
                     isMarkedForCut
                         ? juce::Colours::yellow.withAlpha(0.9F)
-                        : juce::Colours::white.withAlpha(baseAlpha);
+                        : baseColour.withAlpha(baseAlpha);
                 g.setColour(radialColour);
                 const float amplitudeLevel =
                     isSampleplayModule ? visualLevel : 1.0F;
@@ -993,10 +1006,13 @@ void MainComponent::paint(juce::Graphics& g)
                 isLoopModule && lineCarriesAudio;
 
             if (loopRadialActive) {
+                const auto baseColour = hasHardlinkToMaster
+                                            ? juce::Colours::red
+                                            : juce::Colours::white;
                 const auto radialColour =
                     isMarkedForCut
                         ? juce::Colours::yellow.withAlpha(0.9F)
-                        : juce::Colours::white.withAlpha(baseAlpha);
+                        : baseColour.withAlpha(baseAlpha);
                 g.setColour(radialColour);
                 const float amplitudeLevel = visualLevel;
                 const float waveformAmplitude =
@@ -1025,10 +1041,13 @@ void MainComponent::paint(juce::Graphics& g)
                 if (voiceIndex >= 0 &&
                     voiceIndex < AudioEngine::kMaxVoices &&
                     voiceNormPost[voiceIndex] > 0.0F) {
+                    const auto baseColour = hasHardlinkToMaster
+                                                ? juce::Colours::red
+                                                : juce::Colours::white;
                     const auto waveformColour =
                         isMarkedForCut
                             ? juce::Colours::yellow.withAlpha(0.9F)
-                            : juce::Colours::white.withAlpha(baseAlpha);
+                            : baseColour.withAlpha(baseAlpha);
                     g.setColour(waveformColour);
                     float amplitudeLevel = visualLevel;
 
@@ -1071,10 +1090,13 @@ void MainComponent::paint(juce::Graphics& g)
             // existing style (solid vs dashed) and only change the
             // colour when the line is marked for a pending
             // mute/unmute operation.
+            const auto baseRadialColour = hasHardlinkToMaster
+                                               ? juce::Colours::red
+                                               : juce::Colours::white;
             const auto radialFallbackColour =
                 isMarkedForCut
                     ? juce::Colours::yellow.withAlpha(0.9F)
-                    : juce::Colours::white.withAlpha(baseAlpha);
+                    : baseRadialColour.withAlpha(baseAlpha);
             g.setColour(radialFallbackColour);
             if (isRadialMuted) {
                 const float dashLengths[] = {6.0F, 4.0F};
@@ -1106,6 +1128,18 @@ void MainComponent::paint(juce::Graphics& g)
         // -----------------------------------------------------------------
         int connectionIndex = 0;
         for (const auto& conn : scene_.connections()) {
+            // Do not draw explicit module-to-module lines that
+            // target the invisible Output/master module (id
+            // MASTER_OUTPUT_ID). The visual representation of a
+            // module's route to the master is always the radial
+            // line from the object to the centre of the table; an
+            // additional connection line to the hidden Output
+            // object would duplicate that path visually.
+            if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                ++connectionIndex;
+                continue;
+            }
+
             const auto fromIt = std::find_if(objects.begin(), objects.end(),
                                              [&conn](const auto& pair) {
                                                  return pair.second.logical_id() ==
@@ -1153,6 +1187,10 @@ void MainComponent::paint(juce::Graphics& g)
                 bool hasMasterRoute = false;
                 bool masterRouteMuted = true;
 
+                // Scan all connections from this source module to the
+                // master Output (-1). If at least one such route exists
+                // and any of them is not muted, then the source is
+                // considered audible to the master.
                 for (const auto& mconn : scene_.connections()) {
                     if (mconn.from_module_id != conn.from_module_id ||
                         mconn.to_module_id != rectai::MASTER_OUTPUT_ID) {

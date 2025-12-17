@@ -210,6 +210,11 @@ struct Connection {
   std::string to_module_id;
   std::string to_port_name;
   bool is_hardlink{false};
+  // Optional per-connection mute flag. This captures the persistent
+  // mute state loaded from sessions (e.g. Reactable hardlinks with
+  // muted="1"). Runtime UI gestures may overlay additional mute
+  // state on top of this via higher-level structures.
+  bool muted{false};
 
   [[nodiscard]] bool operator==(const Connection& other) const {
     return from_module_id == other.from_module_id &&

@@ -381,6 +381,41 @@ int main()
         // Connections derived from <hardlink> should be marked as
         // hardlinks in the Scene model.
         assert(c.is_hardlink);
+        // When no muted attribute is present on <hardlink>, the
+        // connection should start unmuted.
+        assert(!c.muted);
+    }
+
+    // Hardlink-based connection creation with muted="1".
+    {
+        const char* kRtpWithMutedHardlink =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
+            "<reactablepatch>\n"
+            "  <background color=\"0,0,0\" texture=\"\" alpha=\"1\" rotation=\"0\" revolution=\"0\" random=\"0\" />\n"
+            "  <tangibles>\n"
+            "    <tangible type=\"Output\" id=\"-1\" x=\"0\" y=\"0\" angle=\"0\" color=\"ffffffff\" docked=\"0\" muted=\"0\" point=\"0\" />\n"
+            "    <tangible type=\"Delay\" id=\"10\" x=\"0.1\" y=\"0.2\" angle=\"0\" color=\"000000ff\" docked=\"0\" muted=\"0\" point=\"0\" subtype=\"pingpong\" delay=\"0.66\" fb=\"0.5\" sweep=\"0\">\n"
+            "      <envelope attack=\"0\" decay=\"0\" duration=\"25\" points_x=\"0,1\" points_y=\"0,1\" release=\"0\" />\n"
+            "      <hardlink to=\"-1\" muted=\"1\" />\n"
+            "    </tangible>\n"
+            "  </tangibles>\n"
+            "  <author name=\"TestAuthor\" />\n"
+            "  <patch name=\"HardlinkMutedPatch\" />\n"
+            "</reactablepatch>\n";
+
+        Scene loaded_scene;
+        ReactablePatchMetadata metadata;
+        std::string error;
+        const bool ok = rectai::LoadReactablePatchFromString(
+            kRtpWithMutedHardlink, loaded_scene, &metadata, &error);
+        assert(ok);
+        assert(error.empty());
+
+        const auto& connections = loaded_scene.connections();
+        assert(connections.size() == 1U);
+        const Connection& c = connections.front();
+        assert(c.is_hardlink);
+        assert(c.muted);
     }
 
     // Auto-wired connections from audio-capable modules to Output/master.

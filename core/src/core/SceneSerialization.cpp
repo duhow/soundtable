@@ -38,12 +38,17 @@ std::string SerializeScene(const Scene& scene)
     // Connections. Hardlink connections are annotated explicitly so that
     // tooling or future loaders can distinguish them from dynamic,
     // geometry-based connections when inspecting a serialized scene.
+    // When a connection is persistently muted at the model level,
+    // we also emit a "muted" tag.
     for (const auto& connection : scene.connections()) {
         out << "connection " << connection.from_module_id << ' '
             << connection.from_port_name << ' ' << connection.to_module_id
             << ' ' << connection.to_port_name;
         if (connection.is_hardlink) {
             out << ' ' << "hardlink";
+        }
+        if (connection.muted) {
+            out << ' ' << "muted";
         }
         out << '\n';
     }
