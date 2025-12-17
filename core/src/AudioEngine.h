@@ -291,6 +291,13 @@ public:
         return transportBeatsAudio_.load(std::memory_order_relaxed);
     }
 
+    // Enables or disables active audio processing. When disabled and
+    // there is no pending output from previous envelopes or loops,
+    // the audio callback will simply clear the output buffers and
+    // skip all synthesis/sampling work so that CPU usage in fully
+    // idle scenes remains minimal.
+    void setProcessingActive(bool active) noexcept;
+
 private:
     juce::AudioDeviceManager deviceManager_;
 
@@ -379,6 +386,21 @@ private:
 
     // Simple per-voice RNG state used for noise waveforms.
     std::uint32_t noiseState_[kMaxVoices]{};
+
+    // High-level processing gate driven from the UI thread. When
+    // false, and once the engine has observed a full block of
+    // silence, the audio callback will short-circuit and avoid
+    // generating or sampling any audio while keeping the device
+    // initialised.
+    std::atomic<bool> processingRequested_{false};
+
+    // Sticky flag updated from the audio thread indicating whether
+    // the previous callback block produced any non-silent output.
+    // This allows release tails from envelopes, loops or Sampleplay
+    // notes to finish naturally even after the UI has marked the
+    // scene as having no active audio, and only then lets the engine
+    // enter a fully idle, low-CPU state.
+    std::atomic<bool> hasPendingOutput_{false};
 
     // Optional FluidSynth-based synthesiser used by Sampleplay
     // modules. Owned by the audio engine and rendered alongside the

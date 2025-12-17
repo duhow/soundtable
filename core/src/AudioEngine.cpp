@@ -145,6 +145,26 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         return;
     }
 
+    // Fast-path exit when there is no active audio requested by the
+    // scene and the previous callback block also produced silence.
+    // This keeps the audio device initialised but avoids running the
+    // heavier synthesis/sampling path while the table is completely
+    // idle (for example, when no modules are inside the musical
+    // area).
+    const bool shouldProcess =
+        processingRequested_.load(std::memory_order_relaxed);
+    const bool hadPendingOutput =
+        hasPendingOutput_.load(std::memory_order_relaxed);
+
+    if (!shouldProcess && !hadPendingOutput) {
+        for (int channel = 0; channel < numOutputChannels; ++channel) {
+            if (auto* buffer = outputChannelData[channel]) {
+                std::fill(buffer, buffer + numSamples, 0.0F);
+            }
+        }
+        return;
+    }
+
     const double twoPiOverFs =
         juce::MathConstants<double>::twoPi / sampleRate_;
 
@@ -239,6 +259,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     // that Loop playback stays in phase with the same master clock
     // used by Sequencer timing and beat pulses.
     const double loopBeats = transportBeatsInternal_;
+
+    bool blockHasNonZeroOutput = false;
 
     for (int sample = 0; sample < numSamples; ++sample) {
         float oscMixed = 0.0F;
@@ -935,6 +957,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // waveform visualisation.
             waveformBuffer_[bufIndex] = leftOut;
 
+            if (!blockHasNonZeroOutput &&
+                (leftOut != 0.0F || rightOut != 0.0F)) {
+                blockHasNonZeroOutput = true;
+            }
+
             for (int channel = 0; channel < numOutputChannels; ++channel) {
                 if (auto* buffer = outputChannelData[channel]) {
                     if (channel == 0) {
@@ -1273,6 +1300,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // Loop-only scenes.
             waveformBuffer_[bufIndex] = leftOut;
 
+            if (!blockHasNonZeroOutput &&
+                (leftOut != 0.0F || rightOut != 0.0F)) {
+                blockHasNonZeroOutput = true;
+            }
+
             for (int channel = 0; channel < numOutputChannels; ++channel) {
                 if (auto* buffer = outputChannelData[channel]) {
                     if (channel == 0) {
@@ -1286,6 +1318,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             }
         }
     }
+
+    // Remember whether this callback block produced any audible
+    // output so that the next block can safely enter the fully idle
+    // path once both the scene and the engine are silent.
+    hasPendingOutput_.store(blockHasNonZeroOutput,
+                            std::memory_order_relaxed);
 }
 
 void AudioEngine::triggerVoiceEnvelope(const int index)
@@ -1527,6 +1565,11 @@ void AudioEngine::advanceLoopBeatCounter()
 unsigned int AudioEngine::loopBeatCounter() const noexcept
 {
     return loopGlobalBeatCounter_.load(std::memory_order_relaxed);
+}
+
+void AudioEngine::setProcessingActive(const bool active) noexcept
+{
+    processingRequested_.store(active, std::memory_order_relaxed);
 }
 
 void AudioEngine::setFrequency(const double frequency)
