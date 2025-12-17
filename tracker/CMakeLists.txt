@@ -31,6 +31,39 @@ else()
     target_compile_options(rectai-tracker PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 
+# Optional AVX/AVX2 optimizations specifically for rectai-tracker.
+# These flags are disabled by default to avoid generating binaries that
+# cannot run on older CPUs. When enabled, they are only applied to
+# optimized builds (Release/RelWithDebInfo) on non-MSVC toolchains.
+option(RECTAI_TRACKER_ENABLE_AVX "Enable AVX/AVX2/FMA optimizations for rectai-tracker (may reduce CPU compatibility)" OFF)
+
+if (RECTAI_TRACKER_ENABLE_AVX AND NOT MSVC)
+    include(CheckCXXCompilerFlag)
+
+    set(RECTAI_TRACKER_AVX_FLAGS "")
+
+    check_cxx_compiler_flag("-mavx" RECTAI_TRACKER_HAS_MAVX)
+    if (RECTAI_TRACKER_HAS_MAVX)
+        list(APPEND RECTAI_TRACKER_AVX_FLAGS "-mavx")
+    endif()
+
+    check_cxx_compiler_flag("-mavx2" RECTAI_TRACKER_HAS_MAVX2)
+    if (RECTAI_TRACKER_HAS_MAVX2)
+        list(APPEND RECTAI_TRACKER_AVX_FLAGS "-mavx2")
+    endif()
+
+    check_cxx_compiler_flag("-mfma" RECTAI_TRACKER_HAS_MFMA)
+    if (RECTAI_TRACKER_HAS_MFMA)
+        list(APPEND RECTAI_TRACKER_AVX_FLAGS "-mfma")
+    endif()
+
+    foreach(flag IN LISTS RECTAI_TRACKER_AVX_FLAGS)
+        target_compile_options(rectai-tracker PRIVATE
+            "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:${flag}>"
+        )
+    endforeach()
+endif()
+
 target_include_directories(rectai-tracker PRIVATE
     ${OpenCV_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack

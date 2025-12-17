@@ -216,6 +216,11 @@
   - Menos invocaciones de `g.strokePath` para waveforms en conexiones de nivel casi nulo, que pasaban inadvertidas al ojo pero generaban trabajo de píxel innecesario.
   Estas mejoras deben contribuir a mantener la carga de CPU del hilo de UI por debajo del objetivo (~60%) en escenas como `default.rtp`, especialmente cuando hay muchas conexiones visibles pero con niveles de audio modestos.
 
+### Opción de AVX/AVX2 específica para rectai-tracker
+- Se ha añadido una opción de CMake `RECTAI_TRACKER_ENABLE_AVX` en [tracker/CMakeLists.txt](tracker/CMakeLists.txt#L1-L80) para habilitar flags de vectorización avanzada (AVX, AVX2 y FMA) **sólo** en el binario `rectai-tracker` y únicamente en toolchains no-MSVC.
+- Cuando `RECTAI_TRACKER_ENABLE_AVX` está activada, el script comprueba de forma independiente el soporte de `-mavx`, `-mavx2` y `-mfma` mediante `check_cxx_compiler_flag` y añade cada flag soportada al target `rectai-tracker` con `target_compile_options`, restringiéndolas a configuraciones `Release` y `RelWithDebInfo` mediante `generator expressions`. Esto evita afectar a los builds de `Debug` usados para depuración y perfiles de desarrollo.
+- La opción queda desactivada por defecto (`OFF`) para mantener la máxima compatibilidad de CPU en binarios distribuidos (por ejemplo, contenedores Docker o builds compartidos). En entornos controlados donde se conoce de antemano que la CPU de destino soporta AVX2/FMA, se puede forzar desde la configuración de CMake con `-DRECTAI_TRACKER_ENABLE_AVX=ON` junto con `-DCMAKE_BUILD_TYPE=Release` para obtener kernels de OpenCV y libfidtrack compilados con estas extensiones, sumándose a las optimizaciones ya aplicadas de `-march=native` cuando `RECTAI_ENABLE_CPU_OPTIMIZATIONS` está activo.
+
 ## 2025-12-17
 
 ### Unificación de BPM global y helpers en TempoModule
