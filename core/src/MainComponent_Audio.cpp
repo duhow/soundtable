@@ -25,23 +25,17 @@ namespace {
 //   0 = 1/32, 1 = 1/16, 2 = 1/8, 3 = 1/4, 4 = 2/4, 5 = 4/4.
 [[nodiscard]] double binarySpeedToBeats(const int speed)
 {
-    // Clamp speed to the supported range [0,5].
-    const int clamped = std::clamp(speed, 0, 5);
-    switch (clamped) {
-    case 0:
-        return 1.0 / 8.0;   // 1/32 note = 0.125 beats.
-    case 1:
-        return 1.0 / 4.0;   // 1/16 note = 0.25 beats.
-    case 2:
-        return 1.0 / 2.0;   // 1/8 note = 0.5 beats.
-    case 3:
-        return 1.0;         // 1/4 note = 1 beat.
-    case 4:
-        return 2.0;         // 2/4 note = 2 beats.
-    case 5:
-    default:
-        return 4.0;         // 4/4 note = 4 beats.
-    }
+    static constexpr std::array<double, 6> kBeats = {
+        0.125, // 1/32 note
+        0.25,  // 1/16 note
+        0.5,   // 1/8 note
+        1.0,   // 1/4 note
+        2.0,   // 2/4 note
+        4.0    // 4/4 note
+    };
+
+    const int idx = std::min(5, std::max(0, speed));
+    return kBeats[static_cast<size_t>(idx)];
 }
 
 }  // namespace
