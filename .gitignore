@@ -4,6 +4,7 @@
 /Testing
 /reacTIVision
 /*.log
+*.out.*
 
 *.rtz
 /com.reactable/

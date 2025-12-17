@@ -23,6 +23,12 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
 
+    // Explicit mouseMove handler that does not trigger repaints by
+    // itself. Plain hover events are handled via the base
+    // juce::Component implementation; visual updates are driven by
+    // the timer and explicit drag/click gestures.
+    void mouseMove(const juce::MouseEvent& event) override;
+
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
     void mouseUp(const juce::MouseEvent& event) override;

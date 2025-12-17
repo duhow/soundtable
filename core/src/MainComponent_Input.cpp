@@ -11,10 +11,93 @@
 using rectai::ui::isConnectionGeometricallyActive;
 using rectai::ui::makeConnectionKey;
 
+void MainComponent::mouseMove(const juce::MouseEvent& event)
+{
+    // Do not trigger repaints on plain hover events. All visual
+    // updates are driven by the timer and by explicit drag/click
+    // gestures (mouseDown/mouseDrag/mouseUp/mouseWheelMove).
+    juce::Component::mouseMove(event);
+}
+
 void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
                                    const juce::MouseWheelDetails& wheel)
 {
     const auto bounds = getLocalBounds().toFloat();
+
+    const float wheelDelta = static_cast<float>(wheel.deltaY);
+    if (wheelDelta == 0.0F) {
+        return;
+    }
+
+    // -----
+    // 1) Check if we are interacting with the Dock (right area).
+
+    // Limit mouse wheel scrolling to the dock area only.
+    auto dockBounds = bounds;
+    const float dockWidth = calculateDockWidth(dockBounds.getWidth());
+    juce::Rectangle<float> dockArea =
+        dockBounds.removeFromRight(dockWidth);
+
+    if (!dockArea.contains(event.position)) {
+        // Fire default handler
+        juce::Component::mouseWheelMove(event, wheel);
+        // return;
+    }
+
+    if (dockArea.contains(event.position)) {
+        const auto& objects = scene_.objects();
+        std::size_t dockCount = 0;
+        for (const auto& [id, obj] : objects) {
+            juce::ignoreUnused(id);
+            if (obj.docked()) {
+                ++dockCount;
+            }
+        }
+
+        if (dockCount == 0) {
+            return;
+        }
+
+        // Replicate the same boundary logic used when dragging the dock.
+        const float titleHeight = 24.0F;
+        juce::Rectangle<float> titleArea =
+            dockArea.removeFromTop(titleHeight);
+        juce::ignoreUnused(titleArea);
+
+        const float availableHeight = dockArea.getHeight();
+        const float nodeRadiusDock = 18.0F;
+        const float verticalPadding = 12.0F;
+        const float slotHeight =
+            nodeRadiusDock * 2.0F + verticalPadding;
+        const float contentHeight =
+            slotHeight * static_cast<float>(dockCount);
+        const float minOffset =
+            (contentHeight > availableHeight)
+                ? (availableHeight - contentHeight)
+                : 0.0F;
+
+        // deltaY > 0 means wheel up; scroll content in steps proportional
+        // to the height of a single dock slot so that each wheel notch
+        // advances approximately one module.
+        const float scrollStepPixels = slotHeight;
+        const float delta = static_cast<float>(wheel.deltaY) *
+                            scrollStepPixels;
+
+        const float previousOffset = dockScrollOffset_;
+        dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
+                                        dockScrollOffset_ + delta);
+
+        // Only repaint when the effective dock offset actually changes;
+        // if we are already at a boundary, wheel events should not
+        // trigger extra frames.
+        if (dockScrollOffset_ != previousOffset) {
+            repaint();
+        }
+        return;
+    }
+
+    // -----
+    // 2) Interaction with Modules on the table surface.
 
     // When the cursor is over specific modules on the table surface,
     // repurpose the mouse wheel for direct parameter tweaks instead
@@ -24,156 +107,93 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
         const auto& modules = scene_.modules();
 
         const float interactionRadius = 30.0F;
-        const float wheelDelta = static_cast<float>(wheel.deltaY);
+        bool toRepaint = false;
 
-        if (wheelDelta != 0.0F) {
-            for (const auto& [id, object] : objects) {
-                juce::ignoreUnused(id);
+        for (const auto& [id, object] : objects) {
+            juce::ignoreUnused(id);
 
-                const auto modIt = modules.find(object.logical_id());
-                if (modIt == modules.end() || modIt->second == nullptr) {
-                    continue;
-                }
-
-                auto* module = modIt->second.get();
-
-                if (object.docked()) {
-                    // Wheel gestures are only active when the tangible
-                    // is on the table surface.
-                    continue;
-                }
-
-                const auto centrePos = objectTableToScreen(object, bounds);
-                const float cx = centrePos.x;
-                const float cy = centrePos.y;
-
-                const float dx = static_cast<float>(event.position.x) - cx;
-                const float dy = static_cast<float>(event.position.y) - cy;
-                const float distSq = dx * dx + dy * dy;
-                if (distSq > interactionRadius * interactionRadius) {
-                    continue;
-                }
-
-                // TempoModule: fine-grained BPM nudging.
-                if (auto* tempoModule =
-                        dynamic_cast<rectai::TempoModule*>(module)) {
-                    const double baseStep =
-                        event.mods.isShiftDown() ? 5.0 : 1.0;
-                    const double step =
-                        (wheelDelta > 0.0F) ? baseStep : -baseStep;
-                    double newBpm = bpm_ + step;
-                    newBpm = juce::jlimit(40.0, 400.0, newBpm);
-
-                    if (newBpm == bpm_) {
-                        return;
-                    }
-
-                    bpm_ = newBpm;
-                    bpmLastChangeSeconds_ =
-                        juce::Time::getMillisecondCounterHiRes() / 1000.0;
-
-                    // Keep the logical Tempo module parameter in sync
-                    // with the global BPM so that serialisation and
-                    // other consumers observe the updated tempo value.
-                    scene_.SetModuleParameter(tempoModule->id(), "tempo",
-                                              static_cast<float>(bpm_));
-
-                    repaint();
-                    return;
-                }
-
-                // LoopModule: cycle through the four discrete sample
-                // slots using the normalised "sample" parameter.
-                if (auto* loopModule =
-                        dynamic_cast<rectai::LoopModule*>(module)) {
-                    float sampleParam = loopModule->GetParameterOrDefault(
-                        "sample", 0.0F);
-                    sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
-                    int segIndex =
-                        static_cast<int>(sampleParam * 4.0F);
-                    if (segIndex < 0) {
-                        segIndex = 0;
-                    } else if (segIndex > 3) {
-                        segIndex = 3;
-                    }
-
-                    if (wheelDelta > 0.0F) {
-                        ++segIndex;
-                    } else if (wheelDelta < 0.0F) {
-                        --segIndex;
-                    }
-
-                    if (segIndex < 0) {
-                        segIndex = 3;
-                    } else if (segIndex > 3) {
-                        segIndex = 0;
-                    }
-
-                    const float newSampleValue =
-                        (static_cast<float>(segIndex) + 0.5F) / 4.0F;
-                    scene_.SetModuleParameter(loopModule->id(), "sample",
-                                              newSampleValue);
-                    markLoopSampleLabelActive(loopModule->id());
-
-                    repaint();
-                    return;
-                }
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt == modules.end() || modIt->second == nullptr) {
+                continue;
             }
+
+            auto* module = modIt->second.get();
+
+            if (object.docked()) {
+                // Wheel gestures are only active when the tangible
+                // is on the table surface.
+                continue;
+            }
+
+            const auto centrePos = objectTableToScreen(object, bounds);
+            const float cx = centrePos.x;
+            const float cy = centrePos.y;
+
+            const float dx = static_cast<float>(event.position.x) - cx;
+            const float dy = static_cast<float>(event.position.y) - cy;
+            const float distSq = dx * dx + dy * dy;
+            if (distSq > interactionRadius * interactionRadius) {
+                continue;
+            }
+
+            // TempoModule: fine-grained BPM nudging.
+            if (auto* tempoModule =
+                    dynamic_cast<rectai::TempoModule*>(module)) {
+                const double baseStep =
+                    event.mods.isShiftDown() ? 5.0 : 1.0;
+                const double step =
+                    (wheelDelta > 0.0F) ? baseStep : -baseStep;
+                double newBpm = bpm_ + step;
+                newBpm = juce::jlimit(40.0, 400.0, newBpm);
+
+                if (newBpm == bpm_) {
+                    return;
+                }
+
+                bpm_ = newBpm;
+                bpmLastChangeSeconds_ =
+                    juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+                // Keep the logical Tempo module parameter in sync
+                // with the global BPM so that serialisation and
+                // other consumers observe the updated tempo value.
+                scene_.SetModuleParameter(tempoModule->id(), "tempo",
+                                            static_cast<float>(bpm_));
+
+                toRepaint = true;
+            }
+
+            // LoopModule: cycle through the four discrete sample
+            // slots using the normalised "sample" parameter.
+            else if (auto* loopModule =
+                    dynamic_cast<rectai::LoopModule*>(module)) {
+                float sampleParam = loopModule->GetParameterOrDefault(
+                    "sample", 0.0F);
+                sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
+
+                // Iterate over 4 sample slots, if jumping to last/first
+                // then scroll infinite to wrap around.
+                int segIndex = static_cast<int>(sampleParam * 4.0F);
+                segIndex = std::clamp(segIndex, 0, 3);
+                segIndex = (segIndex + (wheelDelta > 0.0F ? 1 : -1) + 4) % 4;
+
+                // Position as decimal to place the Triangle
+                // in the middle of the segment.
+                const float newSampleValue =
+                    (static_cast<float>(segIndex) + 0.5F) / 4.0F;
+                scene_.SetModuleParameter(loopModule->id(), "sample",
+                                            newSampleValue);
+                markLoopSampleLabelActive(loopModule->id());
+
+                toRepaint = true;
+            }
+
+            if (toRepaint) {
+                repaint();
+            }
+            return;
         }
     }
-
-    // Limit mouse wheel scrolling to the dock area only.
-    auto dockBounds = bounds;
-    const float dockWidth = calculateDockWidth(dockBounds.getWidth());
-    juce::Rectangle<float> dockArea =
-        dockBounds.removeFromRight(dockWidth);
-
-    if (!dockArea.contains(event.position)) {
-        juce::Component::mouseWheelMove(event, wheel);
-        return;
-    }
-
-    const auto& objects = scene_.objects();
-    std::size_t dockCount = 0;
-    for (const auto& [id, obj] : objects) {
-        juce::ignoreUnused(id);
-        if (obj.docked()) {
-            ++dockCount;
-        }
-    }
-
-    if (dockCount == 0) {
-        return;
-    }
-
-    // Replicate the same boundary logic used when dragging the dock.
-    const float titleHeight = 24.0F;
-    juce::Rectangle<float> titleArea =
-        dockArea.removeFromTop(titleHeight);
-    juce::ignoreUnused(titleArea);
-
-    const float availableHeight = dockArea.getHeight();
-    const float nodeRadiusDock = 18.0F;
-    const float verticalPadding = 12.0F;
-    const float slotHeight =
-        nodeRadiusDock * 2.0F + verticalPadding;
-    const float contentHeight =
-        slotHeight * static_cast<float>(dockCount);
-    const float minOffset =
-        (contentHeight > availableHeight)
-            ? (availableHeight - contentHeight)
-            : 0.0F;
-
-    // deltaY > 0 means wheel up; scroll content in steps proportional
-    // to the height of a single dock slot so that each wheel notch
-    // advances approximately one module.
-    const float scrollStepPixels = slotHeight;
-    const float delta = static_cast<float>(wheel.deltaY) *
-                        scrollStepPixels;
-
-    dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
-                                     dockScrollOffset_ + delta);
-    repaint();
 }
 
 void MainComponent::mouseDown(const juce::MouseEvent& event)
