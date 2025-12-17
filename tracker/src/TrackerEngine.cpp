@@ -52,7 +52,11 @@ TrackerEngine::~TrackerEngine()
     }
 }
 
-bool TrackerEngine::initialise(const int /*cameraIndex*/, const int requestedWidth, const int requestedHeight, std::string& /*errorMessage*/)
+bool TrackerEngine::initialise(const int /*cameraIndex*/,
+                  const int requestedWidth,
+                  const int requestedHeight,
+                  std::string& /*errorMessage*/,
+                  const bool enableDownscale)
 {
     frameWidth_ = requestedWidth;
     frameHeight_ = requestedHeight;
@@ -67,7 +71,8 @@ bool TrackerEngine::initialise(const int /*cameraIndex*/, const int requestedWid
     // upper bound. This reduces the amount of work done by the
     // segmenter (build_regions / merge_regions, etc.) when the
     // camera runs at HD or higher resolutions.
-    if (frameWidth_ > kMaxProcessingWidth || frameHeight_ > kMaxProcessingHeight) {
+    if (enableDownscale &&
+        (frameWidth_ > kMaxProcessingWidth || frameHeight_ > kMaxProcessingHeight)) {
         const float scaleX = static_cast<float>(kMaxProcessingWidth) / static_cast<float>(frameWidth_);
         const float scaleY = static_cast<float>(kMaxProcessingHeight) / static_cast<float>(frameHeight_);
         const float scale = std::min(scaleX, scaleY);

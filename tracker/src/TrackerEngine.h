@@ -20,7 +20,11 @@ public:
 
     ~TrackerEngine();
 
-    bool initialise(int cameraIndex, int requestedWidth, int requestedHeight, std::string& errorMessage);
+    bool initialise(int cameraIndex,
+                    int requestedWidth,
+                    int requestedHeight,
+                    std::string& errorMessage,
+                    bool enableDownscale = true);
 
     [[nodiscard]] bool isInitialised() const noexcept;
 

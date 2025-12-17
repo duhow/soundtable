@@ -5,7 +5,9 @@
 
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -24,6 +26,11 @@ namespace {
 enum class RunMode {
 	Synthetic,
 	Live
+};
+
+struct Resolution {
+	int width{};
+	int height{};
 };
 
 RunMode parseMode(int argc, char** argv)
@@ -50,6 +57,48 @@ bool hasDebugViewFlag(int argc, char** argv)
 		}
 	}
 	return false;
+}
+
+bool hasNoDownscaleFlag(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		if (arg == "--no-downscale") {
+			return true;
+		}
+	}
+	return false;
+}
+
+std::optional<Resolution> parseResolutionArg(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		constexpr std::string_view prefix{"--resolution="};
+		if (arg.rfind(prefix.data(), 0) == 0) {
+			const std::string value = arg.substr(prefix.size());
+			const auto xPos = value.find('x');
+			if (xPos == std::string::npos || xPos == 0 || xPos == value.size() - 1) {
+				return std::nullopt;
+			}
+
+			const std::string widthStr = value.substr(0, xPos);
+			const std::string heightStr = value.substr(xPos + 1);
+
+			try {
+				const int width = std::stoi(widthStr);
+				const int height = std::stoi(heightStr);
+				if (width <= 0 || height <= 0) {
+					return std::nullopt;
+				}
+				return Resolution{width, height};
+			} catch (const std::exception&) {
+				return std::nullopt;
+			}
+		}
+	}
+
+	return std::nullopt;
 }
 
 // Maps physical tracker marker IDs to logical module IDs used by the
@@ -87,6 +136,8 @@ int main(int argc, char** argv)
 {
 	const auto mode = parseMode(argc, argv);
 	const bool debugView = hasDebugViewFlag(argc, argv);
+	const bool noDownscale = hasNoDownscaleFlag(argc, argv);
+	const auto requestedResolution = parseResolutionArg(argc, argv);
 
 	cv::VideoCapture capture(0);
 	if (!capture.isOpened()) {
@@ -124,13 +175,19 @@ int main(int argc, char** argv)
 	double lastProcessingTimeSec = static_cast<double>(cv::getTickCount()) / cv::getTickFrequency();
 
 	if (mode == RunMode::Live) {
-		const int width = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_WIDTH));
-		const int height = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_HEIGHT));
-		if (!trackerEngine.initialise(0, width, height, initError)) {
+		int width = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_WIDTH));
+		int height = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_HEIGHT));
+		if (requestedResolution.has_value()) {
+			width = requestedResolution->width;
+			height = requestedResolution->height;
+		}
+		if (!trackerEngine.initialise(0, width, height, initError, !noDownscale)) {
 			std::cerr << "[rectai-tracker] Failed to initialise TrackerEngine: "
 					  << initError << std::endl;
 			return 1;
 		}
+		std::cout << "[rectai-tracker] Starting engine with resolution="
+				  << width << "x" << height << std::endl;
 	}
 
 	cv::Mat frame;
