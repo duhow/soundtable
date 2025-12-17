@@ -115,6 +115,14 @@ int main(int argc, char** argv)
 	std::unordered_map<int, int> consecutiveDetectionsById;
 	std::unordered_map<int, std::pair<float, float>> lastPositionById;
 
+	// Adaptive processing rate: when we have not seen any fiducials
+	// for a long time, we can reduce how often we run the expensive
+	// tracking pipeline. Once we detect something again, we go back
+	// to processing every frame.
+	int framesWithoutDetections = 0;
+	bool lowProcessingRate = false;
+	double lastProcessingTimeSec = static_cast<double>(cv::getTickCount()) / cv::getTickFrequency();
+
 	if (mode == RunMode::Live) {
 		const int width = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_WIDTH));
 		const int height = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_HEIGHT));
@@ -141,6 +149,9 @@ int main(int argc, char** argv)
 
 		++frames;
 
+		const double nowTicks = static_cast<double>(cv::getTickCount());
+		const double nowSec = nowTicks / cv::getTickFrequency();
+
 		if (mode == RunMode::Synthetic) {
 			if (oscSender.isOk()) {
 				phase += 0.01F;
@@ -156,10 +167,37 @@ int main(int argc, char** argv)
 			}
 		} else {
 			rectai::tracker::TrackedObjectList objects;
-			if (debugView) {
-				objects = trackerEngine.processFrame(frame, debugFrame);
+			bool processedThisFrame = false;
+
+			// Decide whether to run the tracker on this frame based on
+			// the current processing rate mode.
+			if (!lowProcessingRate) {
+				if (debugView) {
+					objects = trackerEngine.processFrame(frame, debugFrame);
+				} else {
+					objects = trackerEngine.processFrame(frame);
+				}
+				processedThisFrame = true;
+				lastProcessingTimeSec = nowSec;
 			} else {
-				objects = trackerEngine.processFrame(frame);
+				// Low-rate mode: only process a subset of frames.
+				constexpr double kLowRateFps = 15.0;
+				const double minIntervalSec = 1.0 / kLowRateFps;
+				if (nowSec - lastProcessingTimeSec >= minIntervalSec) {
+					if (debugView) {
+						objects = trackerEngine.processFrame(frame, debugFrame);
+					} else {
+						objects = trackerEngine.processFrame(frame);
+					}
+					processedThisFrame = true;
+					lastProcessingTimeSec = nowSec;
+				}
+			}
+
+			if (!processedThisFrame) {
+				// Skip updates for this camera frame; keep last known
+				// stable objects and wait for the next processed one.
+				continue;
 			}
 
 			// Update per-ID consecutive detection counters for this frame.
@@ -211,6 +249,24 @@ int main(int argc, char** argv)
 				if (consecutiveFrames >= 0) { // NOTE: increase value if you need more stability or accuracy
 					stableObjects.push_back(obj);
 				}
+			}
+
+			// Maintain a simple heuristic of how many processed frames
+			// we have gone without seeing any objects. If we see nothing
+			// for a long time, we throttle the processing rate; any new
+			// detection brings us back to full rate.
+			if (objects.empty()) {
+				++framesWithoutDetections;
+			} else {
+				framesWithoutDetections = 0;
+			}
+
+			if (!lowProcessingRate && framesWithoutDetections >= 100) {
+				lowProcessingRate = true;
+				std::cout << "[rectai-tracker] No fiducials detected for 100 frames, throttling processing to ~15 FPS." << std::endl;
+			} else if (lowProcessingRate && !objects.empty()) {
+				lowProcessingRate = false;
+				std::cout << "[rectai-tracker] Fiducials detected again, resuming full-rate processing." << std::endl;
 			}
 
 			// Update lifetime tracking only with stable objects so that

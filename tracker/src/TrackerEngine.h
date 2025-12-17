@@ -41,6 +41,15 @@ private:
     TreeIdMap treeIdMap_{};
     FidtrackerX fidtrackerX_{};
 
+    // Simple adaptive strategy state for choosing between
+    // global Otsu thresholds and adaptive thresholds based on
+    // recent detection history.
+    int framesSinceAnyDetection_{};
+    int consecutiveOtsuOnlySuccess_{};
+    int consecutiveAdaptiveOnlySuccess_{};
+    int consecutiveOtsuFailures_{};
+    bool preferAdaptiveFirst_{};
+
     [[nodiscard]] TrackedObjectList detectAmoebaFiducials(const cv::Mat& binaryFrame);
 
     [[nodiscard]] TrackedObjectList processFrameInternal(const cv::Mat& frame, cv::Mat* debugFrame);
