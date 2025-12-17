@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
+#include <limits>
 
 #include <opencv2/imgproc.hpp>
 
@@ -29,14 +31,17 @@ constexpr int kMaxRecognisedMarkerId = 215;
 constexpr int kMaxProcessingWidth = 1280;
 constexpr int kMaxProcessingHeight = 720;
 
-// How many consecutive "only Otsu" or "only adaptive" successes
-// are required before flipping the preference between Otsu-first
-// and adaptive-first.
-constexpr int kSuccessStreakForPreferenceFlip = 10;
+// Number of frames over which we evaluate all filters for a given
+// fiducial before choosing the "winning" filter.
+constexpr int kTrainingWindowFrames = 30;
 
-// When preferring Otsu first, we only pay the cost of adaptive
-// thresholding if Otsu has failed for this many consecutive frames.
-constexpr int kOtsuFailuresBeforeTryingAdaptive = 2;
+// Human-readable names for debug logging of per-filter statistics.
+constexpr int kNumThresholdFiltersConst = 4;
+constexpr const char* kFilterNames[kNumThresholdFiltersConst] = {
+    "OtsuBinary",
+    "OtsuBinaryInv",
+    "AdaptiveBinary",
+    "AdaptiveBinaryInv"};
 
 } // namespace
 
@@ -141,138 +146,263 @@ TrackedObjectList TrackerEngine::processFrameInternal(const cv::Mat& frame, cv::
         return detectAmoebaFiducials(bin);
     };
 
-    // Helper lambdas for the four concrete thresholding strategies
-    // we may use, in different orders depending on recent history.
-    auto runOtsu = [&](int flags) -> TrackedObjectList {
-        cv::threshold(resized, binary, 0.0, 255.0, flags);
-        return detectWithBinary(binary);
-    };
-
-    auto runAdaptive = [&](int flags) -> TrackedObjectList {
-        cv::adaptiveThreshold(resized, binary, 255.0, cv::ADAPTIVE_THRESH_MEAN_C,
-                              flags, 21, 5.0);
-        return detectWithBinary(binary);
-    };
-
-    // Decide which family of thresholds to try first based on
-    // recent detection history: if we tend to detect only with
-    // adaptive, try those first; otherwise, prefer Otsu.
-    auto tryOtsuThenAdaptive = [&]() -> TrackedObjectList {
-        TrackedObjectList fiducials = runOtsu(cv::THRESH_BINARY | cv::THRESH_OTSU);
-        if (!fiducials.empty()) {
-            consecutiveOtsuOnlySuccess_++;
-            consecutiveAdaptiveOnlySuccess_ = 0;
-            consecutiveOtsuFailures_ = 0;
-            framesSinceAnyDetection_ = 0;
-            return fiducials;
+    auto runFilter = [&](ThresholdFilter filter) -> TrackedObjectList {
+        switch (filter) {
+        case ThresholdFilter::OtsuBinary:
+            cv::threshold(resized, binary, 0.0, 255.0, cv::THRESH_BINARY | cv::THRESH_OTSU);
+            return detectWithBinary(binary);
+        case ThresholdFilter::OtsuBinaryInv:
+            cv::threshold(resized, binary, 0.0, 255.0, cv::THRESH_BINARY_INV | cv::THRESH_OTSU);
+            return detectWithBinary(binary);
+        case ThresholdFilter::AdaptiveBinary:
+            cv::adaptiveThreshold(resized, binary, 255.0, cv::ADAPTIVE_THRESH_MEAN_C,
+                                  cv::THRESH_BINARY, 21, 5.0);
+            return detectWithBinary(binary);
+        case ThresholdFilter::AdaptiveBinaryInv:
+            cv::adaptiveThreshold(resized, binary, 255.0, cv::ADAPTIVE_THRESH_MEAN_C,
+                                  cv::THRESH_BINARY_INV, 21, 5.0);
+            return detectWithBinary(binary);
         }
 
-        ++consecutiveOtsuFailures_;
-
-        // Do not pay the cost of adaptive thresholding for isolated
-        // Otsu failures; require a short streak of failures first.
-        if (consecutiveOtsuFailures_ < kOtsuFailuresBeforeTryingAdaptive) {
-            ++framesSinceAnyDetection_;
-            consecutiveOtsuOnlySuccess_ = 0;
-            consecutiveAdaptiveOnlySuccess_ = 0;
-            return {};
-        }
-
-        // Try inverted Otsu once we are already in a failure streak.
-        fiducials = runOtsu(cv::THRESH_BINARY_INV | cv::THRESH_OTSU);
-        if (!fiducials.empty()) {
-            consecutiveOtsuOnlySuccess_++;
-            consecutiveAdaptiveOnlySuccess_ = 0;
-            consecutiveOtsuFailures_ = 0;
-            framesSinceAnyDetection_ = 0;
-            return fiducials;
-        }
-
-        // Finally, pay the more expensive adaptive thresholding
-        // passes when global thresholds are consistently failing.
-        fiducials = runAdaptive(cv::THRESH_BINARY);
-        if (!fiducials.empty()) {
-            consecutiveAdaptiveOnlySuccess_++;
-            consecutiveOtsuOnlySuccess_ = 0;
-            consecutiveOtsuFailures_ = 0;
-            framesSinceAnyDetection_ = 0;
-            return fiducials;
-        }
-
-        fiducials = runAdaptive(cv::THRESH_BINARY_INV);
-        if (!fiducials.empty()) {
-            consecutiveAdaptiveOnlySuccess_++;
-            consecutiveOtsuOnlySuccess_ = 0;
-            consecutiveOtsuFailures_ = 0;
-            framesSinceAnyDetection_ = 0;
-            return fiducials;
-        }
-
-        ++framesSinceAnyDetection_;
-        consecutiveOtsuOnlySuccess_ = 0;
-        consecutiveAdaptiveOnlySuccess_ = 0;
         return {};
     };
 
-    auto tryAdaptiveThenOtsu = [&]() -> TrackedObjectList {
-        TrackedObjectList fiducials = runAdaptive(cv::THRESH_BINARY);
-        if (!fiducials.empty()) {
-            consecutiveAdaptiveOnlySuccess_++;
-            consecutiveOtsuOnlySuccess_ = 0;
-            consecutiveOtsuFailures_ = 0;
-            framesSinceAnyDetection_ = 0;
-            return fiducials;
-        }
+    const ThresholdFilter allFilters[kNumThresholdFilters] = {
+        ThresholdFilter::OtsuBinary,
+        ThresholdFilter::OtsuBinaryInv,
+        ThresholdFilter::AdaptiveBinary,
+        ThresholdFilter::AdaptiveBinaryInv};
 
-        fiducials = runAdaptive(cv::THRESH_BINARY_INV);
-        if (!fiducials.empty()) {
-            consecutiveAdaptiveOnlySuccess_++;
-            consecutiveOtsuOnlySuccess_ = 0;
-            consecutiveOtsuFailures_ = 0;
-            framesSinceAnyDetection_ = 0;
-            return fiducials;
+    auto mergeResults = [](const TrackedObjectList& src, TrackedObjectList& dst) {
+        for (const auto& obj : src) {
+            const auto it = std::find_if(dst.begin(), dst.end(), [&](const TrackedObject& existing) {
+                return existing.id == obj.id;
+            });
+            if (it == dst.end()) {
+                dst.push_back(obj);
+            }
         }
+    };
 
-        // If adaptive fails, fall back to the cheaper Otsu
-        // thresholds before giving up.
-        fiducials = runOtsu(cv::THRESH_BINARY | cv::THRESH_OTSU);
-        if (!fiducials.empty()) {
-            consecutiveOtsuOnlySuccess_++;
-            consecutiveAdaptiveOnlySuccess_ = 0;
-            consecutiveOtsuFailures_ = 0;
-            framesSinceAnyDetection_ = 0;
-            return fiducials;
-        }
-
-        fiducials = runOtsu(cv::THRESH_BINARY_INV | cv::THRESH_OTSU);
-        if (!fiducials.empty()) {
-            consecutiveOtsuOnlySuccess_++;
-            consecutiveAdaptiveOnlySuccess_ = 0;
-            consecutiveOtsuFailures_ = 0;
-            framesSinceAnyDetection_ = 0;
-            return fiducials;
-        }
-
-        ++framesSinceAnyDetection_;
-        consecutiveOtsuOnlySuccess_ = 0;
-        consecutiveAdaptiveOnlySuccess_ = 0;
-        return {};
+    auto containsFiducial = [](const TrackedObjectList& list, const int fidId) -> bool {
+        return std::any_of(list.begin(), list.end(), [fidId](const TrackedObject& obj) {
+            return obj.id == fidId;
+        });
     };
 
     TrackedObjectList fiducials;
 
-    // Flip preference between Otsu-first and adaptive-first based
-    // on which family has been more successful recently.
-    if (!preferAdaptiveFirst_ && consecutiveAdaptiveOnlySuccess_ >= kSuccessStreakForPreferenceFlip) {
-        preferAdaptiveFirst_ = true;
-    } else if (preferAdaptiveFirst_ && consecutiveOtsuOnlySuccess_ >= kSuccessStreakForPreferenceFlip) {
-        preferAdaptiveFirst_ = false;
+    // 1) Ventana de entrenamiento: evaluar todos los filtros
+    // durante kTrainingWindowFrames para un fiducial principal.
+    if (trainingFramesRemaining_ > 0 && primaryFiducialId_ > 0) {
+        for (int i = 0; i < kNumThresholdFilters; ++i) {
+            const auto filter = allFilters[i];
+            const TrackedObjectList filterResult = runFilter(filter);
+            mergeResults(filterResult, fiducials);
+
+            for (const auto& obj : filterResult) {
+                filterSeenIds_[i].insert(obj.id);
+            }
+
+            if (containsFiducial(filterResult, primaryFiducialId_)) {
+                ++filterSuccessCount_[i];
+            }
+        }
+
+        if (containsFiducial(fiducials, primaryFiducialId_)) {
+            framesSincePrimarySeen_ = 0;
+        } else {
+            ++framesSincePrimarySeen_;
+            if (framesSincePrimarySeen_ > 4) {
+                // Discard this fiducial immediately if it has been
+                // missing for more than 4 consecutive frames.
+                primaryFiducialId_ = -1;
+                trainingFramesRemaining_ = 0;
+                hasActiveFilter_ = false;
+                primaryLostLastFrame_ = false;
+                framesSincePrimarySeen_ = 0;
+                std::fill(filterSuccessCount_.begin(), filterSuccessCount_.end(), 0);
+                for (auto& ids : filterSeenIds_) {
+                    ids.clear();
+                }
+                return fiducials;
+            }
+        }
+
+        --trainingFramesRemaining_;
+
+        if (trainingFramesRemaining_ == 0) {
+            // Elegir el filtro ganador para este fiducial. En caso
+            // de discrepancia, se prioriza el filtro que ha visto
+            // menos IDs distintos a lo largo de la ventana, siempre
+            // que haya detectado el fiducial principal al menos una vez.
+            int bestIndex = -1;
+            int bestCount = -1;
+            int bestIdSetSize = std::numeric_limits<int>::max();
+
+            for (int i = 0; i < kNumThresholdFilters; ++i) {
+                const int count = filterSuccessCount_[i];
+                if (count <= 0) {
+                    continue;
+                }
+
+                const int idSetSize = static_cast<int>(filterSeenIds_[i].size());
+
+                if (idSetSize < bestIdSetSize ||
+                    (idSetSize == bestIdSetSize && count > bestCount)) {
+                    bestIdSetSize = idSetSize;
+                    bestCount = count;
+                    bestIndex = i;
+                }
+            }
+
+            if (bestIndex >= 0 && bestCount > 0) {
+                activeFilter_ = allFilters[bestIndex];
+                hasActiveFilter_ = true;
+
+#ifndef NDEBUG
+                std::cerr << "[rectai-tracker] filter training completed for fiducial "
+                          << primaryFiducialId_ << " over " << kTrainingWindowFrames
+                          << " frames. Results:";
+                for (int i = 0; i < kNumThresholdFilters; ++i) {
+                    const int idSetSize = static_cast<int>(filterSeenIds_[i].size());
+                    std::cerr << " " << kFilterNames[i] << "=" << filterSuccessCount_[i]
+                              << " (ids=" << idSetSize << ")";
+                }
+                std::cerr << " (winner=" << kFilterNames[bestIndex] << ")" << std::endl;
+#endif
+            }
+        }
+
+        primaryLostLastFrame_ = false;
+        return fiducials;
     }
 
-    if (preferAdaptiveFirst_) {
-        fiducials = tryAdaptiveThenOtsu();
-    } else {
-        fiducials = tryOtsuThenAdaptive();
+    // 2) Filtro fijado: usar sólo el filtro ganador hasta que el
+    // fiducial principal deje de verse.
+    if (hasActiveFilter_ && primaryFiducialId_ > 0 && !primaryLostLastFrame_) {
+        fiducials = runFilter(activeFilter_);
+
+        if (containsFiducial(fiducials, primaryFiducialId_)) {
+            framesSincePrimarySeen_ = 0;
+            return fiducials;
+        }
+
+        // El filtro activo ha dejado de ver al fiducial; el
+        // siguiente frame probará todos los demás filtros. También
+        // contamos cuántos frames lleva desaparecido.
+        ++framesSincePrimarySeen_;
+        if (framesSincePrimarySeen_ > 4) {
+            primaryFiducialId_ = -1;
+            trainingFramesRemaining_ = 0;
+            hasActiveFilter_ = false;
+            primaryLostLastFrame_ = false;
+            framesSincePrimarySeen_ = 0;
+            std::fill(filterSuccessCount_.begin(), filterSuccessCount_.end(), 0);
+            for (auto& ids : filterSeenIds_) {
+                ids.clear();
+            }
+        } else {
+            primaryLostLastFrame_ = true;
+        }
+        return fiducials;
+    }
+
+    // 3) Tras perder el fiducial con el filtro activo, probar todos
+    // los filtros. Si ninguno vuelve a verlo, se reinicia el estado
+    // adaptativo y se vuelve al modo inicial.
+    if (hasActiveFilter_ && primaryFiducialId_ > 0 && primaryLostLastFrame_) {
+        bool seenAgain = false;
+
+        // Evaluar todos los filtros (incluido el activo) para ver si
+        // alguno vuelve a detectar el fiducial principal.
+        std::fill(filterSuccessCount_.begin(), filterSuccessCount_.end(), 0);
+        for (auto& ids : filterSeenIds_) {
+            ids.clear();
+        }
+
+        for (int i = 0; i < kNumThresholdFilters; ++i) {
+            const auto filter = allFilters[i];
+            const TrackedObjectList filterResult = runFilter(filter);
+            mergeResults(filterResult, fiducials);
+
+            for (const auto& obj : filterResult) {
+                filterSeenIds_[i].insert(obj.id);
+            }
+
+            if (containsFiducial(filterResult, primaryFiducialId_)) {
+                seenAgain = true;
+                ++filterSuccessCount_[i];
+            }
+        }
+
+        if (seenAgain) {
+            framesSincePrimarySeen_ = 0;
+            // Volvemos a ver el fiducial: reiniciar ventana de
+            // entrenamiento completa desde este frame.
+            trainingFramesRemaining_ = kTrainingWindowFrames;
+            primaryLostLastFrame_ = false;
+            // `filterSuccessCount_` ya contiene el conteo del
+            // primer frame de la nueva ventana.
+            return fiducials;
+        }
+
+        ++framesSincePrimarySeen_;
+        if (framesSincePrimarySeen_ > 4) {
+            // El fiducial lleva más de 4 frames sin aparecer con
+            // ningún filtro: descartar inmediatamente.
+            hasActiveFilter_ = false;
+            primaryFiducialId_ = -1;
+            primaryLostLastFrame_ = false;
+            trainingFramesRemaining_ = 0;
+            framesSincePrimarySeen_ = 0;
+            std::fill(filterSuccessCount_.begin(), filterSuccessCount_.end(), 0);
+            for (auto& ids : filterSeenIds_) {
+                ids.clear();
+            }
+        }
+
+        // Devolvemos lo que hayamos visto en este frame, aunque ya
+        // no esté el fiducial principal.
+        return fiducials;
+    }
+
+    // 4) Modo base: aún no hay fiducial principal ni filtro activo.
+    // Ejecutar todos los filtros, devolver la unión de detecciones y
+    // si aparece un fiducial, comenzar una ventana de entrenamiento.
+    std::fill(filterSuccessCount_.begin(), filterSuccessCount_.end(), 0);
+    for (auto& ids : filterSeenIds_) {
+        ids.clear();
+    }
+
+    bool seenPrimaryThisFrame = false;
+
+    for (int i = 0; i < kNumThresholdFilters; ++i) {
+        const auto filter = allFilters[i];
+        const TrackedObjectList filterResult = runFilter(filter);
+        mergeResults(filterResult, fiducials);
+
+        for (const auto& obj : filterResult) {
+            filterSeenIds_[i].insert(obj.id);
+        }
+
+        if (primaryFiducialId_ <= 0 && !filterResult.empty()) {
+            // Escoger el primer fiducial visto como referencia
+            // para esta fase de entrenamiento.
+            primaryFiducialId_ = filterResult.front().id;
+        }
+
+        if (primaryFiducialId_ > 0 && containsFiducial(filterResult, primaryFiducialId_)) {
+            ++filterSuccessCount_[i];
+            seenPrimaryThisFrame = true;
+        }
+    }
+
+    if (primaryFiducialId_ > 0 && trainingFramesRemaining_ == 0) {
+        trainingFramesRemaining_ = kTrainingWindowFrames;
+        // Este frame cuenta como el primero de la ventana.
+        --trainingFramesRemaining_;
+        framesSincePrimarySeen_ = seenPrimaryThisFrame ? 0 : 1;
     }
 
     return fiducials;
@@ -324,6 +454,22 @@ TrackedObjectList TrackerEngine::detectAmoebaFiducials(const cv::Mat& binaryFram
     }
 
     return result;
+}
+
+int TrackerEngine::filterIndex(const ThresholdFilter filter) noexcept
+{
+    switch (filter) {
+    case ThresholdFilter::OtsuBinary:
+        return 0;
+    case ThresholdFilter::OtsuBinaryInv:
+        return 1;
+    case ThresholdFilter::AdaptiveBinary:
+        return 2;
+    case ThresholdFilter::AdaptiveBinaryInv:
+        return 3;
+    }
+
+    return 0;
 }
 
 } // namespace rectai::tracker

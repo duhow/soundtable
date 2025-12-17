@@ -1,5 +1,8 @@
-#pragma once
+ #pragma once
 
+#include <array>
+#include <cstdint>
+#include <set>
 #include <string>
 
 #include <opencv2/core.hpp>
@@ -35,6 +38,15 @@ public:
     [[nodiscard]] TrackedObjectList processFrame(const cv::Mat& frame, cv::Mat& debugFrame);
 
 private:
+    enum class ThresholdFilter : std::uint8_t {
+        OtsuBinary = 0,
+        OtsuBinaryInv,
+        AdaptiveBinary,
+        AdaptiveBinaryInv
+    };
+
+    static constexpr int kNumThresholdFilters = 4;
+
     bool initialised_{};
     int frameWidth_{};
     int frameHeight_{};
@@ -45,18 +57,26 @@ private:
     TreeIdMap treeIdMap_{};
     FidtrackerX fidtrackerX_{};
 
-    // Simple adaptive strategy state for choosing between
-    // global Otsu thresholds and adaptive thresholds based on
-    // recent detection history.
-    int framesSinceAnyDetection_{};
-    int consecutiveOtsuOnlySuccess_{};
-    int consecutiveAdaptiveOnlySuccess_{};
-    int consecutiveOtsuFailures_{};
-    bool preferAdaptiveFirst_{};
+    // State for per-fiducial filter evaluation:
+    // - when a fiducial is first seen, we start a 30-frame window
+    //   where all filters are evaluated in parallel and we count
+    //   how many times each filter manages to see that fiducial.
+    // - the filter with the highest hit count becomes the "active"
+    //   filter until the fiducial disappears for several frames.
+    int primaryFiducialId_{-1};
+    int trainingFramesRemaining_{};
+    bool hasActiveFilter_{};
+    ThresholdFilter activeFilter_{ThresholdFilter::OtsuBinary};
+    bool primaryLostLastFrame_{};
+    int framesSincePrimarySeen_{};
+    std::array<int, kNumThresholdFilters> filterSuccessCount_{};
+    std::array<std::set<int>, kNumThresholdFilters> filterSeenIds_{};
 
     [[nodiscard]] TrackedObjectList detectAmoebaFiducials(const cv::Mat& binaryFrame);
 
     [[nodiscard]] TrackedObjectList processFrameInternal(const cv::Mat& frame, cv::Mat* debugFrame);
+
+    [[nodiscard]] static int filterIndex(ThresholdFilter filter) noexcept;
 };
 
 } // namespace rectai::tracker
