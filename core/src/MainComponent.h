@@ -156,6 +156,14 @@ private:
     juce::Image tableBackgroundCache_;
     bool tableBackgroundDirty_{true};
 
+    // Cached background panel for the right-hand dock strip
+    // (rounded rectangle + outline + static "Dock" title). The
+    // dynamic dock contents (bubbles, icons, BPM labels) are still
+    // drawn every frame, but the expensive panel geometry and text
+    // are rendered once per size change.
+    juce::Image dockBackgroundCache_;
+    bool dockBackgroundDirty_{true};
+
     // Master output (type=Output in .rtp) presentation state.
     juce::Colour masterColour_{juce::Colours::white};
     bool masterMuted_{false};
@@ -273,6 +281,10 @@ private:
 
     void invalidateTableBackground();
     void renderTableBackgroundIfNeeded(const juce::Rectangle<int>& bounds);
+
+    void invalidateDockBackground();
+    void renderDockBackgroundIfNeeded(
+        const juce::Rectangle<int>& dockBounds);
 
     // Retrieve or lazily create a pre-scaled SingleChannel icon
     // image for the given atlas sprite id and destination size. The

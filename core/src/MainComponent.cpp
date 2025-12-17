@@ -99,6 +99,55 @@ void MainComponent::renderTableBackgroundIfNeeded(
     tableBackgroundDirty_ = false;
 }
 
+void MainComponent::invalidateDockBackground()
+{
+    dockBackgroundDirty_ = true;
+}
+
+void MainComponent::renderDockBackgroundIfNeeded(
+    const juce::Rectangle<int>& dockBounds)
+{
+    const int width = dockBounds.getWidth();
+    const int height = dockBounds.getHeight();
+
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    const bool sizeChanged = dockBackgroundCache_.isNull() ||
+                             dockBackgroundCache_.getWidth() != width ||
+                             dockBackgroundCache_.getHeight() != height;
+
+    if (!sizeChanged && !dockBackgroundDirty_) {
+        return;
+    }
+
+    dockBackgroundCache_ =
+        juce::Image(juce::Image::RGB, width, height, false);
+    juce::Graphics g(dockBackgroundCache_);
+
+    g.fillAll(juce::Colours::transparentBlack);
+
+    juce::Rectangle<float> area(0.0F, 0.0F,
+                                static_cast<float>(width),
+                                static_cast<float>(height));
+
+    g.setColour(juce::Colour::fromRGB(0x40, 0x40, 0x40));
+    g.fillRoundedRectangle(area, 10.0F);
+    g.setColour(juce::Colours::white.withAlpha(0.25F));
+    g.drawRoundedRectangle(area, 10.0F, 1.5F);
+
+    g.setColour(juce::Colours::white.withAlpha(0.7F));
+    g.setFont(15.0F);
+    const float titleHeight = 24.0F;
+    juce::Rectangle<float> titleArea =
+        area.removeFromTop(titleHeight);
+    g.drawText("Dock", titleArea.reduced(6.0F, 0.0F),
+               juce::Justification::centredLeft, false);
+
+    dockBackgroundDirty_ = false;
+}
+
 MainComponent::MainComponent(AudioEngine& audioEngine,
                              juce::String initialSessionPath)
     : audioEngine_(audioEngine)
@@ -670,6 +719,7 @@ juce::Image MainComponent::getCachedAtlasIcon(const std::string& iconId,
 void MainComponent::resized()
 {
     invalidateTableBackground();
+    invalidateDockBackground();
     juce::Component::resized();
 }
 

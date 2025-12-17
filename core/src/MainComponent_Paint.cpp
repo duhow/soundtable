@@ -1311,7 +1311,7 @@ void MainComponent::paint(juce::Graphics& g)
                 }
 
                 bool drewWave = false;
-                if (norm > 0.0F) {
+                if (norm > 0.0F && connectionLevel > 0.05F) {
                     g.setColour(activeColour);
                     const float waveformAmplitude =
                         (conn.is_hardlink ? 10.0F : 10.0F) * connectionLevel;
@@ -1319,17 +1319,21 @@ void MainComponent::paint(juce::Graphics& g)
                     const juce::Point<float> delta = splitPoint - p1;
                     const float lineLength = std::sqrt(
                         delta.x * delta.x + delta.y * delta.y);
-                    const int segmentsForWaveform =
+                    const int rawSegments =
                         static_cast<int>(lineLength / 5.0F);
-                    // NOTE: (keep) CPU expensive per-frame period estimation, but accurate for user view.
-                    const int periodSamples = estimateWaveformPeriod(tempWave, kWaveformPoints);
+                    const int segmentsForWaveform =
+                        juce::jmax(1, juce::jmin(rawSegments, 80));
+                    // Avoid per-frame period estimation here – for the
+                    // held connection preview a single non-tiled buffer
+                    // span is visually sufficient and cheaper to render.
+                    const int periodSamples = kWaveformPoints;
 
                     const bool tiled = !involvesSampleplay;
-                        drawWaveformOnLine(
-                            p1, splitPoint, waveformAmplitude,
+                    drawWaveformOnLine(
+                        p1, splitPoint, waveformAmplitude,
                         waveformThickness, tempWave,
                         periodSamples, norm,
-                        juce::jmax(1, segmentsForWaveform),
+                        segmentsForWaveform,
                         /*tiled=*/tiled);
                     drewWave = true;
                 }
@@ -2400,20 +2404,18 @@ void MainComponent::paint(juce::Graphics& g)
         juce::Rectangle<float> dockArea =
             dockBounds.removeFromRight(dockWidth);
 
-        // Background panel.
-        g.setColour(juce::Colour::fromRGB(0x40, 0x40, 0x40));  // #404040
-        g.fillRoundedRectangle(dockArea, 10.0F);
-        g.setColour(juce::Colours::white.withAlpha(0.25F));
-        g.drawRoundedRectangle(dockArea, 10.0F, 1.5F);
+        // Background panel and static title: use cached image to
+        // avoid redrawing the rounded rectangle and text every
+        // frame.
+        renderDockBackgroundIfNeeded(dockArea.toNearestInt());
+        if (!dockBackgroundCache_.isNull()) {
+            g.drawImageAt(dockBackgroundCache_,
+                          static_cast<int>(dockArea.getX()),
+                          static_cast<int>(dockArea.getY()));
+        }
 
-        // Title.
-        g.setColour(juce::Colours::white.withAlpha(0.7F));
-        g.setFont(15.0F);
         const float titleHeight = 24.0F;
-        juce::Rectangle<float> titleArea =
-            dockArea.removeFromTop(titleHeight);
-        g.drawText("Dock", titleArea.reduced(6.0F, 0.0F),
-                   juce::Justification::centredLeft, false);
+        dockArea.removeFromTop(titleHeight);
 
         if (!dockedObjects.empty()) {
             std::sort(dockedObjects.begin(), dockedObjects.end(),
