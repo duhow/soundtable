@@ -24,6 +24,82 @@ struct Envelope {
         std::vector<float> points_y;
 };
 
+// Base AudioModule variant that exposes a shared Envelope instance and
+// convenience accessors. Modules that carry an ADSR-like envelope should
+// derive from this class instead of AudioModule directly.
+class AudioModuleWithEnvelope : public AudioModule {
+ public:
+        using AudioModule::AudioModule;
+
+        [[nodiscard]] const Envelope& envelope() const { return envelope_; }
+        Envelope& mutable_envelope() { return envelope_; }
+
+        // Provide default values for standard ADSR parameter names when
+        // present. Modules that expose "attack"/"decay"/"duration"/"release"
+        // as parameters can rely on this to supply sensible defaults.
+        [[nodiscard]] float default_parameter_value(
+                const std::string& name) const override
+        {
+                if (name == "attack") {
+                        return envelope_.attack;
+                }
+                if (name == "decay") {
+                        return envelope_.decay;
+                }
+                if (name == "duration") {
+                        return envelope_.duration;
+                }
+                if (name == "release") {
+                        return envelope_.release;
+                }
+
+                return AudioModule::default_parameter_value(name);
+        }
+
+         // Envelope configuration methods.
+        [[nodiscard]] void set_envelope_attack(const float attack_ms) {
+                envelope_.attack = attack_ms;
+                SetParameter("attack", attack_ms);
+        }
+
+        [[nodiscard]] void set_envelope_decay(const float decay_ms) {
+                envelope_.decay = decay_ms;
+                SetParameter("decay", decay_ms);
+        }
+
+        [[nodiscard]] void set_envelope_duration(const float duration_ms) {
+                envelope_.duration = duration_ms;
+                SetParameter("duration", duration_ms);
+        }
+
+        [[nodiscard]] void set_envelope_release(const float release_ms) {
+                envelope_.release = release_ms;
+                SetParameter("release", release_ms);
+        }
+
+ protected:
+        // Helper used by envelope-capable modules to initialise both the
+        // internal Envelope and the corresponding AudioModule parameters.
+        void initialise_envelope_parameters(float attack_ms,
+                                            float decay_ms,
+                                            float duration_ms,
+                                            float release_ms)
+        {
+                envelope_.attack = attack_ms;
+                envelope_.decay = decay_ms;
+                envelope_.duration = duration_ms;
+                envelope_.release = release_ms;
+
+                // Store envelope values as parameters for user configurability.
+                SetParameter("attack", envelope_.attack);
+                SetParameter("decay", envelope_.decay);
+                SetParameter("duration", envelope_.duration);
+                SetParameter("release", envelope_.release);
+        }
+
+        Envelope envelope_{};
+};
+
 // Loop definition used by Loop tangibles.
 struct LoopDefinition {
         int beats{0};
@@ -80,7 +156,7 @@ struct SampleInstrument {
 
 // --- Concrete audio module implementations that leverage AudioModule ---
 
-class OscillatorModule : public AudioModule {
+class OscillatorModule : public AudioModuleWithEnvelope {
  public:
          enum class Waveform {
                   kSine = 0,
@@ -98,15 +174,10 @@ class OscillatorModule : public AudioModule {
          // UI-level waveform modes (sine / saw / square / noise).
          [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 
-         // Reactable Oscillator tangibles also carry an envelope.
-         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-         Envelope& mutable_envelope() { return envelope_; }
-
  protected:
          void on_mode_changed(int newIndex, const AudioModuleMode& mode) override;
 
  private:
-         Envelope envelope_{};
 };
 
 // Output / Master module.
@@ -138,7 +209,7 @@ class TonalizerModule : public AudioModule {
 };
 
 // Filter module.
-class FilterModule : public AudioModule {
+class FilterModule : public AudioModuleWithEnvelope {
  public:
          explicit FilterModule(
                 const std::string& id,
@@ -149,15 +220,6 @@ class FilterModule : public AudioModule {
          [[nodiscard]] float default_parameter_value(
                                                 const std::string& name) const override;
 
-         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-         Envelope& mutable_envelope() { return envelope_; }
-
-         // Envelope configuration methods.
-         void set_envelope_attack(float attack_ms);
-         void set_envelope_decay(float decay_ms);
-         void set_envelope_duration(float duration_ms);
-         void set_envelope_release(float release_ms);
-
          // UI-level filter modes (low-pass / band-pass / high-pass).
          [[nodiscard]] const AudioModuleModes& supported_modes() const override;
          [[nodiscard]] int default_mode_index() const override;
@@ -166,7 +228,6 @@ class FilterModule : public AudioModule {
          void on_mode_changed(int newIndex, const AudioModuleMode& mode) override;
 
  private:
-         Envelope envelope_{};
 };
 
 // Global volume / dynamics / FX send module.
@@ -297,14 +358,11 @@ class SequencerModule : public AudioModule {
 };
 
 // Delay / echo module.
-class DelayModule : public AudioModule {
+class DelayModule : public AudioModuleWithEnvelope {
  public:
         explicit DelayModule(const std::string& id);
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
-
-        [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-        Envelope& mutable_envelope() { return envelope_; }
 
         // Tangible-level hardlinks can be expressed later as Connections,
         // but we keep the original ids here for parsing.
@@ -319,56 +377,40 @@ class DelayModule : public AudioModule {
         }
 
  private:
-        Envelope envelope_{};
-        std::vector<int> hardlink_targets_;
+         std::vector<int> hardlink_targets_;
 };
 
 // Modulation effect module (e.g. ringmod).
-class ModulatorModule : public AudioModule {
+class ModulatorModule : public AudioModuleWithEnvelope {
  public:
         explicit ModulatorModule(const std::string& id);
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
-        [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-        Envelope& mutable_envelope() { return envelope_; }
-
  private:
-        Envelope envelope_{};
 };
 
 // Waveshaper / distortion module.
-class WaveShaperModule : public AudioModule {
+class WaveShaperModule : public AudioModuleWithEnvelope {
  public:
         explicit WaveShaperModule(const std::string& id);
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
-        [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-        Envelope& mutable_envelope() { return envelope_; }
-
  private:
-        Envelope envelope_{};
 };
 
 // Input module (external audio).
-class InputModule : public AudioModule {
+class InputModule : public AudioModuleWithEnvelope {
  public:
         explicit InputModule(const std::string& id);
-
-        [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-        Envelope& mutable_envelope() { return envelope_; }
-
  private:
-        Envelope envelope_{};
 };
 
 // Loop player module.
-class LoopModule : public AudioModule {
+class LoopModule : public AudioModuleWithEnvelope {
  public:
         explicit LoopModule(const std::string& id);
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
-        [[nodiscard]] const Envelope& envelope() const { return envelope_; }
-        Envelope& mutable_envelope() { return envelope_; }
 
         [[nodiscard]] const std::vector<LoopDefinition>& loops() const
         {
@@ -378,8 +420,7 @@ class LoopModule : public AudioModule {
         std::vector<LoopDefinition>& mutable_loops() { return loops_; }
 
  private:
-        Envelope envelope_{};
-        std::vector<LoopDefinition> loops_;
+         std::vector<LoopDefinition> loops_;
 };
 
 // Sample-based playback module.

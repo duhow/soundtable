@@ -22,9 +22,11 @@ constexpr uint32_t MakeColour(const uint8_t r, const uint8_t g,
 OscillatorModule::OscillatorModule(const std::string& id,
                                    const float default_freq,
                                    const float default_gain)
-    : AudioModule(id, ModuleType::kGenerator,
-                  /*produces_audio=*/true, /*consumes_audio=*/false,
-                  /*produces_midi=*/false, /*consumes_midi=*/true)
+    : AudioModuleWithEnvelope(id, ModuleType::kGenerator,
+                              /*produces_audio=*/true,
+                              /*consumes_audio=*/false,
+                              /*produces_midi=*/false,
+                              /*consumes_midi=*/true)
 {
   set_colour(MakeColour(0x23, 0x66, 0xE1));
   set_label("Oscillator");
@@ -54,7 +56,9 @@ float OscillatorModule::default_parameter_value(
   if (name == "freq" || name == "gain") {
     return 0.5F;
   }
-  return AudioModule::default_parameter_value(name);
+  // Delegate remaining parameters (including ADSR envelope when present)
+  // to the shared envelope-aware base implementation.
+  return AudioModuleWithEnvelope::default_parameter_value(name);
 }
 
 const AudioModuleModes& OscillatorModule::supported_modes() const
@@ -83,8 +87,9 @@ void OscillatorModule::on_mode_changed(const int newIndex,
 FilterModule::FilterModule(const std::string& id,
                            const float default_cutoff,
                            const float default_q)
-    : AudioModule(id, ModuleType::kFilter,
-                  /*produces_audio=*/true, /*consumes_audio=*/true)
+    : AudioModuleWithEnvelope(id, ModuleType::kFilter,
+                              /*produces_audio=*/true,
+                              /*consumes_audio=*/true)
 {
   set_colour(MakeColour(0x40, 0xE0, 0xA0));
   set_label("Filter");
@@ -101,17 +106,11 @@ FilterModule::FilterModule(const std::string& id,
   SetParameter("freq", default_cutoff);
   SetParameter("q", default_q);
 
-  // Initialize envelope with default ADSR values (in milliseconds).
-  envelope_.attack = 500.0F;
-  envelope_.decay = 500.0F;
-  envelope_.duration = 1000.0F;
-  envelope_.release = 500.0F;
-
-  // Store envelope values as parameters for user configurability.
-  SetParameter("attack", envelope_.attack);
-  SetParameter("decay", envelope_.decay);
-  SetParameter("duration", envelope_.duration);
-  SetParameter("release", envelope_.release);
+  initialise_envelope_parameters(
+    /*attack_ms=*/500.0F,
+    /*decay_ms=*/500.0F,
+    /*duration_ms=*/1000.0F,
+    /*release_ms=*/500.0F);
 }
 
 float FilterModule::default_parameter_value(const std::string& name) const
@@ -119,19 +118,8 @@ float FilterModule::default_parameter_value(const std::string& name) const
   if (name == "freq" || name == "q") {
     return 0.5F;
   }
-  if (name == "attack") {
-    return envelope_.attack;
-  }
-  if (name == "decay") {
-    return envelope_.decay;
-  }
-  if (name == "duration") {
-    return envelope_.duration;
-  }
-  if (name == "release") {
-    return envelope_.release;
-  }
-  return AudioModule::default_parameter_value(name);
+  // Delegate ADSR-related defaults to the shared envelope base class.
+  return AudioModuleWithEnvelope::default_parameter_value(name);
 }
 
 const AudioModuleModes& FilterModule::supported_modes() const
@@ -159,30 +147,6 @@ void FilterModule::on_mode_changed(const int newIndex,
   // state beyond what the audio engine derives from the mode id, so
   // we simply reuse the base implementation to update the icon.
   AudioModule::on_mode_changed(newIndex, mode);
-}
-
-void FilterModule::set_envelope_attack(const float attack_ms)
-{
-  envelope_.attack = attack_ms;
-  SetParameter("attack", attack_ms);
-}
-
-void FilterModule::set_envelope_decay(const float decay_ms)
-{
-  envelope_.decay = decay_ms;
-  SetParameter("decay", decay_ms);
-}
-
-void FilterModule::set_envelope_duration(const float duration_ms)
-{
-  envelope_.duration = duration_ms;
-  SetParameter("duration", duration_ms);
-}
-
-void FilterModule::set_envelope_release(const float release_ms)
-{
-  envelope_.release = release_ms;
-  SetParameter("release", release_ms);
 }
 
 OutputModule::OutputModule(const std::string& id)
@@ -459,8 +423,9 @@ void SequencerModule::SyncPresetsFromTracks()
 }
 
 DelayModule::DelayModule(const std::string& id)
-    : AudioModule(id, ModuleType::kAudio,
-                  /*produces_audio=*/true, /*consumes_audio=*/true)
+  : AudioModuleWithEnvelope(id, ModuleType::kAudio,
+                /*produces_audio=*/true,
+                /*consumes_audio=*/true)
 {
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("Delay");
@@ -486,8 +451,9 @@ const AudioModuleModes& DelayModule::supported_modes() const
 }
 
 ModulatorModule::ModulatorModule(const std::string& id)
-    : AudioModule(id, ModuleType::kAudio,
-                  /*produces_audio=*/true, /*consumes_audio=*/true)
+  : AudioModuleWithEnvelope(id, ModuleType::kAudio,
+                /*produces_audio=*/true,
+                /*consumes_audio=*/true)
 {
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("Modulator");
@@ -515,8 +481,9 @@ const AudioModuleModes& ModulatorModule::supported_modes() const
 }
 
 WaveShaperModule::WaveShaperModule(const std::string& id)
-    : AudioModule(id, ModuleType::kAudio,
-                  /*produces_audio=*/true, /*consumes_audio=*/true)
+  : AudioModuleWithEnvelope(id, ModuleType::kAudio,
+                /*produces_audio=*/true,
+                /*consumes_audio=*/true)
 {
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("WaveShaper");
@@ -541,8 +508,9 @@ const AudioModuleModes& WaveShaperModule::supported_modes() const
 }
 
 InputModule::InputModule(const std::string& id)
-    : AudioModule(id, ModuleType::kAudio,
-                  /*produces_audio=*/true, /*consumes_audio=*/false)
+  : AudioModuleWithEnvelope(id, ModuleType::kAudio,
+                /*produces_audio=*/true,
+                /*consumes_audio=*/false)
 {
   set_colour(MakeColour(0x23, 0xCB, 0x43));
   set_label("Input");
@@ -554,8 +522,9 @@ InputModule::InputModule(const std::string& id)
 }
 
 LoopModule::LoopModule(const std::string& id)
-    : AudioModule(id, ModuleType::kAudio,
-                  /*produces_audio=*/true, /*consumes_audio=*/false)
+  : AudioModuleWithEnvelope(id, ModuleType::kAudio,
+                /*produces_audio=*/true,
+                /*consumes_audio=*/false)
 {
   set_colour(MakeColour(0xD4, 0xCD, 0x06));
   set_label("Loop");
