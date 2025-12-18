@@ -436,13 +436,21 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
                     const float attackMs = voices_[v].attackMs.load(
                         std::memory_order_relaxed);
+                    const float decayMs = voices_[v].decayMs.load(
+                        std::memory_order_relaxed);
                     const float releaseMs = voices_[v].releaseMs.load(
                         std::memory_order_relaxed);
                     const float durationMs = voices_[v].durationMs.load(
                         std::memory_order_relaxed);
+                    const float sustainLevelRaw =
+                        voices_[v].sustainLevel.load(
+                            std::memory_order_relaxed);
 
                     const double attackSecondsRaw =
                         std::max(0.0, static_cast<double>(attackMs) /
+                                            1000.0);
+                    const double decaySeconds =
+                        std::max(0.0, static_cast<double>(decayMs) /
                                             1000.0);
                     const double releaseSeconds =
                         std::max(0.0, static_cast<double>(releaseMs) /
@@ -466,6 +474,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     }
 
                     const bool hasOneShot = durationSeconds > 0.0;
+
+                    // Clamp sustain level to a sensible range.
+                    const double sustainLevel = juce::jlimit(
+                        0.0, 1.0,
+                        static_cast<double>(sustainLevelRaw));
 
                     if (noteOn) {
                         // Note-on: restart envelope en el inicio del
@@ -492,7 +505,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         // note-off explícito ni del valor actual de
                         // `level`.
                         const double totalSeconds = durationSeconds;
-                        const double decaySeconds =
+                        const double tailSeconds =
                             std::max(0.0, totalSeconds - attackSeconds);
 
                         switch (phase) {
@@ -519,14 +532,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             case EnvelopePhase::kDecay:
                             case EnvelopePhase::kSustain:
                             case EnvelopePhase::kRelease: {
-                                if (decaySeconds <= 0.0) {
+                                if (tailSeconds <= 0.0) {
                                     value = 0.0;
                                     phase = EnvelopePhase::kIdle;
                                     tInPhase = 0.0;
                                 } else {
                                     tInPhase += dt;
                                     const double norm = std::min(
-                                        1.0, tInPhase / decaySeconds);
+                                        1.0, tInPhase / tailSeconds);
                                     value = std::max(0.0, 1.0 - norm);
                                     if (norm >= 1.0) {
                                         value = 0.0;
@@ -539,8 +552,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             }
                         }
                     } else {
-                        // Modo AR clásico: attack/release gobernados
-                        // por transiciones del nivel objetivo.
+                        // Modo ADSR clásico gobernado por
+                        // transiciones del nivel objetivo cuando
+                        // `duration == 0`: la envolvente recorre
+                        // Attack → (opcionalmente) Decay → Sustain →
+                        // Release. El nivel de sustain se deriva del
+                        // envelope asociado al módulo (por ejemplo,
+                        // a partir de `points_y`).
                         const bool noteOff = wasOn && !isOn && !retrigger;
 
                         if (noteOn) {
@@ -554,6 +572,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         } else if (noteOff) {
                             voiceEnvPhase_[v] = EnvelopePhase::kRelease;
                             voiceEnvTimeInPhase_[v] = 0.0;
+                            // Captura el valor actual de la
+                            // envolvente para iniciar el segmento de
+                            // release desde el nivel presente
+                            // (típicamente el sustain), evitando
+                            // saltos al pasar a Release.
+                            voiceEnvReleaseStart_[v] = value;
                             phase = EnvelopePhase::kRelease;
                             tInPhase = 0.0;
                         }
@@ -565,7 +589,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             case EnvelopePhase::kAttack: {
                                 if (attackSeconds <= 0.0) {
                                     value = 1.0;
-                                    phase = EnvelopePhase::kSustain;
+                                    // Si no hay decay definido o el
+                                    // sustain es 1.0, saltamos
+                                    // directamente a Sustain.
+                                    if (decaySeconds <= 0.0 ||
+                                        sustainLevel >= 0.999) {
+                                        phase = EnvelopePhase::kSustain;
+                                    } else {
+                                        phase = EnvelopePhase::kDecay;
+                                    }
                                     tInPhase = 0.0;
                                 } else {
                                     tInPhase += dt;
@@ -573,20 +605,51 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                         1.0, tInPhase / attackSeconds);
                                     value = norm;
                                     if (norm >= 1.0) {
+                                        // Transición a Decay sólo si
+                                        // hay un tramo de decay
+                                        // definido y el sustain es
+                                        // distinto de 1.0.
+                                        if (decaySeconds > 0.0 &&
+                                            sustainLevel < 0.999) {
+                                            phase = EnvelopePhase::kDecay;
+                                        } else {
+                                            phase = EnvelopePhase::kSustain;
+                                        }
+                                        tInPhase = 0.0;
+                                    }
+                                }
+                                break;
+                            }
+                            case EnvelopePhase::kDecay: {
+                                if (decaySeconds <= 0.0 ||
+                                    sustainLevel >= 0.999) {
+                                    // Sin decay explícito o sustain
+                                    // a 1.0: pasar directamente a
+                                    // sustain.
+                                    value = sustainLevel;
+                                    phase = EnvelopePhase::kSustain;
+                                    tInPhase = 0.0;
+                                } else {
+                                    tInPhase += dt;
+                                    const double norm = std::min(
+                                        1.0, tInPhase / decaySeconds);
+                                    // Interpolación lineal de 1.0
+                                    // hacia `sustainLevel`.
+                                    value = 1.0 +
+                                             (sustainLevel - 1.0) *
+                                                 norm;
+                                    if (norm >= 1.0) {
+                                        value = sustainLevel;
                                         phase = EnvelopePhase::kSustain;
                                         tInPhase = 0.0;
                                     }
                                 }
                                 break;
                             }
-                            case EnvelopePhase::kDecay:
-                                // Reservado para ADSR completo.
-                                phase = EnvelopePhase::kSustain;
-                                value = 1.0;
-                                tInPhase = 0.0;
-                                break;
                             case EnvelopePhase::kSustain:
-                                value = 1.0;
+                                // Mantiene el nivel de sustain
+                                // mientras la nota siga activa.
+                                value = sustainLevel;
                                 break;
                             case EnvelopePhase::kRelease: {
                                 if (releaseSeconds <= 0.0) {
@@ -597,8 +660,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                     tInPhase += dt;
                                     const double norm = std::min(
                                         1.0, tInPhase / releaseSeconds);
-                                    value = std::max(0.0, 1.0 - norm);
-                                    if (norm >= 1.0) {
+                                    const double startAmp =
+                                        voiceEnvReleaseStart_[v];
+                                    const double envVal = std::max(
+                                        0.0,
+                                        startAmp * (1.0 - norm));
+                                    value = envVal;
+                                    if (norm >= 1.0 || envVal <= 0.0) {
                                         value = 0.0;
                                         phase = EnvelopePhase::kIdle;
                                         tInPhase = 0.0;
@@ -1705,7 +1773,8 @@ void AudioEngine::setVoiceEnvelope(const int index,
                                    const float attackMs,
                                    const float decayMs,
                                    const float durationMs,
-                                   const float releaseMs)
+                                   const float releaseMs,
+                                   const float sustainLevel)
 {
     if (index < 0 || index >= kMaxVoices) {
         return;
@@ -1717,6 +1786,8 @@ void AudioEngine::setVoiceEnvelope(const int index,
                                     std::memory_order_relaxed);
     voices_[index].releaseMs.store(releaseMs,
                                    std::memory_order_relaxed);
+    voices_[index].sustainLevel.store(sustainLevel,
+                                      std::memory_order_relaxed);
 }
 
 void AudioEngine::clearAllConnectionWaveformTaps()

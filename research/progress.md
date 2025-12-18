@@ -502,12 +502,60 @@
 
 ### Próximos pasos relacionados
 
-- Aplicar el envelope ADSR en tiempo de ejecución dentro de
-  `AudioEngine` para módulos `Oscillator` y `Loop` (modulación de
-  amplitud u otros parámetros según diseño definitivo).
+- Extender el mapeo de envelope en tiempo de ejecución para cubrir
+  casos más avanzados (por ejemplo, shapes no lineales a partir de
+  `points_x`/`points_y` o modulación de otros parámetros distintos de
+  la amplitud) tanto en `Oscillator` como en `Loop`.
 - Revisar el flujo de `Sampleplay` para decidir cómo usar `midifreq`
   como afinación por defecto al cargar sesiones RTP, manteniendo la
   compatibilidad con el disparo actual por beat.
+
+### Implementación de sustain ADSR para Oscillator
+
+- Se ha implementado un envelope ADSR completo para las voces de
+  Oscillator en `AudioEngine`, utilizando los tiempos de
+  `attack/decay/release` y derivando el nivel de `sustain` a partir
+  de los puntos de control `Envelope::points_y` cargados desde el
+  `.rtp`.
+- La estructura `AudioEngine::Voice` incorpora ahora un campo atómico
+  `sustainLevel`, configurado a través de la nueva firma de
+  `AudioEngine::setVoiceEnvelope(int index, float attackMs,
+  float decayMs, float durationMs, float releaseMs, float
+  sustainLevel)`. El sustain se limita al rango [0,1] dentro del
+  callback de audio.
+- En `audioDeviceIOCallbackWithContext`, la rama de envolvente por voz
+  sin `duration` (antes modo "AR clásico") pasa a implementar un
+  ADSR completo gobernado por note-on/note-off:
+  - `Attack`: rampa de 0→1 usando `attackMs` (con mínimo de 0.5 ms
+    para evitar clics).
+  - `Decay`: nuevo tramo opcional que interpola linealmente de 1.0 al
+    `sustainLevel` en `decayMs`.
+  - `Sustain`: mantiene `sustainLevel` mientras la nota siga activa.
+  - `Release`: rampa lineal desde el valor de envelope en el momento
+    del note-off hasta 0 en `releaseMs`, usando un nuevo buffer
+    interno `voiceEnvReleaseStart_` para recordar el nivel de partida.
+- El modo one-shot basado en `durationMs` se mantiene para futuros
+  usos, pero los Oscillator existentes dejan de entrar en esa rama al
+  forzar `durationMs=0` en la capa de UI.
+- En `MainComponent_Audio.cpp`, la configuración de la envolvente para
+  módulos `OscillatorModule` se actualiza para:
+  - Forzar `durationMs` a 0 cuando se llama a
+    `audioEngine_.setVoiceEnvelope`, de forma que los osciladores se
+    comporten como fuentes sostenidas gobernadas por note-on/note-off
+    (tangible activo) en lugar de envelopes one-shot cortos.
+  - Calcular el `sustainLevel` a partir de `Envelope::points_y` con la
+    heurística siguiente: buscar el tramo "plano" interno más largo de
+    puntos consecutivos con `y > 0` (ignorando primer/último punto) y
+    usar ese nivel como sustain; si no existe, usar el máximo `y`
+    previo al último punto o 1.0 como fallback.
+  - Mantener el comportamiento previo de `release` efectivo: si el
+    `.rtp` define `release > 0` se usa su valor; si no, se cae a
+    `decay` para garantizar una cola suave.
+- Con este cambio, el Oscillator de onda seno de la mesa por defecto
+  mantiene ahora un sustain continuo mientras el módulo esté activo:
+  la línea de sonido en la UI coincide con el audio real, eliminando
+  el corte brusco que se producía al tratar su envelope como
+  one-shot basado en `duration`.
 
 ### Ajuste visual de mute pendiente en líneas de audio
 - Se ha modificado el pintado de las líneas radiales de audio en `MainComponent_Paint.cpp` para que, cuando una línea está marcada como "pendiente de silenciar" (estado de cut/mute en hover sobre la conexión), se mantenga la waveform existente y sólo cambie el color de la línea de sonido de blanco a amarillo. Anteriormente, al marcar una línea para mute, se sustituía la waveform por una línea recta amarilla, dando la sensación de que se dibujaba una nueva línea plana sin información de audio.

@@ -1984,19 +1984,111 @@ void MainComponent::timerCallback()
                 if (oscModule != nullptr) {
                     const auto& env = oscModule->envelope();
 
-                    // El motor de audio implementa actualmente una
-                    // envolvente simple tipo AR (Attack/Release). Para
-                    // que el parámetro `decay` de los Oscillators tenga
-                    // un efecto audible incluso cuando `release` es 0 en
-                    // el `.rtp`, mapeamos el tiempo de release efectivo
-                    // como `env.release` si es > 0, o en su defecto como
-                    // `env.decay`.
+                    // El motor de audio implementa ahora un
+                    // envelope tipo ADSR completo para las voces de
+                    // Oscillator. Para decidir si el envelope debe
+                    // comportarse como sustain (gateado por
+                    // note-on/note-off) o como one-shot basado en
+                    // `duration`, analizamos conjuntamente
+                    // `points_x` y `points_y`.
+
+                    struct EnvelopeAnalysis {
+                        float sustainLevel{1.0F};
+                        bool hasSustainPlateau{false};
+                    };
+
+                    auto analyseEnvelope = [](const rectai::Envelope& e) {
+                        EnvelopeAnalysis result{};
+
+                        const auto& xs = e.points_x;
+                        const auto& ys = e.points_y;
+                        const std::size_t n = ys.size();
+                        if (n == 0 || xs.size() != n) {
+                            result.sustainLevel = 1.0F;
+                            result.hasSustainPlateau = false;
+                            return result;
+                        }
+
+                        // Buscamos el tramo "plano" interno más
+                        // largo con y>0 y anchura mínima en X. Ese
+                        // tramo se interpreta como sustain.
+                        constexpr float kMinPlateauWidth = 0.15F;
+
+                        float bestLevel = 1.0F;
+                        float bestWidth = 0.0F;
+
+                        for (std::size_t i = 1; i + 1 < n;) {
+                            const float y = ys[i];
+                            if (y <= 0.0F) {
+                                ++i;
+                                continue;
+                            }
+
+                            std::size_t j = i + 1;
+                            while (j + 1 < n &&
+                                   std::abs(ys[j] - y) < 1.0e-3F) {
+                                ++j;
+                            }
+
+                            const float width =
+                                static_cast<float>(xs[j - 1] - xs[i]);
+                            if (width > bestWidth) {
+                                bestWidth = width;
+                                bestLevel = y;
+                            }
+
+                            i = j;
+                        }
+
+                        if (bestWidth >= kMinPlateauWidth &&
+                            bestLevel > 0.0F) {
+                            result.sustainLevel = bestLevel;
+                            result.hasSustainPlateau = true;
+                            return result;
+                        }
+
+                        // Sin plateau claro: usamos como referencia
+                        // el máximo y>0 previo al último punto, pero
+                        // lo marcaremos como envelope one-shot.
+                        float maxY = 0.0F;
+                        for (std::size_t i = 0; i + 1 < n; ++i) {
+                            maxY = std::max(maxY, ys[i]);
+                        }
+                        if (maxY > 0.0F) {
+                            result.sustainLevel = maxY;
+                        } else {
+                            result.sustainLevel = 1.0F;
+                        }
+
+                        result.hasSustainPlateau = false;
+                        return result;
+                    };
+
+                    const EnvelopeAnalysis analysis =
+                        analyseEnvelope(env);
+
+                    // Para compatibilidad con patches existentes
+                    // mantenemos el comportamiento anterior de
+                    // `release`: si el `.rtp` define un release>0, se
+                    // usa directamente; en caso contrario, se cae a
+                    // `decay` como release efectivo.
                     const float effectiveReleaseMs =
                         (env.release > 0.0F) ? env.release : env.decay;
 
+                    // Si detectamos un plateau de sustain claro,
+                    // tratamos el envelope como ADSR gateado por la
+                    // vida del Oscillator (duration=0). En caso
+                    // contrario, respetamos `env.duration` para
+                    // mantener el comportamiento one-shot (como el
+                    // Oscillator saw del default.rtp).
+                    const float durationMsToUse =
+                        analysis.hasSustainPlateau ? 0.0F
+                                                    : env.duration;
+
                     audioEngine_.setVoiceEnvelope(
                         assignedVoice, env.attack, env.decay,
-                        env.duration, effectiveReleaseMs);
+                        durationMsToUse, effectiveReleaseMs,
+                        analysis.sustainLevel);
                 }
 
                 // Mark generator and, when present, its downstream

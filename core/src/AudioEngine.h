@@ -159,9 +159,12 @@ public:
 
     // Per-voice amplitude envelope configuration. Times are
     // specified in milliseconds as loaded from the Reactable .rtp
-    // envelopes associated with Oscillator modules.
+    // envelopes associated with Oscillator modules. `sustainLevel`
+    // is a normalised amplitude in [0,1] typically derived from the
+    // envelope's `points_y` control points.
     void setVoiceEnvelope(int index, float attackMs, float decayMs,
-                          float durationMs, float releaseMs);
+                          float durationMs, float releaseMs,
+                          float sustainLevel);
 
     // Per-connection waveform taps --------------------------------------
 
@@ -324,6 +327,11 @@ private:
         std::atomic<float> decayMs{0.0F};
         std::atomic<float> durationMs{0.0F};
         std::atomic<float> releaseMs{0.0F};
+        // Sustain level in [0,1] used by the ADSR-style envelope
+        // runtime. Typically derived from Envelope::points_y when
+        // available; defaults to 1.0 (full sustain) for legacy AR
+        // behaviour.
+        std::atomic<float> sustainLevel{1.0F};
     };
 
     Voice voices_[kMaxVoices];
@@ -346,6 +354,10 @@ private:
     // release/decay tail can fade out smoothly even when the
     // instantaneous target level later falls to zero.
     double voiceEnvBaseLevel_[kMaxVoices]{};
+    // Envelope value at the moment a note-off is detected, used as
+    // the starting point for the linear release segment so that
+    // releases can start from the current sustain/decay level.
+    double voiceEnvReleaseStart_[kMaxVoices]{};
     // Pending envelope retrigger flags per voice, set from the UI
     // thread and consumed on the audio thread. When true, the next
     // audio callback iteration will restart the envelope in the
