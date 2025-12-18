@@ -1787,15 +1787,25 @@ void MainComponent::paint(juce::Graphics& g)
                 // keep the vertical position strictly proportional to
                 // the continuous `sample` parameter so that there is
                 // no visual jump when crossing segment boundaries.
-                const float triY = juce::jmap(
-                    sampleParam, 0.0F, 1.0F, sliderBottom, sliderTop);
+
+                // NOTE: the visible arc does not span a full
+                // semi-circle; we leave a `sliderMargin` gap at the
+                // top and bottom. To keep the triangle perfectly
+                // aligned with the four visual segments (which divide
+                // the visible arc uniformly in angle), we must apply
+                // the same angular mapping here instead of a purely
+                // linear Y interpolation.
+                const float triAngle = juce::jmap(
+                    sampleParam, 0.0F, 1.0F, angleBottom, angleTop);
+
+                const float barX = cx - ringRadius * std::cos(triAngle);
+                const float triY = cy + ringRadius * std::sin(triAngle);
 
                 const float dyTri = triY - cy;
                 const float insideTri =
                     ringRadius * ringRadius - dyTri * dyTri;
                 if (insideTri > 0.0F) {
                     const float dxTri = std::sqrt(insideTri);
-                    const float barX = cx - dxTri;
 
                     // Radial direction from the module centre to the
                     // active segment centre.
