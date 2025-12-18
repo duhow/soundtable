@@ -30,7 +30,8 @@ OscillatorModule::OscillatorModule(const std::string& id,
   set_label("Oscillator");
   set_description(
       "Tone generator feeding the master bus or downstream modules.");
-  set_waveform(Waveform::kSine);
+  // Initialise the mode system to the default (sine waveform),
+  set_mode("sine");
   enable_frequency_control(true);
   enable_gain_control(true);
   // Expand frequency range so that the normalised `freq` parameter
@@ -56,90 +57,27 @@ float OscillatorModule::default_parameter_value(
   return AudioModule::default_parameter_value(name);
 }
 
-const std::vector<ModuleModeDescriptor>&
-OscillatorModule::supported_modes() const
+const AudioModuleModes& OscillatorModule::supported_modes() const
 {
   // Waveforms are exposed to the UI in the same order as the
   // underlying enum so that indices can be mapped directly.
-  static const std::vector<ModuleModeDescriptor> kModes = {
-      ModuleModeDescriptor{"oscillator_sine"},
-      ModuleModeDescriptor{"oscillator_saw"},
-      ModuleModeDescriptor{"oscillator_square"},
-      ModuleModeDescriptor{"oscillator_noise"},
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "sine", "oscillator_sine"},
+      AudioModuleMode{1, "saw", "oscillator_saw"},
+      AudioModuleMode{2, "square", "oscillator_square"},
+      AudioModuleMode{3, "noise", "oscillator_noise"},
   };
   return kModes;
 }
 
-int OscillatorModule::current_mode_index() const
+void OscillatorModule::on_mode_changed(const int newIndex,
+                                       const AudioModuleMode& mode)
 {
-  return waveform_index();
-}
-
-void OscillatorModule::set_current_mode_index(const int index)
-{
-  const auto& modes = supported_modes();
-  if (index < 0 || index >= static_cast<int>(modes.size())) {
-    return;
-  }
-
-  set_waveform(static_cast<Waveform>(index));
-}
-
-void OscillatorModule::set_waveform(const Waveform waveform)
-{
-  waveform_ = waveform;
-  switch (waveform_) {
-    case Waveform::kSine:
-      set_icon_id("oscillator_sine");
-      break;
-    case Waveform::kSaw:
-      set_icon_id("oscillator_saw");
-      break;
-    case Waveform::kSquare:
-      set_icon_id("oscillator_square");
-      break;
-    case Waveform::kNoise:
-      set_icon_id("oscillator_noise");
-      break;
-  }
-}
-
-void OscillatorModule::set_waveform_from_subtype(
-    const std::string& subtype)
-{
-  if (subtype == "sine") {
-    set_waveform(Waveform::kSine);
-  } else if (subtype == "saw") {
-    set_waveform(Waveform::kSaw);
-  } else if (subtype == "square") {
-    set_waveform(Waveform::kSquare);
-  } else if (subtype == "noise") {
-    set_waveform(Waveform::kNoise);
-  } else {
-    set_waveform(Waveform::kSine);
-  }
-}
-
-void OscillatorModule::cycle_waveform()
-{
-  const int current = static_cast<int>(waveform_);
-  const int next = (current + 1) % 4;
-  set_waveform(static_cast<Waveform>(next));
-}
-
-std::string OscillatorModule::subtype_string() const
-{
-  switch (waveform_) {
-    case Waveform::kSine:
-      return "sine";
-    case Waveform::kSaw:
-      return "saw";
-    case Waveform::kSquare:
-      return "square";
-    case Waveform::kNoise:
-      return "noise";
-  }
-  return "sine";
+  // Reuse the base behaviour to keep the icon in sync with the
+  // selected mode. At present the audio engine derives the
+  // oscillator waveform directly from current_mode_index(), so no
+  // additional internal state is required here.
+  AudioModule::on_mode_changed(newIndex, mode);
 }
 
 FilterModule::FilterModule(const std::string& id,
@@ -151,7 +89,7 @@ FilterModule::FilterModule(const std::string& id,
   set_colour(MakeColour(0x40, 0xE0, 0xA0));
   set_label("Filter");
   set_description("Shapes incoming audio based on spatial relationships.");
-  set_mode(Mode::kBandPass);
+  set_mode("bandpass");
   enable_frequency_control(true);
   enable_gain_control(true);
   set_frequency_mapping(100.0, 1900.0);
@@ -196,69 +134,31 @@ float FilterModule::default_parameter_value(const std::string& name) const
   return AudioModule::default_parameter_value(name);
 }
 
-const std::vector<ModuleModeDescriptor>& FilterModule::supported_modes()
-    const
+const AudioModuleModes& FilterModule::supported_modes() const
 {
   // Filter response types are exposed to the UI in the same order as
   // the internal Mode enum so that indices can be mapped directly.
-  static const std::vector<ModuleModeDescriptor> kModes = {
-      ModuleModeDescriptor{"filter_lowpass"},
-      ModuleModeDescriptor{"filter_bandpass"},
-      ModuleModeDescriptor{"filter_hipass"},
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "lowpass", "filter_lowpass"},
+      AudioModuleMode{1, "bandpass", "filter_bandpass"},
+      AudioModuleMode{2, "highpass", "filter_hipass"},
   };
   return kModes;
 }
 
-int FilterModule::current_mode_index() const
+int FilterModule::default_mode_index() const
 {
-  return static_cast<int>(mode_);
+  // The default constructor initialises the filter to band-pass.
+  return 1;
 }
 
-void FilterModule::set_current_mode_index(const int index)
+void FilterModule::on_mode_changed(const int newIndex,
+                                   const AudioModuleMode& mode)
 {
-  const auto& modes = supported_modes();
-  if (index < 0 || index >= static_cast<int>(modes.size())) {
-    return;
-  }
-
-  set_mode(static_cast<Mode>(index));
-}
-
-void FilterModule::set_mode(const Mode mode)
-{
-  mode_ = mode;
-  switch (mode_) {
-    case Mode::kLowPass:
-      set_icon_id("filter_lowpass");
-      break;
-    case Mode::kBandPass:
-      set_icon_id("filter_bandpass");
-      break;
-    case Mode::kHighPass:
-      set_icon_id("filter_hipass");
-      break;
-  }
-}
-
-void FilterModule::cycle_mode()
-{
-  const int current = static_cast<int>(mode_);
-  const int next = (current + 1) % 3;
-  set_mode(static_cast<Mode>(next));
-}
-
-void FilterModule::set_mode_from_subtype(const std::string& subtype)
-{
-  if (subtype == "lowpass") {
-    set_mode(Mode::kLowPass);
-  } else if (subtype == "highpass") {
-    set_mode(Mode::kHighPass);
-  } else if (subtype == "bandpass") {
-    set_mode(Mode::kBandPass);
-  } else {
-    // Keep default (band-pass) for unknown subtypes.
-    set_mode(Mode::kBandPass);
-  }
+  // For now FilterModule does not keep additional per-mode internal
+  // state beyond what the audio engine derives from the mode id, so
+  // we simply reuse the base implementation to update the icon.
+  AudioModule::on_mode_changed(newIndex, mode);
 }
 
 void FilterModule::set_envelope_attack(const float attack_ms)

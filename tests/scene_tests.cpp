@@ -82,29 +82,29 @@ int main()
         assert(oscModes[2].icon_id == std::string("oscillator_square"));
         assert(oscModes[3].icon_id == std::string("oscillator_noise"));
 
-        oscWave.cycle_waveform();
+        oscWave.cycle_mode_forward();
         assert(oscWave.icon_id() == std::string("oscillator_saw"));
         assert(oscWave.current_mode_index() == 1);
 
-        oscWave.cycle_waveform();
+        oscWave.cycle_mode_forward();
         assert(oscWave.icon_id() == std::string("oscillator_square"));
         assert(oscWave.current_mode_index() == 2);
 
-        oscWave.cycle_waveform();
+        oscWave.cycle_mode_forward();
         assert(oscWave.icon_id() == std::string("oscillator_noise"));
         assert(oscWave.current_mode_index() == 3);
 
-        oscWave.cycle_waveform();
+        oscWave.cycle_mode_forward();
         assert(oscWave.icon_id() == std::string("oscillator_sine"));
         assert(oscWave.current_mode_index() == 0);
 
-        // set_current_mode_index should safely clamp out-of-range
-        // indices and update the waveform/icon when valid.
-        oscWave.set_current_mode_index(-1);
+        // set_mode should safely clamp out-of-range indices and
+        // update the waveform/icon when valid.
+        oscWave.set_mode(-1);
         assert(oscWave.icon_id() == std::string("oscillator_sine"));
-        oscWave.set_current_mode_index(10);
+        oscWave.set_mode(10);
         assert(oscWave.icon_id() == std::string("oscillator_sine"));
-        oscWave.set_current_mode_index(2);
+        oscWave.set_mode(2);
         assert(oscWave.icon_id() == std::string("oscillator_square"));
     }
 
@@ -115,25 +115,24 @@ int main()
         const auto& modes = filterModes.supported_modes();
         assert(modes.size() == 3U);
         // Default constructor initialises the filter to band-pass.
-        assert(filterModes.current_mode_index() ==
-               static_cast<int>(FilterModule::Mode::kBandPass));
+        assert(filterModes.current_mode_index() == 1);
 
         assert(modes[0].icon_id == std::string("filter_lowpass"));
         assert(modes[1].icon_id == std::string("filter_bandpass"));
         assert(modes[2].icon_id == std::string("filter_hipass"));
 
-        filterModes.set_current_mode_index(0);
+        filterModes.set_mode(0);
         assert(filterModes.current_mode_index() == 0);
         assert(filterModes.icon_id() == std::string("filter_lowpass"));
 
-        filterModes.set_current_mode_index(2);
+        filterModes.set_mode(2);
         assert(filterModes.current_mode_index() == 2);
         assert(filterModes.icon_id() == std::string("filter_hipass"));
 
         // Out-of-range indices must be ignored.
-        filterModes.set_current_mode_index(-5);
+        filterModes.set_mode(-5);
         assert(filterModes.current_mode_index() == 2);
-        filterModes.set_current_mode_index(99);
+        filterModes.set_mode(99);
         assert(filterModes.current_mode_index() == 2);
     }
 

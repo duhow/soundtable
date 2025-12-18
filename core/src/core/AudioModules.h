@@ -96,28 +96,17 @@ class OscillatorModule : public AudioModule {
          [[nodiscard]] float default_parameter_value(const std::string& name) const override;
 
          // UI-level waveform modes (sine / saw / square / noise).
-         [[nodiscard]] const std::vector<ModuleModeDescriptor>&
-         supported_modes() const override;
-         [[nodiscard]] int current_mode_index() const override;
-         void set_current_mode_index(int index) override;
+         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 
          // Reactable Oscillator tangibles also carry an envelope.
          [[nodiscard]] const Envelope& envelope() const { return envelope_; }
          Envelope& mutable_envelope() { return envelope_; }
 
-         [[nodiscard]] Waveform waveform() const { return waveform_; }
-         void set_waveform(Waveform waveform);
-         void set_waveform_from_subtype(const std::string& subtype);
-         void cycle_waveform();
-         [[nodiscard]] std::string subtype_string() const;
-         [[nodiscard]] int waveform_index() const
-         {
-                  return static_cast<int>(waveform_);
-         }
+ protected:
+         void on_mode_changed(int newIndex, const AudioModuleMode& mode) override;
 
  private:
          Envelope envelope_{};
-         Waveform waveform_{Waveform::kSine};
 };
 
 // Output / Master module.
@@ -150,15 +139,11 @@ class TonalizerModule : public AudioModule {
 // Filter module.
 class FilterModule : public AudioModule {
  public:
-         enum class Mode {
-                  kLowPass = 0,
-                  kBandPass,
-                  kHighPass,
-         };
-
-         explicit FilterModule(const std::string& id,
-                                                                                                                float default_cutoff = 0.5F,
-                                                                                                                float default_q = 0.5F);
+         explicit FilterModule(
+                const std::string& id,
+                float default_cutoff = 0.5F,
+                float default_q = 0.5F
+        );
 
          [[nodiscard]] float default_parameter_value(
                                                 const std::string& name) const override;
@@ -172,20 +157,15 @@ class FilterModule : public AudioModule {
          void set_envelope_duration(float duration_ms);
          void set_envelope_release(float release_ms);
 
-         [[nodiscard]] Mode mode() const { return mode_; }
-                 void set_mode(Mode mode);
-                 void cycle_mode();
-         void set_mode_from_subtype(const std::string& subtype);
-
          // UI-level filter modes (low-pass / band-pass / high-pass).
-         [[nodiscard]] const std::vector<ModuleModeDescriptor>&
-         supported_modes() const override;
-         [[nodiscard]] int current_mode_index() const override;
-         void set_current_mode_index(int index) override;
+         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
+         [[nodiscard]] int default_mode_index() const override;
+
+ protected:
+         void on_mode_changed(int newIndex, const AudioModuleMode& mode) override;
 
  private:
          Envelope envelope_{};
-         Mode mode_{Mode::kBandPass};
 };
 
 // Global volume / dynamics / FX send module.

@@ -282,7 +282,7 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
             auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
                 modIt->second.get());
             if (oscModule != nullptr) {
-                oscModule->cycle_waveform();
+                oscModule->cycle_mode_forward();
                 repaint();
                 return;
             }
@@ -290,7 +290,7 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
             auto* filterModule =
                 dynamic_cast<rectai::FilterModule*>(modIt->second.get());
             if (filterModule != nullptr) {
-                filterModule->cycle_mode();
+                filterModule->cycle_mode_forward();
                 repaint();
                 return;
             }
@@ -1984,7 +1984,7 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
                         }
 
                         if (selectedIndex >= 0) {
-                            module->set_current_mode_index(
+                            module->set_mode(
                                 selectedIndex);
                             // Close the menu after a successful
                             // selection and reset drag progress so

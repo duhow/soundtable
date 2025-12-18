@@ -79,11 +79,15 @@ struct PortDescriptor {
 
 // Lightweight description of per-module adjustment modes that can be
 // exposed to the UI (for example, filter type or oscillator waveform).
-// For now the UI only requires icon identifiers, but the structure can
-// be extended later with labels or parameter mappings if needed.
-struct ModuleModeDescriptor {
+// Each mode carries a stable numeric id, a short type string (e.g.
+// "sine", "lowpass") and the icon identifier used by the atlas.
+struct AudioModuleMode {
+  int id{0};
+  std::string type;
   std::string icon_id;
 };
+
+using AudioModuleModes = std::vector<AudioModuleMode>;
 
 // Base class for audio modules placed on the scene.
 class AudioModule {
@@ -152,19 +156,36 @@ class AudioModule {
   // UI. By default modules do not expose any modes; concrete
   // implementations can override these methods to participate in the
   // generic mode-selection UI.
-  [[nodiscard]] virtual const std::vector<ModuleModeDescriptor>&
-  supported_modes() const;
+  [[nodiscard]] virtual const AudioModuleModes& supported_modes() const;
 
   // Returns the zero-based index of the currently active mode in
   // supported_modes(), or -1 when the module does not expose
   // selectable modes.
   [[nodiscard]] virtual int current_mode_index() const;
 
-  // Update the current mode by index. The default implementation is a
-  // no-op; concrete modules that expose modes are expected to clamp the
-  // index to supported_modes().size() and update both their internal
-  // state (e.g. waveform / filter type) and icon_id() accordingly.
-  virtual void set_current_mode_index(int index);
+  // Convenience accessor that returns a pointer to the currently
+  // active AudioModuleMode, or nullptr when the module does not
+  // expose selectable modes or the active index is out of range.
+  [[nodiscard]] const AudioModuleMode* current_mode() const;
+
+  // Default mode index for modules that expose modes. Implementations
+  // that participate in the mode API should ensure that
+  // supported_modes() is non-empty and that default_mode_index()
+  // returns a valid index within that vector.
+  [[nodiscard]] virtual int default_mode_index() const;
+
+  // Update the current mode by index. The default implementation
+  // validates the index against supported_modes(), keeps the current
+  // mode unchanged when the index is out of range and, on success,
+  // updates the internal index and calls on_mode_changed().
+  virtual void set_mode(int index);
+  virtual void set_mode(const std::string& subtype);
+
+  // Convenience helpers to cycle through supported modes in a generic
+  // way (forward / backward). Modules without modes simply ignore
+  // these calls.
+  void cycle_mode_forward();
+  void cycle_mode_backward();
 
   // Global controllers are special modules (e.g. Volume, Tempo,
   // Tonalizer) that influence session-wide state but are not part of
@@ -187,6 +208,16 @@ class AudioModule {
   void OverrideColour(const uint32_t argb) { set_colour(argb); }
 
  protected:
+  // Hook invoked whenever set_mode updates the active
+  // mode. The default implementation keeps the visual icon in sync
+  // with the selected mode (using AudioModuleMode::icon_id); concrete
+  // modules that participate in the mode system can override this to
+  // map the new index (and associated AudioModuleMode) onto their
+  // internal representation (e.g. waveform, filter type) and may
+  // optionally call the base implementation to reuse the icon
+  // behaviour.
+  virtual void on_mode_changed(int newIndex, const AudioModuleMode& mode);
+
   void set_colour(uint32_t argb) { colour_argb_ = argb; }
   void set_label(std::string label) { label_ = std::move(label); }
   void set_description(std::string description)
@@ -236,6 +267,11 @@ class AudioModule {
   std::vector<PortDescriptor> input_ports_;
   std::vector<PortDescriptor> output_ports_;
   std::unordered_map<std::string, float> parameters_;
+  // -1 means "no mode selected yet" so that the first call to
+  // set_mode(index) will always trigger on_mode_changed even when
+  // index is 0. Modules without modes keep returning -1 via
+  // current_mode_index().
+  int current_mode_index_{-1};
 };
 
 // Directed connection between module ports. A connection can optionally

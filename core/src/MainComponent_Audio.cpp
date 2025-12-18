@@ -1561,8 +1561,6 @@ void MainComponent::timerCallback()
         }
 
         if (bestFilter != nullptr) {
-            using Mode = rectai::FilterModule::Mode;
-
             float filterFreqParam = bestFilter->GetParameterOrDefault(
                 "freq",
                 bestFilter->default_parameter_value("freq"));
@@ -1581,16 +1579,8 @@ void MainComponent::timerCallback()
             sampleplayFilterQ =
                 minQ + (maxQ - minQ) * qParam;
 
-            const auto mode = bestFilter->mode();
-            if (mode == Mode::kLowPass) {
-                sampleplayFilterMode = 1;
-            } else if (mode == Mode::kBandPass) {
-                sampleplayFilterMode = 2;
-            } else if (mode == Mode::kHighPass) {
-                sampleplayFilterMode = 3;
-            } else {
-                sampleplayFilterMode = 0;
-            }
+            const auto mode = bestFilter->current_mode();
+            sampleplayFilterMode = mode->id;
         }
     }
 
@@ -1758,6 +1748,9 @@ void MainComponent::timerCallback()
             routes.emplace_back();
         }
 
+        const auto* oscModule =
+            dynamic_cast<const rectai::OscillatorModule*>(module);
+
         const float freqParam = module->GetParameterOrDefault(
             "freq", module->default_parameter_value("freq"));
         const double frequency =
@@ -1767,12 +1760,12 @@ void MainComponent::timerCallback()
         const float baseLevel = module->base_level();
         const float levelRange = module->level_range();
 
-        int waveformIndex = 0;  // 0 = sine by default.
-        const auto* oscModule =
-            dynamic_cast<const rectai::OscillatorModule*>(module);
-        if (oscModule != nullptr) {
-            waveformIndex = oscModule->waveform_index();
-        }
+        int waveformIndex = module->current_mode_index();
+        /* if (waveformIndex < 0) {
+            // Generators sin modos (o sin índice válido) hacen
+            // fallback a la forma de onda por defecto.
+            waveformIndex = 0;  // 0 = sine por convención.
+        } */
 
         for (const auto& route : routes) {
             const auto* downstreamModule = route.module;
@@ -1974,15 +1967,8 @@ void MainComponent::timerCallback()
                     // Map FilterModule::Mode to AudioEngine filter
                     // mode.
                     if (filterModule != nullptr) {
-                        using Mode = rectai::FilterModule::Mode;
-                        const auto mode = filterModule->mode();
-                        if (mode == Mode::kLowPass) {
-                            filterMode = 1;
-                        } else if (mode == Mode::kBandPass) {
-                            filterMode = 2;
-                        } else if (mode == Mode::kHighPass) {
-                            filterMode = 3;
-                        }
+                        const auto& mode = filterModule->current_mode();
+                        filterMode = mode->id;
                     } else {
                         // Default to low-pass if we do not know the
                         // mode.

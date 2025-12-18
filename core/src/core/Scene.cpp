@@ -98,19 +98,130 @@ float AudioModule::default_parameter_value(const std::string& /*name*/) const
   return 0.0F;
 }
 
-const std::vector<ModuleModeDescriptor>& AudioModule::supported_modes()
-    const
+const AudioModuleModes& AudioModule::supported_modes() const
 {
-  static const std::vector<ModuleModeDescriptor> kEmptyModes;
+  static const AudioModuleModes kEmptyModes;
   return kEmptyModes;
 }
 
 int AudioModule::current_mode_index() const
 {
-  return -1;
+  const auto& modes = supported_modes();
+  if (modes.empty()) {
+    // Modules without modes keep the legacy behaviour.
+    return -1;
+  }
+  return current_mode_index_;
 }
 
-void AudioModule::set_current_mode_index(const int /*index*/) {}
+int AudioModule::default_mode_index() const
+{
+  const auto& modes = supported_modes();
+  if (modes.empty()) {
+    return -1;
+  }
+  // For modules that expose at least one mode, the default is the
+  // first entry (index 0).
+  return 0;
+}
+
+const AudioModuleMode* AudioModule::current_mode() const
+{
+  const auto& modes = supported_modes();
+  const int index = current_mode_index();
+  if (index < 0 || index >= static_cast<int>(modes.size())) {
+    return nullptr;
+  }
+  return &modes[static_cast<std::size_t>(index)];
+}
+
+void AudioModule::set_mode(const int index)
+{
+  const auto& modes = supported_modes();
+  const int count = static_cast<int>(modes.size());
+  if (count <= 0) {
+    return;
+  }
+
+  if (index < 0 || index >= count) {
+    // Out-of-range indices are ignored so callers can safely pass
+    // arbitrary values without disturbing the current mode.
+    return;
+  }
+
+  if (index == current_mode_index_) {
+    return;
+  }
+
+  current_mode_index_ = index;
+  on_mode_changed(index, modes[static_cast<std::size_t>(index)]);
+}
+
+void AudioModule::set_mode(const std::string& subtype)
+{
+  const auto& modes = supported_modes();
+  const auto it = std::find_if(
+      modes.cbegin(), modes.cend(),
+      [&subtype](const AudioModuleMode& mode) {
+        return mode.type == subtype;
+      });
+  if (it == modes.cend()) {
+    return;
+  }
+
+  const int index = static_cast<int>(
+      std::distance(modes.cbegin(), it));
+  set_mode(index);
+}
+
+void AudioModule::cycle_mode_forward()
+{
+  const auto& modes = supported_modes();
+  const int count = static_cast<int>(modes.size());
+  if (count <= 0) {
+    return;
+  }
+
+  int current = current_mode_index();
+  if (current < 0 || current >= count) {
+    current = default_mode_index();
+    if (current < 0 || current >= count) {
+      current = 0;
+    }
+  }
+
+  const int next = (current + 1) % count;
+  set_mode(next);
+}
+
+void AudioModule::cycle_mode_backward()
+{
+  const auto& modes = supported_modes();
+  const int count = static_cast<int>(modes.size());
+  if (count <= 0) {
+    return;
+  }
+
+  int current = current_mode_index();
+  if (current < 0 || current >= count) {
+    current = default_mode_index();
+    if (current < 0 || current >= count) {
+      current = 0;
+    }
+  }
+
+  const int next = (current - 1 + count) % count;
+  set_mode(next);
+}
+
+void AudioModule::on_mode_changed(const int /*newIndex*/, const AudioModuleMode& mode)
+{
+  // Default implementation: keep the visual icon in sync with the
+  // selected mode metadata when an icon id is provided.
+  if (!mode.icon_id.empty()) {
+    set_icon_id(mode.icon_id);
+  }
+}
 
 void AudioModule::set_connection_targets(
     std::unordered_set<ModuleType> targets)

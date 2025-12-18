@@ -579,7 +579,7 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
 
       const auto itSubtype = attrs.find("subtype");
       if (itSubtype != attrs.end()) {
-        filter->set_mode_from_subtype(itSubtype->second);
+        filter->set_mode(itSubtype->second);
       }
 
       // Copy tangible-level numeric attributes.
@@ -760,7 +760,14 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
       }
       const auto it_subtype = attrs.find("subtype");
       if (it_subtype != attrs.end()) {
-        osc->set_waveform_from_subtype(it_subtype->second);
+        const std::string& subtype = it_subtype->second;
+        const auto& modes = osc->supported_modes();
+        for (std::size_t i = 0; i < modes.size(); ++i) {
+          if (modes[i].type == subtype) {
+            osc->set_mode(static_cast<int>(i));
+            break;
+          }
+        }
       }
       const std::size_t env_pos = FindTag(xml, "envelope", inner_start, inner_end);
       if (env_pos != std::string::npos) {
