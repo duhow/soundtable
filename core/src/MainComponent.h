@@ -291,6 +291,23 @@ private:
     enum class SideControlKind { kNone = 0, kFreq = 1, kGain = 2 };
     SideControlKind sideControlKind_{SideControlKind::kNone};
 
+    // Per-module adjustment mode control (bottom button + radial menu).
+    // The bottom button lives in the gap between the left/right side
+    // controls. Dragging from that button towards the module's local
+    // left axis reveals a small radial menu of supported modes
+    // (waveforms, filter types, etc.) around the node. When the user
+    // releases the pointer over one of the radial icons, the
+    // corresponding mode index is applied via the AudioModule mode API.
+    std::int64_t modeControlObjectId_{0};
+    juce::Point<float> modeDragStartLocal_{};
+    bool modeDragActive_{false};
+    float modeDragProgress_{0.0F};
+    struct ModeSelectionState {
+        std::string moduleId;
+        bool menuVisible{false};
+    };
+    ModeSelectionState modeSelection_{};
+
     struct AtlasSprite {
         juce::Rectangle<int> bounds;
     };
@@ -372,6 +389,13 @@ private:
     // and hold on lines, etc.) rendered with a white cursor.
     bool isCutModeActive_{false};
     juce::Point<float> currentTouchPosition_;
+
+    // Last known pointer position in component coordinates, updated on
+    // pointer down and drag. Used by pointer-up handlers that need the
+    // release position (for example, selecting a mode from the radial
+    // adjustment menu) even though the JUCE mouseUp callback only
+    // forwards modifier keys.
+    juce::Point<float> lastPointerPosition_{};
 
     struct TrailPoint {
         juce::Point<float> position;

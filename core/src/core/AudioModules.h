@@ -95,6 +95,12 @@ class OscillatorModule : public AudioModule {
 
          [[nodiscard]] float default_parameter_value(const std::string& name) const override;
 
+         // UI-level waveform modes (sine / saw / square / noise).
+         [[nodiscard]] const std::vector<ModuleModeDescriptor>&
+         supported_modes() const override;
+         [[nodiscard]] int current_mode_index() const override;
+         void set_current_mode_index(int index) override;
+
          // Reactable Oscillator tangibles also carry an envelope.
          [[nodiscard]] const Envelope& envelope() const { return envelope_; }
          Envelope& mutable_envelope() { return envelope_; }
@@ -170,6 +176,12 @@ class FilterModule : public AudioModule {
                  void set_mode(Mode mode);
                  void cycle_mode();
          void set_mode_from_subtype(const std::string& subtype);
+
+         // UI-level filter modes (low-pass / band-pass / high-pass).
+         [[nodiscard]] const std::vector<ModuleModeDescriptor>&
+         supported_modes() const override;
+         [[nodiscard]] int current_mode_index() const override;
+         void set_current_mode_index(int index) override;
 
  private:
          Envelope envelope_{};

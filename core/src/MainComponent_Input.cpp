@@ -229,11 +229,19 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
         boundsCopy.removeFromRight(dockWidthMain);
     touchStartedInDock_ = dockAreaMain.contains(position);
 
+    // Remember the start position so that pointer-up logic that does
+    // not receive coordinates (e.g. radial mode selection) can still
+    // reason about where the gesture finished.
+    lastPointerPosition_ = position;
+
     repaintWithRateLimit();
 
     draggedObjectId_ = 0;
     sideControlObjectId_ = 0;
     sideControlKind_ = SideControlKind::kNone;
+    modeControlObjectId_ = 0;
+    modeDragActive_ = false;
+    modeDragProgress_ = 0.0F;
 
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();
@@ -460,8 +468,16 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
             return withinX && withinY;
         };
 
-        // Clicking anywhere on the frequency bar.
-        if (!insideModuleCircle &&
+        const bool modeMenuVisibleForThisModule =
+            (modeSelection_.menuVisible &&
+             modeSelection_.moduleId == object.logical_id());
+
+        // Clicking anywhere on the frequency bar. While the
+        // adjustment mode menu is open for this module, disable
+        // interaction with the Freq bar to avoid accidental
+        // parameter changes when the user is targeting the mode
+        // icons.
+        if (!insideModuleCircle && !modeMenuVisibleForThisModule &&
             freqEnabled && isOnFreqControlBar(freqHandleX, click)) {
             sideControlObjectId_ = id;
             sideControlKind_ = SideControlKind::kFreq;
@@ -566,6 +582,54 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
 
             repaintWithRateLimit();
             return;
+        }
+
+        // Bottom adjustment mode button: small rectangular area centred
+        // below the node body, in the gap between the left/right side
+        // controls. We perform hit-testing in module-local coordinates
+        // so that the button naturally rotates with the module when it
+        // lives inside the musical area.
+        if (moduleForObject != nullptr &&
+            !moduleForObject->supported_modes().empty()) {
+            const float buttonWidth = nodeRadius * 1.4F;
+            const float buttonHeight = 12.0F;
+            const float buttonCenterY = cy + nodeRadius + 6.0F;
+
+            const float buttonLeft = cx - buttonWidth * 0.5F;
+            const float buttonRight = cx + buttonWidth * 0.5F;
+            const float buttonTop = buttonCenterY - buttonHeight * 0.5F;
+            const float buttonBottom =
+                buttonCenterY + buttonHeight * 0.5F;
+
+            if (!insideModuleCircle && click.x >= buttonLeft &&
+                click.x <= buttonRight && click.y >= buttonTop &&
+                click.y <= buttonBottom) {
+                const bool menuVisibleForThis =
+                    (modeSelection_.menuVisible &&
+                     modeSelection_.moduleId ==
+                         object.logical_id());
+
+                if (menuVisibleForThis) {
+                    // Toggle off: cancel the mode menu for this
+                    // module without changing its current mode.
+                    modeSelection_ = ModeSelectionState{};
+                    modeControlObjectId_ = 0;
+                    modeDragActive_ = false;
+                    modeDragProgress_ = 0.0F;
+                    repaintWithRateLimit();
+                    return;
+                }
+
+                // Start a new drag gesture from the bottom button.
+                modeControlObjectId_ = id;
+                modeDragActive_ = false;
+                modeDragProgress_ = 0.0F;
+                modeDragStartLocal_ = click;
+                modeSelection_ = ModeSelectionState{};
+                modeSelection_.moduleId = object.logical_id();
+                repaintWithRateLimit();
+                return;
+            }
         }
     }
 
@@ -952,6 +1016,7 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
     // Update touch state during drag.
     isTouchHeld_ = true;
     currentTouchPosition_ = position;
+    lastPointerPosition_ = position;
 
     // Add point to trail only if touch started in window area (not dock).
     if (!touchStartedInDock_) {
@@ -1174,6 +1239,68 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                 }
             }
         }
+    }
+
+    // Adjustment mode drag: when the gesture started on the bottom
+    // mode button for a given module, interpret horizontal movement in
+    // module-local space. Dragging towards the module's local left
+    // axis reveals the radial menu of supported modes around the
+    // node once the drag distance reaches the module's radius. While
+    // dragging, the alpha of the bottom icon interpolates towards
+    // 60% based on the drag distance.
+    if (modeControlObjectId_ != 0) {
+        const auto& objects = scene_.objects();
+        const auto itObj = objects.find(modeControlObjectId_);
+        if (itObj == objects.end()) {
+            return;
+        }
+
+        const auto& object = itObj->second;
+        const auto bounds = getLocalBounds().toFloat();
+        const auto centre = bounds.getCentre();
+        const float tableRadius =
+            0.45F *
+            std::min(bounds.getWidth(), bounds.getHeight());
+        const float cx = centre.x + object.x() * tableRadius;
+        const float cy = centre.y + object.y() * tableRadius;
+
+        const bool insideMusic = isInsideMusicArea(object);
+        float rotationAngle = 0.0F;
+        if (insideMusic) {
+            const float dx = cx - bounds.getCentreX();
+            const float dy = cy - bounds.getCentreY();
+            rotationAngle =
+                std::atan2(dy, dx) -
+                juce::MathConstants<float>::halfPi;
+        }
+
+        juce::Point<float> mousePos = position;
+        if (insideMusic) {
+            mousePos = mousePos.transformedBy(
+                juce::AffineTransform::rotation(-rotationAngle, cx,
+                                                cy));
+        }
+
+        const float dxLocal = mousePos.x - modeDragStartLocal_.x;
+        const float nodeRadius = 26.0F;
+
+        // Progress from 0 (no drag) to 1 (dragged left by one
+        // full node radius). Negative dxLocal corresponds to a drag
+        // towards the module's local left.
+        const float progress =
+            juce::jlimit(0.0F, 1.0F, (-dxLocal) / nodeRadius);
+        modeDragProgress_ = progress;
+
+        if (progress >= 1.0F) {
+            modeDragActive_ = true;
+            modeSelection_.moduleId = object.logical_id();
+            modeSelection_.menuVisible = true;
+        }
+
+        // Mode-drag gestures are exclusive: do not treat them as
+        // cut gestures or regular drags.
+        repaintWithRateLimit();
+        return;
     }
 
     // NOTE: Used for drag cursor and cut cursor trail (red).
@@ -1518,7 +1645,7 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
         activeConnectionHold_.reset();
     }
 
-    // Apply mute toggle to lines that were cut durante touch drag.
+    // Apply mute toggle to lines that were cut during touch drag.
 
     // Precompute mapping from module id to object id.
     std::unordered_map<std::string, std::int64_t> moduleToObjectId;
@@ -1700,6 +1827,179 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
         }
     }
 
+    // Mode selection via radial menu: if a gesture started on the
+    // bottom adjustment button and the radial menu is visible for a
+    // module that exposes supported modes, treat releasing the
+    // pointer over one of the icons as choosing that mode. The
+    // geometry mirrors the paint code so that hit-testing matches
+    // the visual layout.
+    if (modeSelection_.menuVisible &&
+        !modeSelection_.moduleId.empty()) {
+        const auto& modules = scene_.modules();
+        const auto modIt = modules.find(modeSelection_.moduleId);
+        if (modIt != modules.end() && modIt->second != nullptr) {
+            auto* module = modIt->second.get();
+            const auto& modes = module->supported_modes();
+            const int modeCount = static_cast<int>(modes.size());
+
+            if (modeCount > 0) {
+                const auto objIdIt =
+                    moduleToObjectId.find(modeSelection_.moduleId);
+                if (objIdIt != moduleToObjectId.end()) {
+                    const auto objIt = objects.find(objIdIt->second);
+                    if (objIt != objects.end()) {
+                        const auto& object = objIt->second;
+
+                        const auto bounds =
+                            getLocalBounds().toFloat();
+                        const auto centrePos =
+                            objectTableToScreen(object, bounds);
+                        const float cx = centrePos.x;
+                        const float cy = centrePos.y;
+
+                        const bool insideMusic =
+                            isInsideMusicArea(object);
+                        float rotationAngle = 0.0F;
+                        if (insideMusic) {
+                            const auto tableCentre =
+                                bounds.getCentre();
+                            const float dx = cx - tableCentre.x;
+                            const float dy = cy - tableCentre.y;
+                            rotationAngle =
+                                std::atan2(dy, dx) -
+                                juce::MathConstants<float>::halfPi;
+                        }
+
+                        juce::Point<float> localPos =
+                            lastPointerPosition_;
+                        if (insideMusic) {
+                            localPos = localPos.transformedBy(
+                                juce::AffineTransform::rotation(
+                                    -rotationAngle, cx, cy));
+                        }
+
+                        const float nodeRadius = 26.0F;
+                        const float ringRadius = nodeRadius + 10.0F;
+                        const int baseIconSize = 16;
+
+                        // Mirror the geometry used in paint(): five
+                        // virtual slots distributed along the left
+                        // Freq arc between sliderBottom (t=0) y
+                        // sliderTop (t=1), using the same 3 px
+                        // margins.
+                        const float sliderMargin = 3.0F;
+                        const float sliderTop =
+                            cy - ringRadius + sliderMargin;
+                        const float sliderBottom =
+                            cy + ringRadius - sliderMargin;
+
+                        const float dyTop = sliderTop - cy;
+                        const float dyBottom = sliderBottom - cy;
+                        const float sinTop = juce::jlimit(
+                            -1.0F, 1.0F, dyTop / ringRadius);
+                        const float sinBottom = juce::jlimit(
+                            -1.0F, 1.0F,
+                            dyBottom / ringRadius);
+                        float angleTop = std::asin(sinTop);
+                        const float angleBottom =
+                            std::asin(sinBottom);
+
+                        // Usar la misma compresión del arco que en
+                        // paint(), de forma que los iconos no se
+                        // salgan por la parte superior de la barra
+                        // de Freq.
+                        {
+                            const float angleRange = angleTop - angleBottom;
+                            const float compression = 0.85F;
+                            angleTop = angleBottom + angleRange * compression;
+                        }
+
+                        const int maxSlots = 4;
+                        const float extraLeft = 7.0F;
+
+                        // Choose the icon radius so that the
+                        // bottom-most slot lies on the same
+                        // horizontal line as the adjustment button,
+                        // while keeping all icons on a circular arc
+                        // that broadly follows the Freq bar.
+                        const float buttonCenterY =
+                            cy + nodeRadius + 6.0F;
+                        float radiusIcons = ringRadius + 6.0F;
+                        if (std::abs(sinBottom) > 1e-3F) {
+                            const float candidateRadius =
+                                (buttonCenterY - cy) / sinBottom;
+                            if (candidateRadius > 0.0F) {
+                                radiusIcons = candidateRadius;
+                            }
+                        }
+
+                        const int currentIndex =
+                            module->current_mode_index();
+
+                        int selectedIndex = -1;
+                        for (int i = 0; i < modeCount; ++i) {
+                            const int slotIndex =
+                                std::min(i, maxSlots - 1);
+                            const float t =
+                                static_cast<float>(slotIndex) /
+                                static_cast<float>(maxSlots - 1);
+                            const float angle = juce::jmap(
+                                t, 0.0F, 1.0F, angleBottom,
+                                angleTop);
+
+                            const float cosA = std::cos(angle);
+                            const float sinA = std::sin(angle);
+
+                            const float iconCx =
+                                cx - radiusIcons * cosA - extraLeft;
+                            const float iconCy =
+                                cy + radiusIcons * sinA;
+
+                            const bool isActive =
+                                (i == currentIndex);
+                            const float scale =
+                                isActive ? 1.25F : 1.0F;
+                            const float iconSize =
+                                static_cast<float>(baseIconSize) *
+                                scale;
+
+                            // Generous hitbox: circular area around
+                            // each icon centre, extended a bit beyond
+                            // the drawn size so taps y drags ligeros
+                            // sigan registrándose como selección.
+                            const float hitRadius =
+                                iconSize * 0.6F + 6.0F;
+
+                            const float dx =
+                                localPos.x - iconCx;
+                            const float dy =
+                                localPos.y - iconCy;
+                            const float distSq = dx * dx + dy * dy;
+
+                            if (distSq <=
+                                hitRadius * hitRadius) {
+                                selectedIndex = i;
+                                break;
+                            }
+                        }
+
+                        if (selectedIndex >= 0) {
+                            module->set_current_mode_index(
+                                selectedIndex);
+                            // Close the menu after a successful
+                            // selection and reset drag progress so
+                            // the bottom icon returns to its
+                            // default alpha.
+                            modeSelection_ = ModeSelectionState{};
+                            modeDragProgress_ = 0.0F;
+                            repaintWithRateLimit();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Clear touch state.
     isTouchActive_ = false;
     isTouchHeld_ = false;
@@ -1720,6 +2020,9 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
     sideControlObjectId_ = 0;
     sideControlKind_ = SideControlKind::kNone;
     isDraggingDockScroll_ = false;
+    modeControlObjectId_ = 0;
+    modeDragActive_ = false;
+    modeDragProgress_ = 0.0F;
 }
 
 void MainComponent::handleTuioCursorDown(const float normX,

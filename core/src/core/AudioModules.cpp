@@ -56,6 +56,35 @@ float OscillatorModule::default_parameter_value(
   return AudioModule::default_parameter_value(name);
 }
 
+const std::vector<ModuleModeDescriptor>&
+OscillatorModule::supported_modes() const
+{
+  // Waveforms are exposed to the UI in the same order as the
+  // underlying enum so that indices can be mapped directly.
+  static const std::vector<ModuleModeDescriptor> kModes = {
+      ModuleModeDescriptor{"oscillator_sine"},
+      ModuleModeDescriptor{"oscillator_saw"},
+      ModuleModeDescriptor{"oscillator_square"},
+      ModuleModeDescriptor{"oscillator_noise"},
+  };
+  return kModes;
+}
+
+int OscillatorModule::current_mode_index() const
+{
+  return waveform_index();
+}
+
+void OscillatorModule::set_current_mode_index(const int index)
+{
+  const auto& modes = supported_modes();
+  if (index < 0 || index >= static_cast<int>(modes.size())) {
+    return;
+  }
+
+  set_waveform(static_cast<Waveform>(index));
+}
+
 void OscillatorModule::set_waveform(const Waveform waveform)
 {
   waveform_ = waveform;
@@ -165,6 +194,34 @@ float FilterModule::default_parameter_value(const std::string& name) const
     return envelope_.release;
   }
   return AudioModule::default_parameter_value(name);
+}
+
+const std::vector<ModuleModeDescriptor>& FilterModule::supported_modes()
+    const
+{
+  // Filter response types are exposed to the UI in the same order as
+  // the internal Mode enum so that indices can be mapped directly.
+  static const std::vector<ModuleModeDescriptor> kModes = {
+      ModuleModeDescriptor{"filter_lowpass"},
+      ModuleModeDescriptor{"filter_bandpass"},
+      ModuleModeDescriptor{"filter_hipass"},
+  };
+  return kModes;
+}
+
+int FilterModule::current_mode_index() const
+{
+  return static_cast<int>(mode_);
+}
+
+void FilterModule::set_current_mode_index(const int index)
+{
+  const auto& modes = supported_modes();
+  if (index < 0 || index >= static_cast<int>(modes.size())) {
+    return;
+  }
+
+  set_mode(static_cast<Mode>(index));
 }
 
 void FilterModule::set_mode(const Mode mode)

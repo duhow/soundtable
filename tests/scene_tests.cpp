@@ -72,17 +72,69 @@ int main()
         OscillatorModule oscWave("oscWave");
         assert(oscWave.icon_id() == std::string("oscillator_sine"));
 
+        // Mode API must reflect the underlying waveform state and
+        // expose the expected icon sequence for the UI.
+        const auto& oscModes = oscWave.supported_modes();
+        assert(oscModes.size() == 4U);
+        assert(oscWave.current_mode_index() == 0);
+        assert(oscModes[0].icon_id == std::string("oscillator_sine"));
+        assert(oscModes[1].icon_id == std::string("oscillator_saw"));
+        assert(oscModes[2].icon_id == std::string("oscillator_square"));
+        assert(oscModes[3].icon_id == std::string("oscillator_noise"));
+
         oscWave.cycle_waveform();
         assert(oscWave.icon_id() == std::string("oscillator_saw"));
+        assert(oscWave.current_mode_index() == 1);
 
         oscWave.cycle_waveform();
         assert(oscWave.icon_id() == std::string("oscillator_square"));
+        assert(oscWave.current_mode_index() == 2);
 
         oscWave.cycle_waveform();
         assert(oscWave.icon_id() == std::string("oscillator_noise"));
+        assert(oscWave.current_mode_index() == 3);
 
         oscWave.cycle_waveform();
         assert(oscWave.icon_id() == std::string("oscillator_sine"));
+        assert(oscWave.current_mode_index() == 0);
+
+        // set_current_mode_index should safely clamp out-of-range
+        // indices and update the waveform/icon when valid.
+        oscWave.set_current_mode_index(-1);
+        assert(oscWave.icon_id() == std::string("oscillator_sine"));
+        oscWave.set_current_mode_index(10);
+        assert(oscWave.icon_id() == std::string("oscillator_sine"));
+        oscWave.set_current_mode_index(2);
+        assert(oscWave.icon_id() == std::string("oscillator_square"));
+    }
+
+    // Filter mode API should mirror the internal Mode enum and
+    // atlas icon identifiers.
+    {
+        FilterModule filterModes("filterModes");
+        const auto& modes = filterModes.supported_modes();
+        assert(modes.size() == 3U);
+        // Default constructor initialises the filter to band-pass.
+        assert(filterModes.current_mode_index() ==
+               static_cast<int>(FilterModule::Mode::kBandPass));
+
+        assert(modes[0].icon_id == std::string("filter_lowpass"));
+        assert(modes[1].icon_id == std::string("filter_bandpass"));
+        assert(modes[2].icon_id == std::string("filter_hipass"));
+
+        filterModes.set_current_mode_index(0);
+        assert(filterModes.current_mode_index() == 0);
+        assert(filterModes.icon_id() == std::string("filter_lowpass"));
+
+        filterModes.set_current_mode_index(2);
+        assert(filterModes.current_mode_index() == 2);
+        assert(filterModes.icon_id() == std::string("filter_hipass"));
+
+        // Out-of-range indices must be ignored.
+        filterModes.set_current_mode_index(-5);
+        assert(filterModes.current_mode_index() == 2);
+        filterModes.set_current_mode_index(99);
+        assert(filterModes.current_mode_index() == 2);
     }
 
     // Basic serialization smoke test.

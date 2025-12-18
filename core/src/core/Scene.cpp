@@ -98,6 +98,20 @@ float AudioModule::default_parameter_value(const std::string& /*name*/) const
   return 0.0F;
 }
 
+const std::vector<ModuleModeDescriptor>& AudioModule::supported_modes()
+    const
+{
+  static const std::vector<ModuleModeDescriptor> kEmptyModes;
+  return kEmptyModes;
+}
+
+int AudioModule::current_mode_index() const
+{
+  return -1;
+}
+
+void AudioModule::set_current_mode_index(const int /*index*/) {}
+
 void AudioModule::set_connection_targets(
     std::unordered_set<ModuleType> targets)
 {

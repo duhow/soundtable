@@ -77,6 +77,14 @@ struct PortDescriptor {
   PortSignalKind kind{PortSignalKind::kAudio};
 };
 
+// Lightweight description of per-module adjustment modes that can be
+// exposed to the UI (for example, filter type or oscillator waveform).
+// For now the UI only requires icon identifiers, but the structure can
+// be extended later with labels or parameter mappings if needed.
+struct ModuleModeDescriptor {
+  std::string icon_id;
+};
+
 // Base class for audio modules placed on the scene.
 class AudioModule {
  public:
@@ -138,6 +146,25 @@ class AudioModule {
   // module-specific defaults.
   [[nodiscard]] virtual float default_parameter_value(
       const std::string& name) const;
+
+  // Optional per-module set of adjustment modes (for example,
+  // Oscillator waveforms or Filter types) that can be cycled from the
+  // UI. By default modules do not expose any modes; concrete
+  // implementations can override these methods to participate in the
+  // generic mode-selection UI.
+  [[nodiscard]] virtual const std::vector<ModuleModeDescriptor>&
+  supported_modes() const;
+
+  // Returns the zero-based index of the currently active mode in
+  // supported_modes(), or -1 when the module does not expose
+  // selectable modes.
+  [[nodiscard]] virtual int current_mode_index() const;
+
+  // Update the current mode by index. The default implementation is a
+  // no-op; concrete modules that expose modes are expected to clamp the
+  // index to supported_modes().size() and update both their internal
+  // state (e.g. waveform / filter type) and icon_id() accordingly.
+  virtual void set_current_mode_index(int index);
 
   // Global controllers are special modules (e.g. Volume, Tempo,
   // Tonalizer) that influence session-wide state but are not part of

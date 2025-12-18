@@ -1668,6 +1668,9 @@ void MainComponent::paint(juce::Graphics& g)
 
         // Left control (Freq): curved bar following the left semi-circle.
         if (showFreqControl) {
+            const bool modeMenuVisibleForThisModule =
+                (modeSelection_.menuVisible &&
+                 modeSelection_.moduleId == object.logical_id());
             juce::Path freqArc;
             const int segments = 40;
             for (int i = 0; i <= segments; ++i) {
@@ -1689,10 +1692,15 @@ void MainComponent::paint(juce::Graphics& g)
                 }
             }
 
+            // When the adjustment mode menu is open for this module,
+            // render the Freq bar with higher transparency so that it
+            // visually recedes behind the mode icons without requiring
+            // an additional overlay rectangle.
+            const float modeMenuAlpha = modeMenuVisibleForThisModule ? 0.15F : 1.0F;
             const juce::Colour freqBackgroundColour =
-                juce::Colours::white.withAlpha(0.35F);
+                juce::Colours::white.withAlpha(0.35F * modeMenuAlpha);
             const juce::Colour freqForegroundColour =
-                juce::Colours::white.withAlpha(1.0F);
+                juce::Colours::white.withAlpha(1.0F * modeMenuAlpha);
 
             if (moduleForObject != nullptr &&
                 moduleForObject->is<rectai::LoopModule>()) {
@@ -2126,6 +2134,180 @@ void MainComponent::paint(juce::Graphics& g)
                                                   nodeRadius * 2.0F,
                                                   nodeRadius * 2.0F),
                            juce::Justification::centred, false);
+            }
+        }
+
+        // Bottom adjustment mode button: a small rounded rectangle
+        // centred below the node body, in the vertical gap between
+        // the left/right side controls. It always shows the module's
+        // primary icon and acts as the anchor for the radial mode
+        // menu when the user drags towards the module's local left
+        // axis.
+        const bool hasModeMenu =
+            (moduleForObject != nullptr &&
+             !moduleForObject->supported_modes().empty());
+        if (hasModeMenu) {
+            const float buttonWidth = nodeRadius * 1.4F;
+            const float buttonHeight = 12.0F;
+            const float buttonCenterY = cy + nodeRadius + 6.0F;
+
+            juce::Rectangle<float> buttonBounds(
+                cx - buttonWidth * 0.5F,
+                buttonCenterY - buttonHeight * 0.5F,
+                buttonWidth, buttonHeight);
+
+            const bool isMenuVisible =
+                (modeSelection_.menuVisible &&
+                 modeSelection_.moduleId == object.logical_id());
+
+            // Reuse the main icon id as the glyph for the mode
+            // button, scaled down to fit inside the rectangle.
+            std::string modeIconId;
+            if (moduleForObject != nullptr) {
+                modeIconId = moduleForObject->icon_id();
+            }
+
+            if (!modeIconId.empty() && atlasLoaded_ &&
+                atlasImage_.isValid()) {
+                const int destW =
+                    juce::jmin(static_cast<int>(buttonBounds.getWidth()) -
+                                   4,
+                               18);
+                const int destH = destW;
+                const int destX =
+                    juce::roundToInt(buttonBounds.getCentreX() -
+                                      destW * 0.5F);
+                const int destY =
+                    juce::roundToInt(buttonBounds.getCentreY() -
+                                      destH * 0.5F);
+
+                auto iconImage =
+                    getCachedAtlasIcon(modeIconId, destW, destH);
+                if (iconImage.isValid()) {
+                    // When the user drags from the bottom icon
+                    // towards the module's local left axis, fade the
+                    // icon alpha from ~95% to ~60%. Once the radial
+                    // menu is fully open, keep it at the target 60%
+                    // regardless of further drag.
+                    float dragProgress = isMenuVisible ? 1.0F : modeDragProgress_;
+                    dragProgress = juce::jlimit(0.0F, 1.0F, dragProgress);
+                    const float iconAlpha = 0.95F - 0.35F * dragProgress;
+                    g.setColour(juce::Colours::white.withAlpha(iconAlpha));
+                    g.drawImageAt(iconImage, destX, destY);
+                }
+            }
+        }
+
+        // Semi-transparent overlay over the side controls when the
+        // radial mode menu is visible, so that the user can focus on
+        // the mode icons while still perceiving the underlying
+        // frequency/gain bars.
+        const bool drawModeOverlay =
+            (modeSelection_.menuVisible &&
+             modeSelection_.moduleId == object.logical_id());
+
+        // Mode icons: when the menu is visible, render one small icon
+        // per supported mode aligned with five evenly spaced
+        // "virtual" segments along the left Freq arc, from bottom to
+        // top (similar to the Loop module's four visible segments).
+        // The rectangular segments are not drawn; they are only used
+        // as anchors for icon placement.
+        if (drawModeOverlay && moduleForObject != nullptr) {
+            const auto& modes = moduleForObject->supported_modes();
+            const int modeCount = static_cast<int>(modes.size());
+            if (modeCount > 0) {
+                const int maxSlots = 4;
+                const float extraLeft = 7.0F;
+                const int baseIconSize = 16;
+
+                // Reuse the same angular range that defines the
+                // visible portion of the left Freq arc.
+                const float dyTop = sliderTop - cy;
+                const float dyBottom = sliderBottom - cy;
+                const float sinTop = juce::jlimit(
+                    -1.0F, 1.0F, dyTop / ringRadius);
+                const float sinBottom = juce::jlimit(
+                    -1.0F, 1.0F, dyBottom / ringRadius);
+                float angleTop = std::asin(sinTop);
+                const float angleBottom = std::asin(sinBottom);
+
+                // Comprime ligeramente el arco por la parte
+                // superior para que los iconos no se salgan de la
+                // curva de la barra de Freq y la parte alta del
+                // abanico quede algo más “cerrada”.
+                {
+                    const float angleRange = angleTop - angleBottom;
+                    const float compression = 0.85F;
+                    angleTop = angleBottom + angleRange * compression;
+                }
+
+                // Choose the icon radius so that the bottom-most
+                // slot lies on the same horizontal line as the
+                // adjustment button, while keeping all icons on a
+                // circular arc that broadly follows the Freq bar.
+                const float buttonCenterY =
+                    cy + nodeRadius + 6.0F;
+                float radiusIcons = ringRadius + 6.0F;
+                if (std::abs(sinBottom) > 1e-3F) {
+                    const float candidateRadius =
+                        (buttonCenterY - cy) / sinBottom;
+                    if (candidateRadius > 0.0F) {
+                        radiusIcons = candidateRadius;
+                    }
+                }
+
+                const int slotsToUse =
+                    std::min(modeCount, maxSlots);
+                const int startSlot = 0;  // bottom-most slot index
+
+                const int currentIndex =
+                    moduleForObject->current_mode_index();
+
+                for (int i = 0; i < modeCount; ++i) {
+                    const int slotIndex =
+                        std::min(startSlot + i, maxSlots - 1);
+                    const float t = static_cast<float>(slotIndex) /
+                                    static_cast<float>(maxSlots - 1);
+                    // t = 0 -> bottom (angleBottom), t = 1 -> top
+                    // (angleTop).
+                    const float angle = juce::jmap(
+                        t, 0.0F, 1.0F, angleBottom, angleTop);
+
+                    const float cosA = std::cos(angle);
+                    const float sinA = std::sin(angle);
+
+                    // Place icons along the same circular arc as the
+                    // Freq bar, shifted slightly further left so they
+                    // clear the bar visually.
+                    float iconCx =
+                        cx - radiusIcons * cosA - extraLeft;
+                    float iconCy =
+                        cy + radiusIcons * sinA;
+
+                    const bool isActive = (i == currentIndex);
+                    const float scale = isActive ? 1.25F : 1.0F;
+                    const int iconSize = static_cast<int>(
+                        static_cast<float>(baseIconSize) * scale);
+                    const int destX = juce::roundToInt(
+                        iconCx - static_cast<float>(iconSize) * 0.5F);
+                    const int destY = juce::roundToInt(
+                        iconCy - static_cast<float>(iconSize) * 0.5F);
+
+                    if (!modes[static_cast<std::size_t>(i)].icon_id
+                             .empty() &&
+                        atlasLoaded_ && atlasImage_.isValid()) {
+                        auto iconImage = getCachedAtlasIcon(
+                            modes[static_cast<std::size_t>(i)].icon_id,
+                            iconSize, iconSize);
+                        if (iconImage.isValid()) {
+                            const float alpha =
+                                isActive ? 1.0F : 0.8F;
+                            g.setColour(juce::Colours::white.withAlpha(
+                                alpha));
+                            g.drawImageAt(iconImage, destX, destY);
+                        }
+                    }
+                }
             }
         }
 
