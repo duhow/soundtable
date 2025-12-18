@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "AudioEngine.h"
 #include "MainComponentHelpers.h"
 #include "core/AudioModules.h"
 
@@ -534,6 +535,14 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                 } else {
                     scene_.SetModuleParameter(object.logical_id(), "freq",
                                               value);
+
+                    // If this is an Oscillator with a one-shot
+                    // style envelope (no sustain plateau), changing
+                    // frequency should retrigger its envelope so
+                    // that new notes are audible even when the
+                    // previous tail has already decayed to zero.
+                    maybeRetriggerOscillatorOnFreqChange(
+                        object.logical_id(), moduleForFreq);
                 }
             }
 
@@ -1416,6 +1425,15 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                                           bpm_);
             } else {
                 scene_.SetModuleParameter(object.logical_id(), "freq", value);
+
+                rectai::AudioModule* moduleForFreq =
+                    (modItFreq != modulesForFreq.end() &&
+                     modItFreq->second != nullptr)
+                        ? modItFreq->second.get()
+                        : nullptr;
+
+                maybeRetriggerOscillatorOnFreqChange(
+                    object.logical_id(), moduleForFreq);
             }
         } else if (sideControlKind_ == SideControlKind::kGain) {
             const auto& modules = scene_.modules();
@@ -1570,6 +1588,84 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
     applyControlDropMuteIfNeeded(mods);
 
     repaint();
+}
+
+void MainComponent::maybeRetriggerOscillatorOnFreqChange(
+    const std::string& moduleId, rectai::AudioModule* module)
+{
+    if (module == nullptr ||
+        !module->is<rectai::OscillatorModule>()) {
+        return;
+    }
+
+    auto* oscModule =
+        dynamic_cast<rectai::OscillatorModule*>(module);
+    if (oscModule == nullptr) {
+        return;
+    }
+
+    const auto& env = oscModule->envelope();
+    const auto& xs = env.points_x;
+    const auto& ys = env.points_y;
+    const std::size_t n = ys.size();
+
+    bool hasSustainPlateau = false;
+    if (n > 0 && xs.size() == n) {
+        // Detect a clear sustain plateau using the same heuristic as
+        // in MainComponent_Audio: we look for the widest internal
+        // segment with y>0 and require a minimum width in X so that
+        // one-shot envelopes (like the default saw) are not treated
+        // as sustain.
+        constexpr float kMinPlateauWidth = 0.15F;
+
+        float bestWidth = 0.0F;
+        for (std::size_t i = 1; i + 1 < n;) {
+            const float y = ys[i];
+            if (y <= 0.0F) {
+                ++i;
+                continue;
+            }
+
+            std::size_t j = i + 1;
+            while (j + 1 < n &&
+                   std::abs(ys[j] - y) < 1.0e-3F) {
+                ++j;
+            }
+
+            const float width =
+                static_cast<float>(xs[j - 1] - xs[i]);
+            if (width > bestWidth) {
+                bestWidth = width;
+            }
+
+            i = j;
+        }
+
+        if (bestWidth >= kMinPlateauWidth) {
+            hasSustainPlateau = true;
+        }
+    }
+
+    // For sustain-style envelopes we do not need to retrigger on
+    // frequency changes: the oscillator remains audible while the
+    // tangible is active. For one-shot envelopes, restarting the
+    // envelope on freq change ensures new notes are heard after the
+    // previous tail has faded out.
+    if (hasSustainPlateau) {
+        return;
+    }
+
+    const auto it = moduleVoiceIndex_.find(moduleId);
+    if (it == moduleVoiceIndex_.end()) {
+        return;
+    }
+
+    const int voiceIndex = it->second;
+    if (voiceIndex < 0 || voiceIndex >= AudioEngine::kMaxVoices) {
+        return;
+    }
+
+    audioEngine_.triggerVoiceEnvelope(voiceIndex);
 }
 
 void MainComponent::mouseUp(const juce::MouseEvent& event)

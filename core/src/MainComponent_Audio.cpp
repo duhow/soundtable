@@ -574,6 +574,14 @@ void MainComponent::timerCallback()
 
             scene_.SetModuleParameter(obj.logical_id(), "freq",
                                       newFreq);
+
+            // For Oscillator modules that use a one-shot style
+            // envelope (no sustain plateau), a rotation-driven
+            // frequency change should also restart the envelope so
+            // that the updated note is audible after the previous
+            // tail has faded out.
+            maybeRetriggerOscillatorOnFreqChange(obj.logical_id(),
+                                                 module);
         }
 
         // ------------------------------------------------------------------
