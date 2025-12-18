@@ -1592,7 +1592,8 @@ void MainComponent::paint(juce::Graphics& g)
 
         // Side controls: left = curved bar (semi-arc) for Freq,
         // right = curved bar (semi-arc) for Gain, both hugging the
-        // left/right side of the node.
+        // left/right side of the node. Slightly offset from the
+        // node body so that the playhead bar can live between both.
         const float ringRadius = nodeRadius + 10.0F;
 
         const rectai::AudioModule* moduleForObject = nullptr;
@@ -2276,6 +2277,143 @@ void MainComponent::paint(juce::Graphics& g)
                                    juce::Justification::centredLeft,
                                    false);
                     }
+                }
+            }
+        }
+
+        // Loop playhead bar: for Loop modules with valid beat metadata,
+        // draw a thin red bar orbiting between the node body and the
+        // side control ring, plus a short white trail that fades over
+        // a few hundred milliseconds. The playhead position is derived
+        // from the same audio-driven global transport used by the
+        // Sequencer and Loop playback so that visuals remain locked to
+        // the actual audio phase.
+        if (const auto* loopModule =
+                dynamic_cast<const rectai::LoopModule*>(
+                    moduleForObject)) {
+            const auto& loops = loopModule->loops();
+            if (!loops.empty()) {
+                float sampleParam = loopModule->GetParameterOrDefault(
+                    "sample", 0.0F);
+                sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
+
+                int selectedIndex = static_cast<int>(sampleParam * 4.0F);
+                if (selectedIndex < 0) {
+                    selectedIndex = 0;
+                } else if (selectedIndex > 3) {
+                    selectedIndex = 3;
+                }
+
+                const rectai::LoopDefinition* chosen = nullptr;
+                if (selectedIndex < static_cast<int>(loops.size())) {
+                    chosen = &loops[static_cast<std::size_t>(
+                        selectedIndex)];
+                } else {
+                    chosen = &loops.front();
+                }
+
+                if (chosen != nullptr && chosen->beats > 0) {
+                    const int beatsPerLoop = chosen->beats;
+                    const double totalBeats =
+                        transportBeats_ + beatPhase_;
+                    const double beatsMod = std::fmod(
+                        totalBeats,
+                        static_cast<double>(beatsPerLoop));
+                    const double positiveBeatsMod =
+                        (beatsMod < 0.0)
+                            ? (beatsMod + static_cast<double>(
+                                   beatsPerLoop))
+                            : beatsMod;
+                    const double phase01Double =
+                        (beatsPerLoop > 0)
+                            ? (positiveBeatsMod /
+                               static_cast<double>(beatsPerLoop))
+                            : 0.0;
+                    const float phase01 = static_cast<float>(
+                        juce::jlimit(0.0, 1.0, phase01Double));
+
+                    constexpr double kTrailFadeSeconds = 0.3;
+                    constexpr int kMaxTrailSegments = 15;
+
+                    auto& trail = loopPlayTrails_[loopModule->id()];
+                    trail.push_back(
+                        LoopPlayTrailSample{phase01, nowSeconds});
+
+                    // Discard samples outside the fade window or
+                    // beyond the maximum count, keeping the most
+                    // recent entries.
+                    const auto isExpired = [nowSeconds](
+                                                     const LoopPlayTrailSample& s) {
+                        return (nowSeconds - s.timestampSeconds) >
+                               kTrailFadeSeconds;
+                    };
+
+                    // Remove expired samples from the front.
+                    while (!trail.empty() &&
+                           isExpired(trail.front())) {
+                        trail.erase(trail.begin());
+                    }
+
+                    if (static_cast<int>(trail.size()) >
+                        kMaxTrailSegments) {
+                        const auto extra = static_cast<int>(
+                            trail.size()) - kMaxTrailSegments;
+                        trail.erase(trail.begin(),
+                                    trail.begin() + extra);
+                    }
+
+                    const float innerRadius = nodeRadius + 1.0F;
+                    const float outerRadius = ringRadius - 4.0F;
+                    const float barThickness = 2.0F;
+
+                    auto drawBarAtPhase = [&](float phase,
+                                              const juce::Colour& colour,
+                                              float alphaScale) {
+                        const float angle =
+                            juce::MathConstants<float>::twoPi * phase -
+                            juce::MathConstants<float>::halfPi;
+                        const float cosA = std::cos(angle);
+                        const float sinA = std::sin(angle);
+
+                        const juce::Point<float> p1(
+                            cx + innerRadius * cosA,
+                            cy + innerRadius * sinA);
+                        const juce::Point<float> p2(
+                            cx + outerRadius * cosA,
+                            cy + outerRadius * sinA);
+
+                        g.setColour(colour.withAlpha(
+                            colour.getFloatAlpha() * alphaScale));
+                        g.drawLine(juce::Line<float>(p1, p2),
+                                   barThickness);
+                    };
+
+                    // Draw trail segments from oldest to newest with
+                    // increasing opacity so that recent positions
+                    // stand out near the current playhead.
+                    for (const auto& sample : trail) {
+                        const double age =
+                            nowSeconds - sample.timestampSeconds;
+                        if (age < 0.0 ||
+                            age > kTrailFadeSeconds) {
+                            continue;
+                        }
+
+                        const float t = static_cast<float>(
+                            age / kTrailFadeSeconds);
+                        const float alpha =
+                            juce::jlimit(0.0F, 1.0F, 1.0F - t);
+                        if (alpha <= 0.0F) {
+                            continue;
+                        }
+
+                        drawBarAtPhase(sample.phase01,
+                                       juce::Colours::white,
+                                       alpha * 0.8F);
+                    }
+
+                    // Current playhead bar on top, fully opaque red.
+                    drawBarAtPhase(phase01, juce::Colours::red, 1.0F);
                 }
             }
         }

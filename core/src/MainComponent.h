@@ -162,6 +162,19 @@ private:
     std::unordered_map<std::string, double>
         loopLabelLastChangeSeconds_;
 
+    // Loop playhead trail: recent history of playback phases per
+    // Loop module so that the UI can render a short white trail
+    // behind the rotating red play bar. Samples are kept within a
+    // small time window and capped to a fixed maximum count to keep
+    // the structure lightweight.
+    struct LoopPlayTrailSample {
+        float phase01{0.0F};
+        double timestampSeconds{0.0};
+    };
+
+    std::unordered_map<std::string, std::vector<LoopPlayTrailSample>>
+        loopPlayTrails_;
+
     // Last timer tick timestamp (seconds) used to derive dt for
     // animations, so visuals remain stable if the timer frequency
     // changes.
