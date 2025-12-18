@@ -2212,7 +2212,10 @@ void MainComponent::timerCallback()
     lastTimerSeconds_ = nowSeconds;
 
     // Age existing pulses and remove the ones that have fully faded.
-    constexpr double pulseLifetimeSeconds = 1.0;
+    // Shorten the lifetime further so ripples expand and fade more
+    // quickly within each beat while keeping their generation locked
+    // to the tempo transport.
+    constexpr double pulseLifetimeSeconds = 0.35;
     const float ageStep = static_cast<float>(dt / pulseLifetimeSeconds);
 
     for (auto& pulse : pulses_) {
@@ -2593,16 +2596,48 @@ void MainComponent::timerCallback()
     const double fracBeat = std::modf(engineBeats, &wholeBeatsDouble);
     const int wholeBeats = static_cast<int>(wholeBeatsDouble);
 
-    // Generate BPM pulses and Sampleplay beat triggers for each new
-    // whole beat that elapsed since the last timer tick.
-    const int prevWholeBeats = static_cast<int>(transportBeats_);
-    if (wholeBeats > prevWholeBeats) {
-        for (int b = prevWholeBeats; b < wholeBeats; ++b) {
-            const int beatInBar = b % 4;
-            const bool strong = (beatInBar == 0);
-            pulses_.push_back(Pulse{0.0F, strong});
-            triggerSampleplayNotesOnBeat(strong);
+    // Generate BPM pulses and Sampleplay beat triggers from a
+    // high-resolution pulse grid: two pulses per beat (eight per
+    // 4/4 bar). This lets us apply a small visual phase offset
+    // without changing the audio transport. Only quarter-note
+    // pulses (every second step) are actually rendered and used to
+    // trigger Sampleplay.
+    constexpr double kPulsesPerBeat = 2.0;   // 2 pulses per beat -> 8 per bar.
+    constexpr int kPulsesPerBar = 8;
+    // Visual phase offset in beats: negative values advance the
+    // centre pulse slightly ahead of the raw transport. A value of
+    // -0.5 corresponds to half a beat (one step in the 8-step grid),
+    // compensating the observed ~0.5-pulse lag.
+    constexpr double kPulsePhaseOffsetBeats = -1.0;
+
+    const double pulsePositionBeats =
+        engineBeats + kPulsePhaseOffsetBeats;
+    int pulseStepNow = static_cast<int>(std::floor(
+        pulsePositionBeats * kPulsesPerBeat));
+
+    // Handle transport resets or backwards jumps gracefully by
+    // re-synchronising the pulse counter.
+    if (pulseStepNow < lastPulseStep_) {
+        lastPulseStep_ = pulseStepNow;
+    }
+
+    if (pulseStepNow > lastPulseStep_) {
+        for (int s = lastPulseStep_ + 1; s <= pulseStepNow; ++s) {
+            const int stepInBar =
+                (s % kPulsesPerBar + kPulsesPerBar) % kPulsesPerBar;
+
+            const bool isQuarterStep = (stepInBar % 2) == 0;
+            // Keep the strong accent on the last quarter of the bar
+            // (beat index 3), which corresponds to step 6 in the
+            // 8-step grid.
+            const bool strong = (stepInBar == 6);
+
+            if (isQuarterStep) {
+                pulses_.push_back(Pulse{0.0F, strong});
+                triggerSampleplayNotesOnBeat(strong);
+            }
         }
+        lastPulseStep_ = pulseStepNow;
     }
 
     transportBeats_ = static_cast<double>(wholeBeats);

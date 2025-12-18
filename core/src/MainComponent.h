@@ -252,6 +252,13 @@ private:
     // introducing a full MIDI scheduler yet.
     double transportBeats_{0.0};
 
+    // High-resolution pulse counter used for BPM-synchronised
+    // centre ripples. Internally we run at two pulses per beat
+    // (eight per 4/4 bar) so that we can apply small phase
+    // adjustments without affecting the audio transport; only
+    // every second pulse (quarter-note rate) is actually rendered.
+    int lastPulseStep_{0};
+
     // When true, Sequencer steps modulate the volume (velocity) of
     // destination modules: note velocity in Sampleplay and the
     // per-module sequencer gain factor in Oscillator. When false,

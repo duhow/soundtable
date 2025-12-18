@@ -441,16 +441,29 @@ void MainComponent::paint(juce::Graphics& g)
                       baseRadius * 2.0F, baseRadius * 2.0F);
 
         for (const auto& pulse : pulses_) {
-            const float t = juce::jlimit(0.0F, 1.0F, pulse.age);
-            const float maxRadius = pulse.strong ? 50.0F : 50.0F;
-            const float radius = baseRadius + t * maxRadius;
+            const float tRaw = juce::jlimit(0.0F, 1.0F, pulse.age);
 
+            // Ease-out curve for the radial expansion: the pulse grows
+            // faster at the beginning and slows down towards the end,
+            // using a simple cubic easing equivalent to a Bezier-like
+            // acceleration curve.
+            const float oneMinus = 1.0F - tRaw;
+            const float tRadius = 1.0F - oneMinus * oneMinus * oneMinus;
+
+            const float maxRadius = pulse.strong ? 50.0F : 50.0F;
+            const float radius = baseRadius + tRadius * maxRadius;
+
+            // Smooth fade-out curve: keep the alpha stronger for
+            // longer and then let it fall off more smoothly near the
+            // end of the pulse using a quadratic decay.
+            const float fade = oneMinus * oneMinus;
             const float baseAlpha =
-                (1.0F - t) * (masterMuted_ ? 0.4F : 1.0F);
+                fade * (masterMuted_ ? 0.4F : 1.0F);
             const float alpha =
                 pulse.strong ? baseAlpha * 0.7F : baseAlpha * 0.2F;
 
-            const float thickness = pulse.strong ? 4.0F : 2.0F;
+            const float baseThickness = pulse.strong ? 4.0F : 2.0F;
+            const float thickness = baseThickness + 3.0F * tRadius;
 
             g.setColour(masterColour_.withAlpha(alpha));
             g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2.0F,
