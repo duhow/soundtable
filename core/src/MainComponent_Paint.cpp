@@ -2149,7 +2149,7 @@ void MainComponent::paint(juce::Graphics& g)
         if (hasModeMenu) {
             const float buttonWidth = nodeRadius * 1.4F;
             const float buttonHeight = 12.0F;
-            const float buttonCenterY = cy + nodeRadius + 6.0F;
+            const float buttonCenterY = cy + nodeRadius + 8.0F;
 
             juce::Rectangle<float> buttonBounds(
                 cx - buttonWidth * 0.5F,
@@ -2246,7 +2246,7 @@ void MainComponent::paint(juce::Graphics& g)
                 // adjustment button, while keeping all icons on a
                 // circular arc that broadly follows the Freq bar.
                 const float buttonCenterY =
-                    cy + nodeRadius + 6.0F;
+                    cy + nodeRadius + 8.0F;
                 float radiusIcons = ringRadius + 6.0F;
                 if (std::abs(sinBottom) > 1e-3F) {
                     const float candidateRadius =
