@@ -211,6 +211,14 @@ TonalizerModule::TonalizerModule(const std::string& id)
   set_icon_id("tonalizer");
 }
 
+const AudioModuleModes& TonalizerModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "tonalizer", "tonalizer_tonalizer"},
+  };
+  return kModes;
+}
+
 VolumeModule::VolumeModule(const std::string& id)
     : AudioModule(id, ModuleType::kSettings,
                   /*produces_audio=*/false, /*consumes_audio=*/false)
@@ -218,7 +226,7 @@ VolumeModule::VolumeModule(const std::string& id)
   set_colour(MakeColour(0xD5, 0xD5, 0xD5));
   set_label("Volume");
   set_description("Global volume and dynamics control.");
-  set_icon_id("volume");
+  set_mode("volume");
   enable_gain_control(true);
   set_level_mapping(0.0F, 1.0F);
 
@@ -232,6 +240,16 @@ VolumeModule::VolumeModule(const std::string& id)
   SetParameter("delay_time", 0.7F);
 }
 
+const AudioModuleModes& VolumeModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "volume", "volume_volume"},
+      AudioModuleMode{1, "compressor", "volume_compressor"},
+      AudioModuleMode{2, "reverb", "volume_reverb"},
+  };
+  return kModes;
+}
+
 TempoModule::TempoModule(const std::string& id)
     : AudioModule(id, ModuleType::kSettings,
                   /*produces_audio=*/false, /*consumes_audio=*/false)
@@ -239,11 +257,20 @@ TempoModule::TempoModule(const std::string& id)
   set_colour(MakeColour(0xD5, 0xD5, 0xD5));
   set_label("Tempo");
   set_description("Global tempo and meter settings.");
-  set_icon_id("tempo");
+  set_mode("tempo");
 
   SetParameter("tempo", 128.0F);
   SetParameter("meter", 4.0F);
   SetParameter("swing", 0.0F);
+}
+
+const AudioModuleModes& TempoModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "tempo", "tempo_tempo"},
+      AudioModuleMode{1, "background", "tempo_background"},
+  };
+  return kModes;
 }
 
 AccelerometerModule::AccelerometerModule(const std::string& id)
@@ -268,6 +295,7 @@ LfoModule::LfoModule(const std::string& id)
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("LFO");
   set_description("Low-frequency modulation source.");
+  set_mode("sine");
   set_icon_id("lfo");
 
   AddOutputPort("out", PortSignalKind::kControl);
@@ -275,6 +303,17 @@ LfoModule::LfoModule(const std::string& id)
   SetParameter("freq", 9.0F);
   SetParameter("mult", 0.906058F);
   SetParameter("samplehold", 1.0F);
+}
+
+const AudioModuleModes& LfoModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "sine", "lfo_sine"},
+      AudioModuleMode{1, "saw", "lfo_saw"},
+      AudioModuleMode{2, "square", "lfo_square"},
+      AudioModuleMode{3, "noise", "lfo_noise"},
+  };
+  return kModes;
 }
 
 SequencerModule::SequencerModule(const std::string& id)
@@ -285,7 +324,7 @@ SequencerModule::SequencerModule(const std::string& id)
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("Sequencer");
   set_description("Step sequencer driving notes or triggers.");
-  set_icon_id("sequencer");
+  set_mode("sequencer");
 
   AddOutputPort("out", PortSignalKind::kMidi);
 
@@ -324,6 +363,16 @@ SequencerModule::SequencerModule(const std::string& id)
       step.pitches.push_back(step.pitch);
     }
   }
+}
+
+const AudioModuleModes& SequencerModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "sequencer", "sequencer_sequencer"},
+      AudioModuleMode{1, "tenori", "sequencer_tenori"},
+      AudioModuleMode{2, "random", "sequencer_random"},
+  };
+  return kModes;
 }
 
 void SequencerModule::SyncPresetsFromTracks()
@@ -416,7 +465,7 @@ DelayModule::DelayModule(const std::string& id)
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("Delay");
   set_description("Delay / echo effect.");
-  set_icon_id("delay");
+  set_mode("feedback");
 
   AddInputPort("in", PortSignalKind::kAudio);
   AddOutputPort("out", PortSignalKind::kAudio);
@@ -426,6 +475,16 @@ DelayModule::DelayModule(const std::string& id)
   SetParameter("sweep", 0.0F);
 }
 
+const AudioModuleModes& DelayModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "feedback", "delay_feedback"},
+      AudioModuleMode{1, "reverb", "delay_reverb"},
+      // AudioModuleMode{2, "pingpong", "delay_pingpong"},
+  };
+  return kModes;
+}
+
 ModulatorModule::ModulatorModule(const std::string& id)
     : AudioModule(id, ModuleType::kAudio,
                   /*produces_audio=*/true, /*consumes_audio=*/true)
@@ -433,7 +492,7 @@ ModulatorModule::ModulatorModule(const std::string& id)
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("Modulator");
   set_description("Ringmod / modulation effect.");
-  set_icon_id("modulator");
+  set_mode("ringmod");
 
   AddInputPort("in", PortSignalKind::kAudio);
   AddOutputPort("out", PortSignalKind::kAudio);
@@ -445,6 +504,16 @@ ModulatorModule::ModulatorModule(const std::string& id)
   SetParameter("fb", 0.5F);
 }
 
+const AudioModuleModes& ModulatorModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "ringmod", "modulator_ringmod"},
+      AudioModuleMode{1, "chorus", "modulator_chorus"},
+      AudioModuleMode{2, "flanger", "modulator_flanger"},
+  };
+  return kModes;
+}
+
 WaveShaperModule::WaveShaperModule(const std::string& id)
     : AudioModule(id, ModuleType::kAudio,
                   /*produces_audio=*/true, /*consumes_audio=*/true)
@@ -452,13 +521,23 @@ WaveShaperModule::WaveShaperModule(const std::string& id)
   set_colour(MakeColour(0x00, 0x00, 0x00));
   set_label("WaveShaper");
   set_description("Waveshaping / distortion effect.");
-  set_icon_id("waveshaper");
+  set_mode("distort");
 
   AddInputPort("in", PortSignalKind::kAudio);
   AddOutputPort("out", PortSignalKind::kAudio);
 
   SetParameter("effect", 0.5F);
   SetParameter("drywet", 0.5F);
+}
+
+const AudioModuleModes& WaveShaperModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "distort", "waveshaper_distort"},
+      AudioModuleMode{1, "compress", "waveshaper_compress"},
+      AudioModuleMode{2, "resample", "waveshaper_resample"},
+  };
+  return kModes;
 }
 
 InputModule::InputModule(const std::string& id)
@@ -481,7 +560,7 @@ LoopModule::LoopModule(const std::string& id)
   set_colour(MakeColour(0xD4, 0xCD, 0x06));
   set_label("Loop");
   set_description("Loop player.");
-  set_icon_id("loop");
+  set_mode("loop");
 
   AddOutputPort("out", PortSignalKind::kAudio);
 
@@ -497,6 +576,16 @@ LoopModule::LoopModule(const std::string& id)
   SetParameter("speed", 1.0F);
 }
 
+const AudioModuleModes& LoopModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "loop", "loop_loop"},
+      AudioModuleMode{1, "timestretch", "loop_timestretch"},
+      // AudioModuleMode{2, "oneshot", "loop_oneshot"},
+  };
+  return kModes;
+}
+
 SampleplayModule::SampleplayModule(const std::string& id)
     : AudioModule(id, ModuleType::kAudio,
           /*produces_audio=*/true, /*consumes_audio=*/false,
@@ -505,7 +594,7 @@ SampleplayModule::SampleplayModule(const std::string& id)
   set_colour(MakeColour(0x19, 0xCC, 0xDC));
   set_label("Sampleplay");
   set_description("Sample-based playback.");
-  set_icon_id("sampleplay");
+  set_mode("synth");
 
   // Expose a gain control so the right-hand arc in the UI can
   // drive the Sampleplay output level. Use a wider level mapping
@@ -526,6 +615,16 @@ SampleplayModule::SampleplayModule(const std::string& id)
   // The actual filename and instruments are kept in the
   // SampleplayModule-specific data structures.
   active_instrument_index_ = -1;
+}
+
+const AudioModuleModes& SampleplayModule::supported_modes() const
+{
+  static const AudioModuleModes kModes = {
+      AudioModuleMode{0, "drum", "sampleplay_drum"},
+      AudioModuleMode{1, "synth", "sampleplay_synth"},
+      AudioModuleMode{2, "sampler", "sampleplay_sampler"},
+  };
+  return kModes;
 }
 
 bool SampleplayModule::LoadSoundfont(const std::string& path,

@@ -130,6 +130,7 @@ class TonalizerModule : public AudioModule {
                   return tones_;
          }
 
+         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
          std::vector<ToneDefinition>& mutable_tones() { return tones_; }
 
  private:
@@ -177,6 +178,8 @@ class VolumeModule : public AudioModule {
         {
                 return true;
         }
+
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 };
 
 // Tempo / global clock module.
@@ -188,6 +191,8 @@ class TempoModule : public AudioModule {
         {
                 return true;
         }
+
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 
         // Canonical BPM range for the global Tempo controller.
         static constexpr float kMinBpm = 40.0F;
@@ -224,6 +229,7 @@ class AccelerometerModule : public AudioModule {
 class LfoModule : public AudioModule {
  public:
         explicit LfoModule(const std::string& id);
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 };
 
 // Step sequencer module.
@@ -236,6 +242,7 @@ class SequencerModule : public AudioModule {
          };
 
         explicit SequencerModule(const std::string& id);
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 
         // Reactable Sequencer version as declared in the .rtp
         // tangible. When the attribute `version` is not present we
@@ -253,7 +260,6 @@ class SequencerModule : public AudioModule {
 
                 // High-level presets/steps API (MVP: monophonic only).
                 [[nodiscard]] Mode mode() const { return mode_; }
-                void set_mode(Mode mode) { mode_ = mode; }
 
                 static constexpr int kNumPresets = 6;
                 [[nodiscard]] int current_preset() const { return current_preset_; }
@@ -295,6 +301,8 @@ class DelayModule : public AudioModule {
  public:
         explicit DelayModule(const std::string& id);
 
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
+
         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
         Envelope& mutable_envelope() { return envelope_; }
 
@@ -320,6 +328,7 @@ class ModulatorModule : public AudioModule {
  public:
         explicit ModulatorModule(const std::string& id);
 
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
         Envelope& mutable_envelope() { return envelope_; }
 
@@ -332,6 +341,7 @@ class WaveShaperModule : public AudioModule {
  public:
         explicit WaveShaperModule(const std::string& id);
 
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
         Envelope& mutable_envelope() { return envelope_; }
 
@@ -356,6 +366,7 @@ class LoopModule : public AudioModule {
  public:
         explicit LoopModule(const std::string& id);
 
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
         Envelope& mutable_envelope() { return envelope_; }
 
@@ -376,6 +387,7 @@ class SampleplayModule : public AudioModule {
  public:
         explicit SampleplayModule(const std::string& id);
 
+        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
         // Instruments as rebuilt from the SoundFont presets. Each
         // entry represents a concrete (bank, program, name) preset
         // that can be triggered via FluidSynth.
