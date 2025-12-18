@@ -137,6 +137,17 @@ private:
     // short period of inactivity.
     double bpmLastChangeSeconds_{0.0};
 
+    // Lightweight input activity indicator driven by OSC/TUIO
+    // traffic. The UI shows a small label ("OSC" or "TUIO") near
+    // the top-right corner of the component, just to the left of the
+    // dock strip, along with a short-lived green dot that flashes on
+    // each received message. The label disappears after 60 seconds
+    // of inactivity.
+    enum class InputActivityKind { kNone = 0, kOsc = 1, kTuio = 2 };
+    InputActivityKind lastInputActivityKind_{InputActivityKind::kNone};
+    double lastInputActivitySeconds_{0.0};
+    double inputActivityPulseSeconds_{0.0};
+
     // Sampleplay instrument label visibility: per-module timestamp of
     // the last time the instrument was changed or the module entered
     // the musical area. Used by the paint code to fade out the

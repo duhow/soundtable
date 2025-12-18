@@ -2613,7 +2613,14 @@ void MainComponent::timerCallback()
         !modulesWithActiveAudio_.empty() || !pulses_.empty() ||
         (bpmLastChangeSeconds_ > 0.0 &&
          nowSeconds - bpmLastChangeSeconds_ <= 6.0) ||
-        activeConnectionHold_.has_value();
+        activeConnectionHold_.has_value() ||
+        // Keep the UI refreshing while the OSC/TUIO activity label
+        // is visible (up to 60 seconds since the last message) or
+        // while a short-lived traffic pulse is active.
+        (lastInputActivitySeconds_ > 0.0 &&
+         nowSeconds - lastInputActivitySeconds_ <= 60.0) ||
+        (inputActivityPulseSeconds_ > 0.0 &&
+         nowSeconds - inputActivityPulseSeconds_ <= 0.25);
 
     if (hasVisualActivity) {
         repaintWithRateLimit();

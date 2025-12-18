@@ -42,9 +42,48 @@ void TrackingOscReceiver::setTuioCursorCallbacks(
     tuioCursorUpCallback_ = std::move(onUp);
 }
 
+void TrackingOscReceiver::writeLog(
+    const juce::String& text)
+{
+#if !defined(NDEBUG)
+    juce::Logger::writeToLog("[rectai-core] " + text);
+#endif
+    return;
+}
+
+void TrackingOscReceiver::writeLog(
+    const juce::OSCMessage& message,
+    const juce::String& text)
+{
+#if !defined(NDEBUG)
+    const auto address = message.getAddressPattern().toString();
+    juce::Logger::writeToLog(juce::String("[rectai-core] ") + address + ": " + text);
+#endif
+    return;
+}
+
+void TrackingOscReceiver::setActivityCallback(
+    std::function<void(ActivityKind)> onActivity)
+{
+    activityCallback_ = std::move(onActivity);
+}
+
+void TrackingOscReceiver::notifyActivity(const ActivityKind kind)
+{
+    if (activityCallback_) {
+        activityCallback_(kind);
+    }
+}
+
 void TrackingOscReceiver::oscMessageReceived(const juce::OSCMessage& message)
 {
     const auto address = message.getAddressPattern().toString();
+
+    if (address.startsWith("/rectai/")) {
+        notifyActivity(ActivityKind::kOsc);
+    } else if (address.startsWith("/tuio/")) {
+        notifyActivity(ActivityKind::kTuio);
+    }
 
     if (address == "/rectai/object") {
         handleObjectMessage(message);
@@ -57,10 +96,10 @@ void TrackingOscReceiver::oscMessageReceived(const juce::OSCMessage& message)
     } else if (address == "/tuio/2Dcur") {
         handleTuio2DcurMessage(message);
     } else {
-        juce::String debug = "[rectai-core] OSC message on unexpected address '" +
+        juce::String debug = "OSC message on unexpected address '" +
                             address + "' (" + juce::String(message.size()) +
                             " args)";
-        juce::Logger::writeToLog(debug);
+        writeLog(debug);
     }
 }
 
@@ -84,16 +123,14 @@ void TrackingOscReceiver::handleObjectMessage(const juce::OSCMessage& message)
     // Expected: int32 trackingId, string logicalId, float x, float y,
     // float angleDegrees.
     if (message.size() < 5) {
-        juce::Logger::writeToLog(
-            "[rectai-core] /rectai/object: invalid argument count");
+        writeLog(message, "invalid argument count");
         return;
     }
 
     if (!message[0].isInt32() || !message[1].isString() ||
         !message[2].isFloat32() || !message[3].isFloat32() ||
         !message[4].isFloat32()) {
-        juce::Logger::writeToLog(
-            "[rectai-core] /rectai/object: unexpected argument types");
+        writeLog(message, "unexpected argument types");
         return;
     }
 
@@ -122,8 +159,7 @@ void TrackingOscReceiver::handleRemoveMessage(const juce::OSCMessage& message)
 {
     // Expected: int32 trackingId.
     if (message.size() < 1 || !message[0].isInt32()) {
-        juce::Logger::writeToLog(
-            "[rectai-core] /rectai/remove: invalid arguments");
+        writeLog(message, "invalid arguments");
         return;
     }
 
@@ -151,8 +187,7 @@ void TrackingOscReceiver::handleTuioHelloMessage(
     // Expected: string trackerId, string tuioVersion, string trackerVersion.
     if (message.size() < 2 || !message[0].isString() ||
         !message[1].isString()) {
-        juce::Logger::writeToLog(
-            "[rectai-core] /tuio/hello: unexpected argument types");
+        writeLog(message, "unexpected argument types");
         return;
     }
 
@@ -177,16 +212,13 @@ void TrackingOscReceiver::handleTuio2DobjMessage(
     //   /tuio/2Dobj alive s_id1 s_id2 ...
     //   /tuio/2Dobj fseq frameSeq
     if (message.size() < 1 || !message[0].isString()) {
-        juce::Logger::writeToLog(
-            "[rectai-core] /tuio/2Dobj: missing command string");
+        writeLog(message, "missing command string");
         return;
     }
 
     const auto command = message[0].getString();
 
-    juce::Logger::writeToLog("[rectai-core] /tuio/2Dobj command '" +
-                             command + "' with " +
-                             juce::String(message.size()) + " args");
+    writeLog(message, "command '" + command + "' with " + juce::String(message.size()) + " args");
 
     if (command == "set") {
         // Expect at least: set, s_id (int32), i_id (int32), x, y, a (floats).
@@ -195,8 +227,7 @@ void TrackingOscReceiver::handleTuio2DobjMessage(
         if (message.size() < 6 || !message[1].isInt32() ||
             !message[2].isInt32() || !message[3].isFloat32() ||
             !message[4].isFloat32() || !message[5].isFloat32()) {
-            juce::Logger::writeToLog(
-                "[rectai-core] /tuio/2Dobj set: invalid arguments");
+            writeLog(message, "set: invalid arguments");
             return;
         }
 
@@ -246,16 +277,18 @@ void TrackingOscReceiver::handleTuio2DobjMessage(
             }
         }
 
-        juce::String ids;
-        bool first = true;
-        for (const auto id : newAlive) {
-            if (!first) {
-                ids += ",";
+        if (!newAlive.empty()) {
+            juce::String ids;
+            bool first = true;
+            for (const auto id : newAlive) {
+                if (!first) {
+                    ids += ",";
+                }
+                ids += juce::String(id);
+                first = false;
             }
-            ids += juce::String(id);
-            first = false;
+            writeLog(message, "alive: " + ids);
         }
-        juce::Logger::writeToLog("[rectai-core] /tuio/2Dobj alive: " + ids);
 
         // Any id that was previously alive but is not in the new set
         // is treated as removed and we dock its associated module.
@@ -304,8 +337,7 @@ void TrackingOscReceiver::handleTuio2DcurMessage(
         // Expect at least: set, s_id (int32), x, y (floats).
         if (message.size() < 4 || !message[1].isInt32() ||
             !message[2].isFloat32() || !message[3].isFloat32()) {
-            juce::Logger::writeToLog(
-                "[rectai-core] /tuio/2Dcur set: invalid arguments");
+            writeLog(message, "set: invalid arguments");
             return;
         }
 
@@ -350,16 +382,18 @@ void TrackingOscReceiver::handleTuio2DcurMessage(
             }
         }
 
-        juce::String ids;
-        bool first = true;
-        for (const auto id : newAlive) {
-            if (!first) {
-                ids += ",";
+        if (!newAlive.empty()) {
+            juce::String ids;
+            bool first = true;
+            for (const auto id : newAlive) {
+                if (!first) {
+                    ids += ",";
+                }
+                ids += juce::String(id);
+                first = false;
             }
-            ids += juce::String(id);
-            first = false;
+            writeLog(message, "alive: " + ids);
         }
-        juce::Logger::writeToLog("[rectai-core] /tuio/2Dcur alive: " + ids);
 
         // Any id that was previously alive but is not in the new set
         // is treated as a pointer up.

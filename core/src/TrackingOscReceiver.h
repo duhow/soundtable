@@ -27,6 +27,8 @@ class TrackingOscReceiver : private juce::OSCReceiver,
                             private juce::OSCReceiver::Listener<
                                 juce::OSCReceiver::MessageLoopCallback> {
 public:
+    enum class ActivityKind { kOsc = 0, kTuio = 1 };
+
     TrackingOscReceiver(rectai::Scene& scene, int port);
     ~TrackingOscReceiver() override;
 
@@ -43,6 +45,14 @@ public:
                            std::int32_t sessionId)> onMove,
         std::function<void(std::int32_t sessionId)> onUp);
 
+    // Optional callback invoked whenever an incoming OSC message is
+    // successfully classified as either proprietary rectai OSC traffic
+    // (ActivityKind::kOsc) or standard TUIO traffic (ActivityKind::kTuio).
+    // This is used by the UI layer to drive lightweight "traffic"
+    // indicators without coupling visual code into the receiver.
+    void setActivityCallback(
+        std::function<void(ActivityKind kind)> onActivity);
+
 private:
     void oscMessageReceived(const juce::OSCMessage& message) override;
     void oscBundleReceived(const juce::OSCBundle& bundle) override;
@@ -52,6 +62,11 @@ private:
     void handleTuioHelloMessage(const juce::OSCMessage& message);
     void handleTuio2DobjMessage(const juce::OSCMessage& message);
     void handleTuio2DcurMessage(const juce::OSCMessage& message);
+
+    void writeLog(const juce::String& text);
+    void writeLog(const juce::OSCMessage& message, const juce::String& text);
+
+    void notifyActivity(ActivityKind kind);
 
     rectai::Scene& scene_;
 
@@ -67,4 +82,6 @@ private:
     std::function<void(float, float, std::int32_t)> tuioCursorDownCallback_;
     std::function<void(float, float, std::int32_t)> tuioCursorMoveCallback_;
     std::function<void(std::int32_t)> tuioCursorUpCallback_;
+
+    std::function<void(ActivityKind)> activityCallback_;
 };

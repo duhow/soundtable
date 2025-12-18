@@ -79,6 +79,15 @@ void MainComponent::paint(juce::Graphics& g)
         }
     }
 
+    // Dock area used as a reference for positioning small UI widgets
+    // on the right-hand side (for example, the OSC/TUIO traffic
+    // indicator label). This is computed independently of whether
+    // there are currently any docked objects.
+    auto dockBoundsUi = bounds;
+    const float dockWidthUi = calculateDockWidth(dockBoundsUi.getWidth());
+    const juce::Rectangle<float> dockAreaUi =
+        dockBoundsUi.removeFromRight(dockWidthUi);
+
     // ---------------------------------------------------------------------
     // Background: cached static table geometry (black backdrop,
     // coloured disc and soft outer ring). The heavy gradient and
@@ -2655,6 +2664,87 @@ void MainComponent::paint(juce::Graphics& g)
                                    juce::Justification::topLeft, false);
                     }
                 }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // OSC/TUIO traffic indicator label (top-right, left of the dock).
+    // ---------------------------------------------------------------------
+    {
+        const double nowSeconds =
+            juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+        bool showLabel = false;
+        bool showPulse = false;
+        bool isTuio = false;
+
+        if (lastInputActivitySeconds_ > 0.0) {
+            const double idle = nowSeconds - lastInputActivitySeconds_;
+            if (idle >= 0.0 && idle <= 60.0) {
+                showLabel = true;
+                isTuio = (lastInputActivityKind_ ==
+                          InputActivityKind::kTuio);
+            }
+        }
+
+        if (inputActivityPulseSeconds_ > 0.0) {
+            const double pulseAge = nowSeconds - inputActivityPulseSeconds_;
+            if (pulseAge >= 0.0 && pulseAge <= 0.25) {
+                showPulse = true;
+            }
+        }
+
+        if (showLabel) {
+            juce::Graphics::ScopedSaveState indicatorState(g);
+
+            const juce::String labelText =
+                isTuio ? juce::String("TUIO") : juce::String("OSC");
+
+            const float margin = 8.0F;
+            const float height = 20.0F;
+            const float paddingH = 8.0F;
+            const float paddingV = 4.0F;
+            const float bubbleDiameter = 8.0F;
+
+            juce::Font font(13.0F, juce::Font::plain);
+            g.setFont(font);
+            const float textWidth =
+                g.getCurrentFont().getStringWidthFloat(labelText);
+
+            const float extraForPulse =
+                showPulse ? (bubbleDiameter + 6.0F) : 0.0F;
+            const float totalWidth =
+                textWidth + paddingH * 2.0F + extraForPulse;
+
+            const float rightX = dockAreaUi.getX() - margin;
+            const float topY = bounds.getY() + margin;
+
+            juce::Rectangle<float> bg(rightX - totalWidth, topY,
+                                      totalWidth, height);
+
+            g.setColour(juce::Colours::black.withAlpha(0.6F));
+            g.fillRoundedRectangle(bg, 6.0F);
+
+            g.setColour(juce::Colours::white.withAlpha(0.85F));
+            juce::Rectangle<float> textBounds =
+                bg.reduced(paddingH, paddingV);
+            if (showPulse) {
+                textBounds.setRight(textBounds.getRight() -
+                                    (bubbleDiameter + 6.0F));
+            }
+            g.drawText(labelText, textBounds,
+                       juce::Justification::centredLeft, false);
+
+            if (showPulse) {
+                const float cx = bg.getRight() - paddingH -
+                                 bubbleDiameter * 0.5F;
+                const float cy = bg.getCentreY();
+                const float radius = bubbleDiameter * 0.5F;
+
+                g.setColour(juce::Colours::green.withAlpha(0.9F));
+                g.fillEllipse(cx - radius, cy - radius,
+                              bubbleDiameter, bubbleDiameter);
             }
         }
     }

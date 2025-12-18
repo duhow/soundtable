@@ -501,6 +501,27 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             handleTuioCursorUp();
         });
 
+    // Track high-level input activity (OSC vs TUIO) so that the UI
+    // can expose a small traffic indicator near the dock. The
+    // callback runs on the JUCE message thread, so it can safely
+    // touch UI state and trigger repaints.
+    trackingOscReceiver_.setActivityCallback(
+        [this](TrackingOscReceiver::ActivityKind kind) {
+            const double nowSeconds =
+                juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+            if (kind == TrackingOscReceiver::ActivityKind::kTuio) {
+                lastInputActivityKind_ = InputActivityKind::kTuio;
+            } else {
+                lastInputActivityKind_ = InputActivityKind::kOsc;
+            }
+
+            lastInputActivitySeconds_ = nowSeconds;
+            inputActivityPulseSeconds_ = nowSeconds;
+
+            repaintWithRateLimit();
+        });
+
     const auto loadLoopSamples = [this]() {
         const auto& modules = scene_.modules();
 
