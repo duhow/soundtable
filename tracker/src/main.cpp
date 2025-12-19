@@ -189,6 +189,7 @@ int main(int argc, char** argv)
 	std::unordered_map<int, rectai::tracker::TrackedObject> lastStableById;
 	std::string initError;
 	int tuioFrameSeq = 0;
+	int tuioQuietFrameModuloCounter = 0;
 
 	// Require several consecutive detections of the same fiducial ID,
 	// with only small spatial jitter between frames, before considering
@@ -385,7 +386,23 @@ int main(int argc, char** argv)
 			lastStableUpdateSec = nowSec;
 
 			if (oscSender.isOk()) {
+				bool shouldSendTuioThisFrame = true;
 				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11) {
+					// When running in low processing rate mode (~15 FPS) and
+					// no tangible objects are detected, reduce the frequency
+					// of TUIO events to ~5 Hz by only sending one out of
+					// every three processed frames.
+					if (lowProcessingRate && stableObjects.empty()) {
+						++tuioQuietFrameModuloCounter;
+						if (tuioQuietFrameModuloCounter % 3 != 0) {
+							shouldSendTuioThisFrame = false;
+						}
+					} else {
+						tuioQuietFrameModuloCounter = 0;
+					}
+				}
+
+				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11 && shouldSendTuioThisFrame) {
 					std::vector<OscSender::Message> messages;
 					messages.reserve(stableObjects.size() + 2U);
 
@@ -444,7 +461,7 @@ int main(int argc, char** argv)
 					messages.push_back(oscSender.buildTuio2DobjFseq(tuioFrameSeq++));
 					(void)oscSender.sendBundle(messages);
 
-				} else {
+				} else if (outputMode == rectai::tracker::TuioOutputMode::LegacyOsc) {
 					std::vector<OscSender::Message> messages;
 					messages.reserve(stableObjects.size() + 8U);
 
