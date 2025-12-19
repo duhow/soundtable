@@ -12,7 +12,7 @@ Este documento lista las dependencias principales del proyecto y cómo instalarl
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential cmake git
+sudo apt-get install -y build-essential cmake git libzip-dev
 ```
 
 ## 2. Dependencias de JUCE (core de la aplicación)
@@ -55,7 +55,8 @@ sudo apt-get install -y \
   libgl1-mesa-dev \
   libssl-dev \
   libcurl4-openssl-dev \
-  libgtk-3-dev
+  libgtk-3-dev \
+  libzip-dev
 ```
 
 En Windows, se utilizarán las dependencias que JUCE gestiona a través de su integración con Visual Studio / toolchain correspondiente.
@@ -125,7 +126,7 @@ Dentro del contenedor, los binarios resultantes (por ejemplo, `rectai-core` y `r
 # Dependencias de compilación y librerías
 sudo apt-get update
 sudo apt-get install -y \
-  build-essential cmake git \
+  build-essential cmake git libzip-dev \
   libasound2-dev libjack-jackd2-dev \
   libx11-dev libxcomposite-dev libxcursor-dev \
   libxinerama-dev libxrandr-dev libxrender-dev \

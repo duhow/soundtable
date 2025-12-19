@@ -120,6 +120,25 @@ public:
         juce::String initialSessionPath;
         if (positional.size() > 0) {
             initialSessionPath = positional[positional.size() - 1];
+
+            // Normalise simple quoted paths such as "Reactive 2.rtz" or
+            // 'Reactive 2.rtz' that may appear as a single token on some
+            // platforms. If the argument starts and ends with the same quote
+            // character, strip the outer quotes so that juce::File sees the
+            // actual filesystem path.
+            if (initialSessionPath.length() >= 2) {
+                const juce::juce_wchar first = initialSessionPath[0];
+                const juce::juce_wchar last =
+                    initialSessionPath[initialSessionPath.length() - 1];
+                const bool isDoubleQuoted =
+                    (first == '"' && last == '"');
+                const bool isSingleQuoted =
+                    (first == '\'' && last == '\'');
+                if (isDoubleQuoted || isSingleQuoted) {
+                    initialSessionPath = initialSessionPath.substring(
+                        1, initialSessionPath.length() - 1);
+                }
+            }
         }
 
         mainWindow_ = std::make_unique<MainWindow>(

@@ -47,6 +47,9 @@ if(UNIX AND NOT APPLE)
 
     # FluidSynth for SoundFont2 support in Sampleplay modules.
     pkg_check_modules(FLUIDSYNTH REQUIRED fluidsynth)
+
+    # libzip for RTZ (ZIP archive) support in ReactableRtzLoader.
+    pkg_check_modules(LIBZIP REQUIRED libzip)
 endif()
 
 # Librería de dominio (modelo de escena, módulos, etc.)
@@ -63,7 +66,8 @@ add_library(rectai-core-lib STATIC
 target_include_directories(rectai-core-lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        $<$<AND:$<BOOL:${FLUIDSYNTH_FOUND}>,$<PLATFORM_ID:Linux>>:${FLUIDSYNTH_INCLUDE_DIRS}>
+    $<$<AND:$<BOOL:${FLUIDSYNTH_FOUND}>,$<PLATFORM_ID:Linux>>:${FLUIDSYNTH_INCLUDE_DIRS}>
+    $<$<BOOL:${LIBZIP_FOUND}>:${LIBZIP_INCLUDE_DIRS}>
 )
 
 if (MSVC)
@@ -76,8 +80,14 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(rectai-core-lib
         PUBLIC
             ${FLUIDSYNTH_LIBRARIES}
+            $<$<BOOL:${LIBZIP_FOUND}>:${LIBZIP_LIBRARIES}>
     )
 endif()
+
+target_compile_definitions(rectai-core-lib
+    PUBLIC
+        $<$<BOOL:${LIBZIP_FOUND}>:RECTAI_HAVE_LIBZIP=1>
+)
 
 
 # Aplicación JUCE principal

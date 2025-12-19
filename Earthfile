@@ -12,6 +12,7 @@ the-base:
             build-essential \
             cmake \
             git \
+            libzip-dev \
             pkg-config \
             libasound2-dev \
             libjack-jackd2-dev \

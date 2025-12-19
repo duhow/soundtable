@@ -12,6 +12,7 @@
 #include "AudioEngine.h"
 #include "core/AudioModules.h"
 #include "core/ReactableRtpLoader.h"
+#include "core/ReactableRtzLoader.h"
 #include "core/SoundfontUtils.h"
 #include "MainComponentHelpers.h"
 
@@ -172,13 +173,32 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     setOpaque(true);
     invalidateTableBackground();
 
+    // Resolve the root of the com.reactable content tree so that we
+    // have a stable base directory for Sessions/ and Samples/ when
+    // importing .rtz archives.
+    juce::File comReactableRoot;
+    {
+        const juce::File defaultRtp =
+            rectai::ui::loadFile("Resources/default.rtp");
+        if (defaultRtp.existsAsFile()) {
+            comReactableRoot = defaultRtp.getParentDirectory()
+                                      .getParentDirectory();
+        } else {
+            const juce::File cwd =
+                juce::File::getCurrentWorkingDirectory();
+            comReactableRoot = cwd.getChildFile("com.reactable");
+        }
+    }
+
     // Load initial Reactable patch. If an explicit session file was
     // provided on the command line, try that first; otherwise fall
     // back to com.reactable/Resources/default.rtp. If loading fails
     // (e.g., when running tests without assets), fall back to the
     // small hardcoded demo scene used originally.
-    const auto loadPatchFromFile = [this](const juce::File& patchFile) {
+    const auto loadPatchFromFile =
+        [this, comReactableRoot](const juce::File& patchFile) {
         using rectai::LoadReactablePatchFromFile;
+        using rectai::LoadReactableSessionFromRtz;
         using rectai::ReactablePatchMetadata;
 
         if (!patchFile.existsAsFile()) {
@@ -189,13 +209,47 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
         std::string error;
 
         scene_ = rectai::Scene{};
-        const bool ok = LoadReactablePatchFromFile(
-            patchFile.getFullPathName().toStdString(), scene_, &metadata,
-            &error);
+
+        const juce::String extension =
+            patchFile.getFileExtension().toLowerCase();
+
+        bool ok = false;
+        if (extension == ".rtz") {
+            ok = LoadReactableSessionFromRtz(
+                patchFile.getFullPathName().toStdString(),
+                comReactableRoot.getFullPathName().toStdString(),
+                scene_, &metadata, &error);
+        } else {
+            ok = LoadReactablePatchFromFile(
+                patchFile.getFullPathName().toStdString(), scene_,
+                &metadata, &error);
+        }
         if (ok) {
             masterColour_ =
                 rectai::ui::colourFromArgb(metadata.master_colour_argb);
             masterMuted_ = metadata.master_muted;
+
+            // Log basic project metadata (authors and title) when a
+            // session is successfully loaded.
+            juce::String author =
+                juce::String(metadata.author_name).trim();
+            juce::String title =
+                juce::String(metadata.patch_name).trim();
+
+            juce::String info;
+            if (author.isNotEmpty() && title.isNotEmpty()) {
+                info = author + " - " + title;
+            } else if (author.isNotEmpty()) {
+                info = author;
+            } else if (title.isNotEmpty()) {
+                info = title;
+            }
+
+            juce::String logMessage("Loaded project: ");
+            if (info.isNotEmpty()) {
+                logMessage += info;
+            }
+            juce::Logger::writeToLog(logMessage);
 
             // Seed per-connection mute state from the Scene model.
             // Reactable hardlinks can declare muted="1" and the

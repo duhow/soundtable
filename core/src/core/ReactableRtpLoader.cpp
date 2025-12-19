@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -298,30 +299,123 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
     metadata->master_muted = false;
   }
 
-  // Extract author.
-  {
+  // Extract author from legacy <author name="..."> tag.
+  if (metadata != nullptr) {
     const std::size_t author_pos = xml.find("<author");
     if (author_pos != std::string::npos) {
       std::size_t end = 0U;
       const auto tag_content = ExtractTagContent(xml, author_pos, &end);
       const auto attrs = ParseAttributes(tag_content);
       const auto it = attrs.find("name");
-      if (metadata != nullptr && it != attrs.end()) {
-        metadata->author_name = it->second;
+      if (it != attrs.end()) {
+        metadata->author_name = Trim(it->second);
       }
     }
   }
 
-  // Extract patch name.
-  {
+  // Extract patch name from legacy <patch name="..."> tag.
+  if (metadata != nullptr) {
     const std::size_t patch_pos = xml.find("<patch");
     if (patch_pos != std::string::npos) {
       std::size_t end = 0U;
       const auto tag_content = ExtractTagContent(xml, patch_pos, &end);
       const auto attrs = ParseAttributes(tag_content);
       const auto it = attrs.find("name");
-      if (metadata != nullptr && it != attrs.end()) {
-        metadata->patch_name = it->second;
+      if (it != attrs.end()) {
+        metadata->patch_name = Trim(it->second);
+      }
+    }
+  }
+
+  // Fallback for Reactable 0.2 schema: <details><authors><author>...</author></authors><title>...</title>.
+  if (metadata != nullptr &&
+      (metadata->author_name.empty() || metadata->patch_name.empty())) {
+    const std::size_t details_pos = xml.find("<details>");
+    if (details_pos != std::string::npos) {
+      const std::size_t details_end = xml.find("</details>", details_pos);
+      if (details_end != std::string::npos) {
+        // Extract authors list if needed.
+        if (metadata->author_name.empty()) {
+          const std::size_t authors_pos = xml.find("<authors", details_pos);
+          if (authors_pos != std::string::npos &&
+              authors_pos < details_end) {
+            const std::size_t authors_start =
+                xml.find('>', authors_pos);
+            if (authors_start != std::string::npos &&
+                authors_start < details_end) {
+              const std::size_t authors_close =
+                  xml.find("</authors>", authors_start);
+              if (authors_close != std::string::npos &&
+                  authors_close <= details_end) {
+                std::size_t search_pos = authors_start + 1U;
+                std::vector<std::string> authors;
+                while (true) {
+                  const std::size_t a_open =
+                      xml.find("<author", search_pos);
+                  if (a_open == std::string::npos ||
+                      a_open >= authors_close) {
+                    break;
+                  }
+                  const std::size_t content_start =
+                      xml.find('>', a_open);
+                  if (content_start == std::string::npos ||
+                      content_start >= authors_close) {
+                    break;
+                  }
+                  const std::size_t content_end =
+                      xml.find("</author>", content_start);
+                  if (content_end == std::string::npos ||
+                      content_end > authors_close) {
+                    break;
+                  }
+                  std::string text = xml.substr(
+                      content_start + 1U,
+                      content_end - content_start - 1U);
+                  text = Trim(text);
+                  if (!text.empty()) {
+                    authors.push_back(std::move(text));
+                  }
+                  search_pos = content_end + std::strlen("</author>");
+                }
+
+                if (!authors.empty()) {
+                  std::string joined;
+                  for (std::size_t i = 0; i < authors.size(); ++i) {
+                    if (i > 0U) {
+                      joined += ", ";
+                    }
+                    joined += authors[i];
+                  }
+                  metadata->author_name = std::move(joined);
+                }
+              }
+            }
+          }
+        }
+
+        // Extract title if needed.
+        if (metadata->patch_name.empty()) {
+          const std::size_t title_pos = xml.find("<title", details_pos);
+          if (title_pos != std::string::npos &&
+              title_pos < details_end) {
+            const std::size_t title_start = xml.find('>', title_pos);
+            if (title_start != std::string::npos &&
+                title_start < details_end) {
+              const std::size_t title_close =
+                  xml.find("</title>", title_start);
+              if (title_close != std::string::npos &&
+                  title_close <= details_end) {
+                std::string text = xml.substr(
+                    title_start + 1U,
+                    title_close - title_start - 1U);
+                text = Trim(text);
+                if (!text.empty()) {
+                  metadata->patch_name = std::move(text);
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
