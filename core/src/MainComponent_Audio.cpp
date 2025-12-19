@@ -2196,7 +2196,11 @@ void MainComponent::timerCallback()
     // carrying audible audio so that it can avoid running the full
     // synthesis/sampling path when the scene is completely idle (no
     // modules in the musical area or all routes effectively silent).
-    audioEngine_.setProcessingActive(!modulesWithActiveAudio_.empty());
+    // audioEngine_.setProcessingActive(!modulesWithActiveAudio_.empty());
+    // -----
+    // HACK: keep audio processing always active
+    // to avoid sync issues
+    audioEngine_.setProcessingActive(true);
 
     // Update BPM pulse animation using real dt between timer ticks so
     // visuals remain stable even if the timer frequency changes or the
