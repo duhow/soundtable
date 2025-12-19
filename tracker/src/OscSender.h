@@ -15,7 +15,44 @@ public:
     OscSender(const std::string& host, std::uint16_t port);
     ~OscSender();
 
+    using Message = std::string;
+
     [[nodiscard]] bool isOk() const { return socketFd_ >= 0; }
+
+    // Low-level helpers to build OSC-encoded messages without sending them.
+    // These are useful when batching multiple messages into a single
+    // OSC bundle.
+    [[nodiscard]] Message buildRectaiObject(std::int32_t trackingId,
+                                            const std::string& logicalId,
+                                            float x,
+                                            float y,
+                                            float angleDegrees);
+
+    [[nodiscard]] Message buildRectaiRemove(std::int32_t trackingId);
+
+    [[nodiscard]] Message buildTuio2DobjSet(std::int32_t sessionId,
+                                            std::int32_t symbolId,
+                                            float x,
+                                            float y,
+                                            float angleRadians,
+                                            float vx = 0.0F,
+                                            float vy = 0.0F,
+                                            float angularVelocity = 0.0F);
+
+    [[nodiscard]] Message buildTuio2DobjAlive(const std::vector<std::int32_t>& sessionIds);
+
+    [[nodiscard]] Message buildTuio2DobjFseq(std::int32_t frameSeq);
+
+    [[nodiscard]] Message buildHelloTuio11(const std::string& trackerId,
+                                           const std::string& trackerVersion);
+
+    // Send a single OSC message buffer as-is.
+    bool send(const Message& message);
+
+    // Send a group of messages batched into a single OSC bundle when
+    // there are two or more messages. If there is only one message,
+    // this falls back to sending it as a plain OSC message.
+    bool sendBundle(const std::vector<Message>& messages);
 
     // Sends a /rectai/object message with the given tracking id,
     // logical id, normalised position and angle in DEGREES
@@ -60,18 +97,6 @@ public:
                          const std::string& trackerVersion);
 
 private:
-    bool sendMessage(const std::string& address,
-                     const std::string& typeTags,
-                     const std::string& logicalId,
-                     std::int32_t trackingId,
-                     float x,
-                     float y,
-                     float angleDegrees);
-
-    bool sendMessage(const std::string& address,
-                     const std::string& typeTags,
-                     std::int32_t trackingId);
-
     static void appendPaddedString(const std::string& value,
                                    std::string& buffer);
     static void appendInt32(std::int32_t value, std::string& buffer);

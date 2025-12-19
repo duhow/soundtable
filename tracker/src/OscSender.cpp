@@ -71,8 +71,9 @@ bool OscSender::sendObject(const std::int32_t trackingId,
 
     // Address: /rectai/object
     // Type tags: ",isfff" (int32, string, float, float, float)
-    return sendMessage("/rectai/object", ",isfff", logicalId, trackingId, x,
-                       y, angleDegrees);
+    const auto message = buildRectaiObject(trackingId, logicalId, x, y,
+                                           angleDegrees);
+    return send(message);
 }
 
 bool OscSender::sendRemove(const std::int32_t trackingId)
@@ -83,7 +84,8 @@ bool OscSender::sendRemove(const std::int32_t trackingId)
 
     // Address: /rectai/remove
     // Type tags: ",i" (int32)
-    return sendMessage("/rectai/remove", ",i", trackingId);
+    const auto message = buildRectaiRemove(trackingId);
+    return send(message);
 }
 
 bool OscSender::sendTuio2DobjSet(const std::int32_t sessionId,
@@ -99,6 +101,89 @@ bool OscSender::sendTuio2DobjSet(const std::int32_t sessionId,
         return false;
     }
 
+    const auto message = buildTuio2DobjSet(sessionId, symbolId, x, y,
+                                           angleRadians, vx, vy,
+                                           angularVelocity);
+    return send(message);
+}
+
+bool OscSender::sendTuio2DobjAlive(
+    const std::vector<std::int32_t>& sessionIds)
+{
+    if (!isOk()) {
+        return false;
+    }
+
+    const auto message = buildTuio2DobjAlive(sessionIds);
+    return send(message);
+}
+
+bool OscSender::sendTuio2DobjFseq(const std::int32_t frameSeq)
+{
+    if (!isOk()) {
+        return false;
+    }
+
+    const auto message = buildTuio2DobjFseq(frameSeq);
+    return send(message);
+}
+
+bool OscSender::sendHelloTuio11(const std::string& trackerId,
+                                const std::string& trackerVersion)
+{
+    if (!isOk()) {
+        return false;
+    }
+
+    const auto message = buildHelloTuio11(trackerId, trackerVersion);
+    return send(message);
+}
+
+OscSender::Message OscSender::buildRectaiObject(
+    const std::int32_t trackingId,
+    const std::string& logicalId,
+    const float x,
+    const float y,
+    const float angleDegrees)
+{
+    std::string buffer;
+    buffer.reserve(128);
+
+    appendPaddedString("/rectai/object", buffer);
+    appendPaddedString(",isfff", buffer);
+
+    appendInt32(trackingId, buffer);
+    appendPaddedString(logicalId, buffer);
+    appendFloat32(x, buffer);
+    appendFloat32(y, buffer);
+    appendFloat32(angleDegrees, buffer);
+
+    return buffer;
+}
+
+OscSender::Message OscSender::buildRectaiRemove(
+    const std::int32_t trackingId)
+{
+    std::string buffer;
+    buffer.reserve(64);
+
+    appendPaddedString("/rectai/remove", buffer);
+    appendPaddedString(",i", buffer);
+    appendInt32(trackingId, buffer);
+
+    return buffer;
+}
+
+OscSender::Message OscSender::buildTuio2DobjSet(
+    const std::int32_t sessionId,
+    const std::int32_t symbolId,
+    const float x,
+    const float y,
+    const float angleRadians,
+    const float vx,
+    const float vy,
+    const float angularVelocity)
+{
     // Address: /tuio/2Dobj
     // Type tags: ",siiffffffff" (string, int32, int32,
     //                             8 floats: x, y, a, X, Y, A, m, r)
@@ -126,17 +211,12 @@ bool OscSender::sendTuio2DobjSet(const std::int32_t sessionId,
     appendFloat32(0.0F, buffer);          // m (motion speed, unused)
     appendFloat32(0.0F, buffer);          // r (rotation accel, unused)
 
-    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
-    return sent == static_cast<ssize_t>(buffer.size());
+    return buffer;
 }
 
-bool OscSender::sendTuio2DobjAlive(
+OscSender::Message OscSender::buildTuio2DobjAlive(
     const std::vector<std::int32_t>& sessionIds)
 {
-    if (!isOk()) {
-        return false;
-    }
-
     std::string buffer;
     buffer.reserve(64 + static_cast<std::size_t>(sessionIds.size()) * 8U);
 
@@ -155,16 +235,12 @@ bool OscSender::sendTuio2DobjAlive(
         appendInt32(id, buffer);
     }
 
-    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
-    return sent == static_cast<ssize_t>(buffer.size());
+    return buffer;
 }
 
-bool OscSender::sendTuio2DobjFseq(const std::int32_t frameSeq)
+OscSender::Message OscSender::buildTuio2DobjFseq(
+    const std::int32_t frameSeq)
 {
-    if (!isOk()) {
-        return false;
-    }
-
     std::string buffer;
     buffer.reserve(64);
 
@@ -174,17 +250,13 @@ bool OscSender::sendTuio2DobjFseq(const std::int32_t frameSeq)
     appendPaddedString("fseq", buffer);
     appendInt32(frameSeq, buffer);
 
-    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
-    return sent == static_cast<ssize_t>(buffer.size());
+    return buffer;
 }
 
-bool OscSender::sendHelloTuio11(const std::string& trackerId,
-                                const std::string& trackerVersion)
+OscSender::Message OscSender::buildHelloTuio11(
+    const std::string& trackerId,
+    const std::string& trackerVersion)
 {
-    if (!isOk()) {
-        return false;
-    }
-
     // Address: /tuio/hello
     // Type tags: ",sss" (string trackerId, string tuioVersion,
     //                       string trackerVersion)
@@ -202,47 +274,64 @@ bool OscSender::sendHelloTuio11(const std::string& trackerId,
     appendPaddedString(kTuioVersion, buffer);
     appendPaddedString(trackerVersion, buffer);
 
-    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
-    return sent == static_cast<ssize_t>(buffer.size());
+    return buffer;
 }
 
-bool OscSender::sendMessage(const std::string& address,
-                            const std::string& typeTags,
-                            const std::string& logicalId,
-                            const std::int32_t trackingId,
-                            const float x,
-                            const float y,
-                            const float angleDegrees)
+bool OscSender::send(const Message& message)
 {
-    std::string buffer;
-    buffer.reserve(128);
+    if (!isOk()) {
+        return false;
+    }
 
-    appendPaddedString(address, buffer);
-    appendPaddedString(typeTags, buffer);
-
-    appendInt32(trackingId, buffer);
-    appendPaddedString(logicalId, buffer);
-    appendFloat32(x, buffer);
-    appendFloat32(y, buffer);
-    appendFloat32(angleDegrees, buffer);
-
-    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
-    return sent == static_cast<ssize_t>(buffer.size());
+    const auto sent = ::send(socketFd_, message.data(), message.size(), 0);
+    return sent == static_cast<ssize_t>(message.size());
 }
 
-bool OscSender::sendMessage(const std::string& address,
-                            const std::string& typeTags,
-                            const std::int32_t trackingId)
+bool OscSender::sendBundle(const std::vector<Message>& messages)
 {
-    std::string buffer;
-    buffer.reserve(64);
+    if (!isOk()) {
+        return false;
+    }
 
-    appendPaddedString(address, buffer);
-    appendPaddedString(typeTags, buffer);
-    appendInt32(trackingId, buffer);
+    if (messages.empty()) {
+        return true;
+    }
 
-    const auto sent = ::send(socketFd_, buffer.data(), buffer.size(), 0);
-    return sent == static_cast<ssize_t>(buffer.size());
+    if (messages.size() == 1U) {
+        return send(messages.front());
+    }
+
+    // OSC bundle encoding:
+    //   "#bundle" + NUL padding to 8 bytes,
+    //   8-byte timetag (we use 0 == immediate),
+    //   then for each element: int32 size (network order) + contents.
+    std::string bundle;
+
+    // Approximate reserve: header + each message plus its size prefix.
+    std::size_t totalSize = 16;  // address + timetag
+    for (const auto& msg : messages) {
+        totalSize += 4U + msg.size();
+    }
+    bundle.reserve(totalSize);
+
+    appendPaddedString("#bundle", bundle);
+
+    // Timetag: 8 bytes. We use 0 for "immediately".
+    bundle.append(8, '\0');
+
+    for (const auto& msg : messages) {
+        const auto size = static_cast<std::uint32_t>(msg.size());
+        const std::uint32_t networkSize = htonl(size);
+
+        char sizeBytes[sizeof(networkSize)];
+        std::memcpy(sizeBytes, &networkSize, sizeof(networkSize));
+        bundle.append(sizeBytes, sizeBytes + sizeof(networkSize));
+
+        bundle.append(msg.data(), msg.data() + msg.size());
+    }
+
+    const auto sent = ::send(socketFd_, bundle.data(), bundle.size(), 0);
+    return sent == static_cast<ssize_t>(bundle.size());
 }
 
 void OscSender::appendPaddedString(const std::string& value,

@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
@@ -254,11 +255,17 @@ int main(int argc, char** argv)
 				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11) {
 					const float angleRad = angleDegrees *
 						( static_cast<float>(M_PI) / 180.0F );
-					(void)oscSender.sendTuio2DobjAlive({1});
-					(void)oscSender.sendTuio2DobjSet(1, 1, x, y, angleRad);
-					(void)oscSender.sendTuio2DobjFseq(tuioFrameSeq++);
+					std::vector<OscSender::Message> messages;
+					messages.reserve(3);
+					messages.push_back(oscSender.buildTuio2DobjAlive({1}));
+					messages.push_back(oscSender.buildTuio2DobjSet(1, 1, x, y, angleRad));
+					messages.push_back(oscSender.buildTuio2DobjFseq(tuioFrameSeq++));
+					(void)oscSender.sendBundle(messages);
 				} else {
-					(void)oscSender.sendObject(1, "osc1", x, y, angleDegrees);
+					std::vector<OscSender::Message> messages;
+					messages.reserve(1);
+					messages.push_back(oscSender.buildRectaiObject(1, "osc1", x, y, angleDegrees));
+					(void)oscSender.sendBundle(messages);
 				}
 			}
 		} else {
@@ -379,12 +386,15 @@ int main(int argc, char** argv)
 
 			if (oscSender.isOk()) {
 				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11) {
+					std::vector<OscSender::Message> messages;
+					messages.reserve(stableObjects.size() + 2U);
+
 					std::vector<std::int32_t> aliveIds;
 					aliveIds.reserve(stableObjects.size());
 					for (const auto& obj : stableObjects) {
 						aliveIds.push_back(obj.id);
 					}
-					(void)oscSender.sendTuio2DobjAlive(aliveIds);
+					messages.push_back(oscSender.buildTuio2DobjAlive(aliveIds));
 					for (const auto& obj : stableObjects) {
 						const float angleRad = obj.angle_rad;
 
@@ -426,13 +436,18 @@ int main(int argc, char** argv)
 							}
 						}
 
-						(void)oscSender.sendTuio2DobjSet(
-						    obj.id, symbolId, obj.x_norm, obj.y_norm,
-						    angleRad, vx, vy, omega);
+						messages.push_back(
+						    oscSender.buildTuio2DobjSet(
+						        obj.id, symbolId, obj.x_norm, obj.y_norm,
+						        angleRad, vx, vy, omega));
 					}
-					(void)oscSender.sendTuio2DobjFseq(tuioFrameSeq++);
+					messages.push_back(oscSender.buildTuio2DobjFseq(tuioFrameSeq++));
+					(void)oscSender.sendBundle(messages);
 
 				} else {
+					std::vector<OscSender::Message> messages;
+					messages.reserve(stableObjects.size() + 8U);
+
 					for (const auto& obj : stableObjects) {
 						const std::string logicalId = mapLogicalId(obj.id);
 						const float angleDegrees = obj.angle_rad *
@@ -442,8 +457,10 @@ int main(int argc, char** argv)
 								<< " x=" << obj.x_norm
 								<< " y=" << obj.y_norm
 								<< " angle_deg=" << angleDegrees << '\n';
-						(void)oscSender.sendObject(obj.id, logicalId,
-								 obj.x_norm, obj.y_norm, angleDegrees);
+						messages.push_back(
+						    oscSender.buildRectaiObject(
+						        obj.id, logicalId, obj.x_norm, obj.y_norm,
+						        angleDegrees));
 					}
 
 					// Any id that has been missing for several frames is treated as
@@ -452,7 +469,11 @@ int main(int argc, char** argv)
 					for (const int id : removedIds) {
 						std::cout << "[rectai-tracker] fiducial " << id
 							      << " removed from tracking" << '\n';
-						(void)oscSender.sendRemove(id);
+						messages.push_back(oscSender.buildRectaiRemove(id));
+					}
+
+					if (!messages.empty()) {
+						(void)oscSender.sendBundle(messages);
 					}
 				}
 			}
