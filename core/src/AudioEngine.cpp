@@ -369,43 +369,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     s = filters_[v].processSample(0, raw);
                 }
 
-                // Store both pre- and post-filter waveforms for
-                // visualisation so that connections from generators
-                // (Osc → Filter) can show the raw oscillator shape
-                // while filters/FX and master visuals can reflect
-                // the processed signal.
-                voicePreFilterWaveformBuffer_[v][bufIndex] = raw;
-                voicePostFilterWaveformBuffer_[v][bufIndex] = s;
-
-                // Update any connection taps that monitor this
-                // voice. Taps can either observe the pre-filter
-                // oscillator signal or the post-filter processed
-                // signal.
-                for (int t = 0; t < tapCount; ++t) {
-                    const int tapKind =
-                        connectionTaps_[t].kind.load(
-                            std::memory_order_relaxed);
-                    if (tapKind == 0) {
-                        continue;
-                    }
-
-                    const int tapVoice =
-                        connectionTaps_[t].voiceIndex.load(
-                            std::memory_order_relaxed);
-                    if (tapVoice != v) {
-                        continue;
-                    }
-
-                    if (tapKind ==
-                        static_cast<int>(ConnectionTapSourceKind::kVoicePre)) {
-                        connectionWaveformBuffers_[t][bufIndex] = raw;
-                    } else if (tapKind ==
-                               static_cast<int>(
-                                   ConnectionTapSourceKind::kVoicePost)) {
-                        connectionWaveformBuffers_[t][bufIndex] = s;
-                    }
-                }
-                
                 // Evaluate the simple ADSR-style envelope for this
                 // voice based on transitions of the target level.
                 double envAmp = 1.0;
@@ -688,7 +651,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 // combining the current target level (driven by the
                 // UI volume bar and Sequencer) with the envelope. In
                 // normal operation (attack/decay/sustain), the
-                // output should follow the live target level so that
+                // output should follow the live target level so que
                 // user volume changes immediately affect the sound.
                 // During the release tail, if the target level has
                 // been driven to (or near) zero by the Sequencer, we
@@ -706,9 +669,61 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         ? baseLevel
                         : targetLevelNow;
 
-                const float scaledOutput =
-                    s * static_cast<float>(levelForMix * envAmp);
-                oscMixed += scaledOutput;
+                // Compute per-voice audio samples before and after
+                // the per-voice filter, including both envelope and
+                // level. These are used both for visualisation
+                // buffers and for the actual mono mix.
+                const float voiceSamplePre =
+                    static_cast<float>(levelForMix * envAmp) * raw;
+                const float voiceSamplePost =
+                    static_cast<float>(levelForMix * envAmp) * s;
+
+                // Store both pre- and post-filter waveforms for
+                // visualisation so that connections from generators
+                // (Osc  Filter) can reflect the actual audio
+                // leaving the Oscillator (including envelope/volume)
+                // while filters/FX and master visuals can reflect the
+                // processed signal.
+                voicePreFilterWaveformBuffer_[v][bufIndex] =
+                    voiceSamplePre;
+                voicePostFilterWaveformBuffer_[v][bufIndex] =
+                    voiceSamplePost;
+
+                // Update any connection taps that monitor this
+                // voice. Taps can either observe the pre-filter
+                // oscillator signal or the post-filter processed
+                // signal, both already scaled by the current
+                // envelope and level so that visuals remain in sync
+                // with the audible audio.
+                for (int t = 0; t < tapCount; ++t) {
+                    const int tapKind =
+                        connectionTaps_[t].kind.load(
+                            std::memory_order_relaxed);
+                    if (tapKind == 0) {
+                        continue;
+                    }
+
+                    const int tapVoice =
+                        connectionTaps_[t].voiceIndex.load(
+                            std::memory_order_relaxed);
+                    if (tapVoice != v) {
+                        continue;
+                    }
+
+                    if (tapKind == static_cast<int>(
+                                      ConnectionTapSourceKind::kVoicePre)) {
+                        connectionWaveformBuffers_[t][bufIndex] =
+                            voiceSamplePre;
+                    } else if (tapKind == static_cast<int>(
+                                         ConnectionTapSourceKind::kVoicePost)) {
+                        connectionWaveformBuffers_[t][bufIndex] =
+                            voiceSamplePost;
+                    }
+                }
+
+                // Mix the post-filter, envelope- and level-shaped
+                // voice signal into the global oscillator mono bus.
+                oscMixed += voiceSamplePost;
             }
 
             // Prevent hard digital clipping when summing several

@@ -839,10 +839,12 @@ void MainComponent::paint(juce::Graphics& g)
             }
 
             // Detect if this module (typically a Filter) is being
-            // driven directly by a Sampleplay module via an active
-            // audio connection. In that case, we can reuse the
-            // Sampleplay waveform for its radial even though it does
-            // not occupy a generator voice.
+            // driven directamente por Sampleplay a efectos de
+            // compatibilidad con escenas antiguas. La lógica de
+            // visualización de radiales se basa ahora en una señal
+            // agregada de todas las entradas de audio (ver más
+            // abajo), pero mantenemos este flag para reutilizar la
+            // waveform de Sampleplay cuando proceda.
             bool hasSampleplayUpstream = false;
             std::string sampleplayUpstreamConnKey;
             if (isFilterModule) {
@@ -905,6 +907,114 @@ void MainComponent::paint(juce::Graphics& g)
                     break;
                 }
             }
+
+            // Helper to compute an aggregated input waveform for
+            // modules that consumen audio desde varias conexiones.
+            // Suma las waveforms de todas las conexiones de audio
+            // activas que terminan en este módulo (después de mutes
+            // y geometría) utilizando los taps por conexión del
+            // AudioEngine.
+            auto computeAggregatedIncomingWaveform =
+                [&](float* dst, float& norm, float& rms) -> bool {
+                std::fill(dst, dst + kWaveformPoints, 0.0F);
+                norm = 0.0F;
+                rms = 0.0F;
+
+                float temp[kWaveformPoints]{};
+                int activeConnections = 0;
+
+                for (const auto& conn : scene_.connections()) {
+                    if (!isAudioConnection(conn) ||
+                        conn.to_module_id != object.logical_id()) {
+                        continue;
+                    }
+
+                    const auto fromObjIdIt =
+                        moduleToObjectId.find(conn.from_module_id);
+                    const auto toObjIdIt =
+                        moduleToObjectId.find(conn.to_module_id);
+                    if (fromObjIdIt == moduleToObjectId.end() ||
+                        toObjIdIt == moduleToObjectId.end()) {
+                        continue;
+                    }
+
+                    const auto fromObjIt =
+                        objects.find(fromObjIdIt->second);
+                    const auto toObjIt =
+                        objects.find(toObjIdIt->second);
+                    if (fromObjIt == objects.end() ||
+                        toObjIt == objects.end()) {
+                        continue;
+                    }
+
+                    const auto& fromObj = fromObjIt->second;
+                    const auto& toObj = toObjIt->second;
+                    if (!isInsideMusicArea(fromObj) ||
+                        !isInsideMusicArea(toObj)) {
+                        continue;
+                    }
+
+                    if (!conn.is_hardlink &&
+                        !isConnectionGeometricallyActive(fromObj,
+                                                         toObj)) {
+                        continue;
+                    }
+
+                    const std::string key = makeConnectionKey(conn);
+                    if (mutedConnections_.find(key) !=
+                        mutedConnections_.end()) {
+                        continue;
+                    }
+
+                    // Sólo consideramos conexiones que tienen un
+                    // tap configurado en el motor; esto evita pedir
+                    // snapshots para claves que no se están
+                    // actualizando en audio.
+                    if (connectionVisualSources_.find(key) ==
+                        connectionVisualSources_.end()) {
+                        continue;
+                    }
+
+                    audioEngine_.getConnectionWaveformSnapshot(
+                        key, temp, kWaveformPoints, 0.05);
+
+                    for (int i = 0; i < kWaveformPoints; ++i) {
+                        dst[i] += temp[i];
+                    }
+
+                    ++activeConnections;
+                }
+
+                if (activeConnections <= 0) {
+                    return false;
+                }
+
+                float maxAbs = 0.0F;
+                float sumSquares = 0.0F;
+                for (int i = 0; i < kWaveformPoints; ++i) {
+                    const float v = dst[i];
+                    maxAbs = std::max(maxAbs, std::abs(v));
+                    sumSquares += v * v;
+                }
+
+                if (maxAbs <= 1.0e-4F) {
+                    return false;
+                }
+
+                norm = 1.0F / maxAbs;
+                if (kWaveformPoints > 0) {
+                    const float meanSquare =
+                        sumSquares /
+                        static_cast<float>(kWaveformPoints);
+                    rms = meanSquare > 0.0F
+                              ? std::sqrt(meanSquare)
+                              : 0.0F;
+                } else {
+                    rms = 0.0F;
+                }
+
+                return true;
+            };
 
             // For Sampleplay-related radials, derive the waveform
             // from the same per-connection taps used for module→
@@ -1052,58 +1162,108 @@ void MainComponent::paint(juce::Graphics& g)
                 continue;
             }
 
-            if (lineCarriesAudio && !isRadialMuted) {
-                const auto voiceIt =
-                    moduleVoiceIndex_.find(object.logical_id());
-                const int voiceIndex =
-                    (voiceIt != moduleVoiceIndex_.end())
-                        ? voiceIt->second
-                        : -1;
+            if (lineCarriesAudio && !isRadialMuted && isAudioModule) {
+                bool drewRadial = false;
 
-                if (voiceIndex >= 0 &&
-                    voiceIndex < AudioEngine::kMaxVoices &&
-                    voiceNormPost[voiceIndex] > 0.0F) {
-                    const auto baseColour = hasHardlinkToMaster
-                                                ? juce::Colours::red
-                                                : juce::Colours::white;
-                    const auto waveformColour =
-                        isMarkedForCut
-                            ? juce::Colours::yellow.withAlpha(0.9F)
-                            : baseColour.withAlpha(baseAlpha);
-                    g.setColour(waveformColour);
-                    float amplitudeLevel = visualLevel;
+                // Para módulos consumidores de audio sin barra de
+                // volumen propia (p.ej. filtros), intentamos
+                // representar primero la suma real de todas las
+                // entradas de audio que les llegan a través del
+                // grafo (Osc, Sampleplay, Loop, etc.).
+                if (!hasExplicitVolumeBar && !isSampleplayModule &&
+                    !isLoopModule) {
+                    float aggWave[kWaveformPoints]{};
+                    float aggNorm = 0.0F;
+                    float aggRms = 0.0F;
+                    if (computeAggregatedIncomingWaveform(
+                            aggWave, aggNorm, aggRms) &&
+                        aggNorm > 0.0F) {
+                        const auto baseColour = hasHardlinkToMaster
+                                                    ? juce::Colours::red
+                                                    : juce::Colours::white;
+                        const auto waveformColour =
+                            isMarkedForCut
+                                ? juce::Colours::yellow.withAlpha(0.9F)
+                                : baseColour.withAlpha(baseAlpha);
+                        g.setColour(waveformColour);
 
-                    // If this module does not have an explicit
-                    // volume bar, derive the visual level from the
-                    // RMS of the corresponding audio voice so that
-                    // filters/FX reflect their actual output level
-                    // instead of a fixed height.
-                    if (!hasExplicitVolumeBar) {
-                        const float rms =
-                            voiceRmsPost[voiceIndex];
-                        if (rms > 0.0F) {
-                            // Normalise against a full-scale sine
-                            // (~0.707 RMS) and clamp to [0,1].
+                        float amplitudeLevel = 0.0F;
+                        if (aggRms > 0.0F) {
                             amplitudeLevel = juce::jlimit(
-                                0.0F, 1.0F, rms / 0.7071F);
-                        } else {
-                            amplitudeLevel = 0.0F;
+                                0.0F, 1.0F, aggRms / 0.7071F);
                         }
-                    }
 
-                    const float waveformAmplitude =
-                        15.0F * amplitudeLevel;
-                    const float waveformThickness = 1.4F;
-                    const int periodSamples =
-                        voicePeriodSamples[voiceIndex] > 0
-                            ? voicePeriodSamples[voiceIndex]
-                            : kWaveformPoints;
-                    drawWaveformOnLine(
-                        line.getEnd(), line.getStart(),
-                        waveformAmplitude, waveformThickness,
-                        voiceWaveformsPost[voiceIndex], periodSamples,
-                        voiceNormPost[voiceIndex], segmentsForWaveform,
-                        /*tiled=*/true);
+                        const float waveformAmplitude =
+                            15.0F * amplitudeLevel;
+                        const float waveformThickness = 1.4F;
+                        drawWaveformOnLine(
+                            line.getEnd(), line.getStart(),
+                            waveformAmplitude, waveformThickness,
+                            aggWave, kWaveformPoints, aggNorm,
+                            segmentsForWaveform,
+                            /*tiled=*/false);
+                        drewRadial = true;
+                    }
+                }
+
+                if (!drewRadial) {
+                    const auto voiceIt =
+                        moduleVoiceIndex_.find(object.logical_id());
+                    const int voiceIndex =
+                        (voiceIt != moduleVoiceIndex_.end())
+                            ? voiceIt->second
+                            : -1;
+
+                    if (voiceIndex >= 0 &&
+                        voiceIndex < AudioEngine::kMaxVoices &&
+                        voiceNormPost[voiceIndex] > 0.0F) {
+                        const auto baseColour = hasHardlinkToMaster
+                                                    ? juce::Colours::red
+                                                    : juce::Colours::white;
+                        const auto waveformColour =
+                            isMarkedForCut
+                                ? juce::Colours::yellow.withAlpha(0.9F)
+                                : baseColour.withAlpha(baseAlpha);
+                        g.setColour(waveformColour);
+                        float amplitudeLevel = visualLevel;
+
+                        // If this module does not have an explicit
+                        // volume bar, derive the visual level from
+                        // the RMS of the corresponding audio voice
+                        // so that filters/FX reflect their actual
+                        // output level instead of a fixed height.
+                        if (!hasExplicitVolumeBar) {
+                            const float rms =
+                                voiceRmsPost[voiceIndex];
+                            if (rms > 0.0F) {
+                                // Normalise against a full-scale sine
+                                // (~0.707 RMS) and clamp to [0,1].
+                                amplitudeLevel = juce::jlimit(
+                                    0.0F, 1.0F, rms / 0.7071F);
+                            } else {
+                                amplitudeLevel = 0.0F;
+                            }
+                        }
+
+                        const float waveformAmplitude =
+                            15.0F * amplitudeLevel;
+                        const float waveformThickness = 1.4F;
+                        const int periodSamples =
+                            voicePeriodSamples[voiceIndex] > 0
+                                ? voicePeriodSamples[voiceIndex]
+                                : kWaveformPoints;
+                        drawWaveformOnLine(
+                            line.getEnd(), line.getStart(),
+                            waveformAmplitude, waveformThickness,
+                            voiceWaveformsPost[voiceIndex],
+                            periodSamples, voiceNormPost[voiceIndex],
+                            segmentsForWaveform,
+                            /*tiled=*/true);
+                        drewRadial = true;
+                    }
+                }
+
+                if (drewRadial) {
                     continue;
                 }
             }
@@ -1283,7 +1443,6 @@ void MainComponent::paint(juce::Graphics& g)
 
             const float fromLevel = getModuleVisualLevel(fromModulePtr);
             const float toLevel = getModuleVisualLevel(toModulePtr);
-            const float connectionLevel = juce::jmax(fromLevel, toLevel);
 
             // Check if this connection is marked for mute toggle.
             const bool isConnectionMarkedForCut =
@@ -1297,6 +1456,147 @@ void MainComponent::paint(juce::Graphics& g)
                            ? juce::Colours::red.withAlpha(0.8F)
                            : juce::Colours::white.withAlpha(0.7F));
             
+            // Helper to obtain a representative waveform for this
+            // connection. We first try the dedicated per-connection
+            // tap in the AudioEngine; if that yields a silent buffer
+            // (e.g. for placeholder FX modules that still do not
+            // generate audio on their own), we fall back to an
+            // aggregated view of all audio inputs feeding the source
+            // module. This makes chains such as Osc -> Delay ->
+            // Master display a consistent waveform on both
+            // connections even when Delay is still a pass-through in
+            // the DSP layer.
+            auto fetchConnectionWaveformOrAggregate =
+                [&](const std::string& key, const std::string& fromModuleId,
+                    float* dst, float& norm, float& rms) -> bool {
+                std::fill(dst, dst + kWaveformPoints, 0.0F);
+                norm = 0.0F;
+                rms = 0.0F;
+
+                // First try the direct per-connection tap.
+                audioEngine_.getConnectionWaveformSnapshot(
+                    key, dst, kWaveformPoints, 0.05);
+
+                float maxAbs = 0.0F;
+                float sumSquares = 0.0F;
+                for (int i = 0; i < kWaveformPoints; ++i) {
+                    const float v = dst[i];
+                    maxAbs = std::max(maxAbs, std::abs(v));
+                    sumSquares += v * v;
+                }
+
+                if (maxAbs > 1.0e-4F) {
+                    norm = 1.0F / maxAbs;
+                    if (kWaveformPoints > 0) {
+                        const float meanSquare =
+                            sumSquares /
+                            static_cast<float>(kWaveformPoints);
+                        rms = meanSquare > 0.0F
+                                  ? std::sqrt(meanSquare)
+                                  : 0.0F;
+                    }
+                    return true;
+                }
+
+                // Fallback: aggregate all active audio connections
+                // that feed the source module. This leverages the
+                // same per-connection taps used elsewhere but sums
+                // them so that consumer-only modules (e.g. Delay
+                // before it has a dedicated DSP path) can still show
+                // a meaningful waveform on their outgoing edges.
+                float temp[kWaveformPoints]{};
+                int activeConnections = 0;
+
+                for (const auto& ic : scene_.connections()) {
+                    if (!isAudioConnection(ic) ||
+                        ic.to_module_id != fromModuleId) {
+                        continue;
+                    }
+
+                    const auto fromObjIdIt =
+                        moduleToObjectId.find(ic.from_module_id);
+                    const auto toObjIdIt =
+                        moduleToObjectId.find(ic.to_module_id);
+                    if (fromObjIdIt == moduleToObjectId.end() ||
+                        toObjIdIt == moduleToObjectId.end()) {
+                        continue;
+                    }
+
+                    const auto fromObjIt =
+                        objects.find(fromObjIdIt->second);
+                    const auto toObjIt =
+                        objects.find(toObjIdIt->second);
+                    if (fromObjIt == objects.end() ||
+                        toObjIt == objects.end()) {
+                        continue;
+                    }
+
+                    const auto& fromObj = fromObjIt->second;
+                    const auto& toObj = toObjIt->second;
+                    if (!isInsideMusicArea(fromObj) ||
+                        !isInsideMusicArea(toObj)) {
+                        continue;
+                    }
+
+                    if (!ic.is_hardlink &&
+                        !isConnectionGeometricallyActive(fromObj,
+                                                         toObj)) {
+                        continue;
+                    }
+
+                    const std::string upstreamKey =
+                        makeConnectionKey(ic);
+                    if (mutedConnections_.find(upstreamKey) !=
+                        mutedConnections_.end()) {
+                        continue;
+                    }
+
+                    if (connectionVisualSources_.find(upstreamKey) ==
+                        connectionVisualSources_.end()) {
+                        continue;
+                    }
+
+                    audioEngine_.getConnectionWaveformSnapshot(
+                        upstreamKey, temp, kWaveformPoints, 0.05);
+
+                    for (int i = 0; i < kWaveformPoints; ++i) {
+                        dst[i] += temp[i];
+                    }
+
+                    ++activeConnections;
+                }
+
+                if (activeConnections <= 0) {
+                    return false;
+                }
+
+                float maxAbsAgg = 0.0F;
+                float sumSquaresAgg = 0.0F;
+                for (int i = 0; i < kWaveformPoints; ++i) {
+                    const float v = dst[i];
+                    maxAbsAgg = std::max(maxAbsAgg, std::abs(v));
+                    sumSquaresAgg += v * v;
+                }
+
+                if (maxAbsAgg <= 1.0e-4F) {
+                    return false;
+                }
+
+                norm = 1.0F / maxAbsAgg;
+                if (kWaveformPoints > 0) {
+                    const float meanSquare =
+                        sumSquaresAgg /
+                        static_cast<float>(kWaveformPoints);
+                    rms = meanSquare > 0.0F
+                              ? std::sqrt(meanSquare)
+                              : 0.0F;
+                } else {
+                    rms = 0.0F;
+                }
+
+                return true;
+            };
+
             // Check if this connection is being held for temporary mute with split rendering.
             const bool isBeingHeld = activeConnectionHold_.has_value() &&
                                      !activeConnectionHold_->is_object_line &&
@@ -1319,24 +1619,18 @@ void MainComponent::paint(juce::Graphics& g)
                 // signal.
                 float tempWave[kWaveformPoints]{};
                 float norm = 0.0F;
+                float rms = 0.0F;
 
-                audioEngine_.getConnectionWaveformSnapshot(
-                    connKey, tempWave, kWaveformPoints, 0.05);
-
-                float maxAbs = 0.0F;
-                for (int i = 0; i < kWaveformPoints; ++i) {
-                    maxAbs = std::max(maxAbs, std::abs(tempWave[i]));
-                }
-
-                if (maxAbs > 1.0e-4F) {
-                    norm = 1.0F / maxAbs;
-                }
+                const bool hasWave = fetchConnectionWaveformOrAggregate(
+                    connKey, conn.from_module_id, tempWave, norm, rms);
 
                 bool drewWave = false;
-                if (norm > 0.0F && connectionLevel > 0.05F) {
+                if (hasWave && norm > 0.0F && rms > 0.0F) {
                     g.setColour(activeColour);
+                    const float amplitudeLevel = juce::jlimit(
+                        0.0F, 1.0F, rms / 0.7071F);
                     const float waveformAmplitude =
-                        (conn.is_hardlink ? 10.0F : 10.0F) * connectionLevel;
+                        20.0F * amplitudeLevel;
                     const float waveformThickness = conn.is_hardlink ? 1.2F : 1.2F;
                     const juce::Point<float> delta = splitPoint - p1;
                     const float lineLength = std::sqrt(
@@ -1392,25 +1686,21 @@ void MainComponent::paint(juce::Graphics& g)
                 if (audioConn) {
                     float tempWave[kWaveformPoints]{};
                     float norm = 0.0F;
+                    float rms = 0.0F;
 
-                    audioEngine_.getConnectionWaveformSnapshot(
-                        connKey, tempWave, kWaveformPoints, 0.05);
-
-                    float maxAbs = 0.0F;
-                    for (int i = 0; i < kWaveformPoints; ++i) {
-                        maxAbs = std::max(maxAbs, std::abs(tempWave[i]));
-                    }
-
-                    if (maxAbs > 1.0e-4F) {
-                        norm = 1.0F / maxAbs;
-                    }
+                    const bool hasWave =
+                        fetchConnectionWaveformOrAggregate(
+                            connKey, conn.from_module_id, tempWave,
+                            norm, rms);
 
                     // Skip waveform rendering for connections with a very
-                    // low visual level; a straight line is visually
+                    // low effective level; a straight line is visually
                     // sufficient and significantly cheaper to rasterise.
-                    if (norm > 0.0F && connectionLevel > 0.05F) {
+                    if (hasWave && norm > 0.0F && rms > 0.0F) {
+                        const float amplitudeLevel = juce::jlimit(
+                            0.0F, 1.0F, rms / 0.7071F);
                         const float waveformAmplitude =
-                            10.0F * connectionLevel;
+                            20.0F * amplitudeLevel;
                         const float waveformThickness = 1.2F;
                         // Avoid per-frame period estimation here – for
                         // connection waveforms a single non-tiled
@@ -1435,29 +1725,25 @@ void MainComponent::paint(juce::Graphics& g)
                 bool drewWave = false;
 
                 if (audioConn) {
-                    const float waveformAmplitude =
-                        10.0F * connectionLevel;
                     const float waveformThickness = 1.2F;
 
                     float tempWave[kWaveformPoints]{};
                     float norm = 0.0F;
+                    float rms = 0.0F;
 
-                    audioEngine_.getConnectionWaveformSnapshot(
-                        connKey, tempWave, kWaveformPoints, 0.05);
-
-                    float maxAbs = 0.0F;
-                    for (int i = 0; i < kWaveformPoints; ++i) {
-                        maxAbs = std::max(maxAbs, std::abs(tempWave[i]));
-                    }
-
-                    if (maxAbs > 1.0e-4F) {
-                        norm = 1.0F / maxAbs;
-                    }
+                    const bool hasWave =
+                        fetchConnectionWaveformOrAggregate(
+                            connKey, conn.from_module_id, tempWave,
+                            norm, rms);
 
                     // Skip waveform rendering for connections with a very
-                    // low visual level; a straight line is visually
+                    // low effective level; a straight line is visually
                     // sufficient and significantly cheaper to rasterise.
-                    if (norm > 0.0F && connectionLevel > 0.05F) {
+                    if (hasWave && norm > 0.0F && rms > 0.0F) {
+                        const float amplitudeLevel = juce::jlimit(
+                            0.0F, 1.0F, rms / 0.7071F);
+                        const float waveformAmplitude =
+                            20.0F * amplitudeLevel;
                         // Use the same activeColour (including yellow when
                         // marked for cut) so that all audio-carrying
                         // connections share the same mute/hover visual
