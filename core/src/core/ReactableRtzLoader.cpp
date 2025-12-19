@@ -56,6 +56,31 @@ bool IsHiddenPathComponent(const std::string& name)
   return !base.empty() && base[0] == '.';
 }
 
+bool IsMacOsResourceFolder(const std::string& name)
+{
+  // Typical macOS resource folder inside ZIPs: "__MACOSX/" at the root or
+  // nested as a path component. We treat any path that starts with
+  // "__MACOSX/" or contains "/__MACOSX/" as a resource folder entry that
+  // should be ignored.
+  if (name == "__MACOSX" || name.rfind("__MACOSX/", 0U) == 0U) {
+    return true;
+  }
+
+  const auto pos = name.find("/__MACOSX/");
+  return pos != std::string::npos;
+}
+
+bool IsMacOsMetadataFile(const std::string& name)
+{
+  const auto pos = name.find_last_of('/');
+  const std::string base =
+      (pos == std::string::npos) ? name : name.substr(pos + 1U);
+
+  // Explicitly skip Finder metadata files commonly present in ZIPs
+  // created on macOS.
+  return base == ".DS_Store" || base == "._.DS_Store";
+}
+
 bool FilesAreIdentical(const fs::path& existing,
                        const std::vector<unsigned char>& newData)
 {
@@ -265,6 +290,12 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
     }
     const std::string name{nameCStr};
 
+    if (IsMacOsResourceFolder(name) || IsMacOsMetadataFile(name)) {
+      // Ignore macOS resource/metadata entries such as __MACOSX/ and
+      // .DS_Store / ._.DS_Store when scanning for .rtp files.
+      continue;
+    }
+
     const std::string lower = ToLower(name);
     if (lower.size() >= 4U &&
         lower.compare(lower.size() - 4U, 4U, ".rtp") == 0) {
@@ -378,6 +409,11 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
     if (entryName.back() == '/') {
       // Directory entry; it'll be created implicitly when extracting
       // files.
+      continue;
+    }
+
+    if (IsMacOsResourceFolder(entryName) || IsMacOsMetadataFile(entryName)) {
+      // Skip macOS resource folders and metadata files explicitly.
       continue;
     }
 
