@@ -108,6 +108,7 @@ void MainComponent::paint(juce::Graphics& g)
     // that audio-carrying lines can display waveforms that better
     // match the module or chain that is actually producing sound.
     constexpr int kWaveformPoints = 512;
+    constexpr float kWaveformAmplitudeScale = 15.0F;
     // Pre-filter (raw oscillator) and post-filter (processed) per-voice
     // snapshots so that generator→module connections can show the
     // original waveform while filters/FX and master visuals reflect
@@ -675,7 +676,7 @@ void MainComponent::paint(juce::Graphics& g)
                             juce::Colours::white.withAlpha(baseAlpha));
                         const float amplitudeLevel = visualLevel;
                         const float waveformAmplitude =
-                            15.0F * amplitudeLevel;
+                            kWaveformAmplitudeScale * amplitudeLevel;
                         const float waveformThickness = 1.4F;
 
                         const juce::Point<float> delta =
@@ -717,7 +718,7 @@ void MainComponent::paint(juce::Graphics& g)
                             juce::Colours::white.withAlpha(baseAlpha));
                         const float amplitudeLevel = visualLevel;
                         const float waveformAmplitude =
-                            15.0F * amplitudeLevel;
+                            kWaveformAmplitudeScale * amplitudeLevel;
                         const float waveformThickness = 1.2F;
 
                         const juce::Point<float> delta =
@@ -762,7 +763,7 @@ void MainComponent::paint(juce::Graphics& g)
                         }
 
                         const float waveformAmplitude =
-                            15.0F * amplitudeLevel;
+                            kWaveformAmplitudeScale * amplitudeLevel;
                         const float waveformThickness = 1.4F;
 
                         const juce::Point<float> delta =
@@ -776,12 +777,16 @@ void MainComponent::paint(juce::Graphics& g)
                             voicePeriodSamples[voiceIndex] > 0
                                 ? voicePeriodSamples[voiceIndex]
                                 : kWaveformPoints;
+                        float normalisation =
+                            voiceNormPost[voiceIndex];
+                        if (!hasExplicitVolumeBar) {
+                            normalisation = 1.0F;
+                        }
                         drawWaveformOnLine(
                             {cx, cy}, splitPoint, waveformAmplitude,
                             waveformThickness,
                             voiceWaveformsPost[voiceIndex],
-                            periodSamples,
-                            voiceNormPost[voiceIndex],
+                            periodSamples, normalisation,
                             juce::jmax(1, segmentsForWaveformHold),
                             /*tiled=*/true);
                         drewWaveformSegment = true;
@@ -1097,7 +1102,7 @@ void MainComponent::paint(juce::Graphics& g)
                 const float amplitudeLevel =
                     isSampleplayModule ? visualLevel : 1.0F;
                 const float waveformAmplitude =
-                    15.0F * amplitudeLevel;
+                    kWaveformAmplitudeScale * amplitudeLevel;
                 const float waveformThickness = 1.4F;
                 drawWaveformOnLine(
                     line.getEnd(), line.getStart(),
@@ -1148,7 +1153,7 @@ void MainComponent::paint(juce::Graphics& g)
                 g.setColour(radialColour);
                 const float amplitudeLevel = visualLevel;
                 const float waveformAmplitude =
-                    15.0F * amplitudeLevel;
+                    kWaveformAmplitudeScale * amplitudeLevel;
                 // Use a slightly thinner stroke so that Loop
                 // radials visually match the perceived thickness
                 // of Oscillator radials.
@@ -1176,8 +1181,7 @@ void MainComponent::paint(juce::Graphics& g)
                     float aggNorm = 0.0F;
                     float aggRms = 0.0F;
                     if (computeAggregatedIncomingWaveform(
-                            aggWave, aggNorm, aggRms) &&
-                        aggNorm > 0.0F) {
+                            aggWave, aggNorm, aggRms)) {
                         const auto baseColour = hasHardlinkToMaster
                                                     ? juce::Colours::red
                                                     : juce::Colours::white;
@@ -1194,12 +1198,13 @@ void MainComponent::paint(juce::Graphics& g)
                         }
 
                         const float waveformAmplitude =
-                            15.0F * amplitudeLevel;
+                            kWaveformAmplitudeScale * amplitudeLevel;
                         const float waveformThickness = 1.4F;
                         drawWaveformOnLine(
                             line.getEnd(), line.getStart(),
                             waveformAmplitude, waveformThickness,
-                            aggWave, kWaveformPoints, aggNorm,
+                            aggWave, kWaveformPoints,
+                            /*normalisation=*/1.0F,
                             segmentsForWaveform,
                             /*tiled=*/false);
                         drewRadial = true;
@@ -1246,17 +1251,22 @@ void MainComponent::paint(juce::Graphics& g)
                         }
 
                         const float waveformAmplitude =
-                            15.0F * amplitudeLevel;
+                            kWaveformAmplitudeScale * amplitudeLevel;
                         const float waveformThickness = 1.4F;
                         const int periodSamples =
                             voicePeriodSamples[voiceIndex] > 0
                                 ? voicePeriodSamples[voiceIndex]
                                 : kWaveformPoints;
+                        float normalisation =
+                            voiceNormPost[voiceIndex];
+                        if (!hasExplicitVolumeBar) {
+                            normalisation = 1.0F;
+                        }
                         drawWaveformOnLine(
                             line.getEnd(), line.getStart(),
                             waveformAmplitude, waveformThickness,
                             voiceWaveformsPost[voiceIndex],
-                            periodSamples, voiceNormPost[voiceIndex],
+                            periodSamples, normalisation,
                             segmentsForWaveform,
                             /*tiled=*/true);
                         drewRadial = true;
@@ -1625,12 +1635,12 @@ void MainComponent::paint(juce::Graphics& g)
                     connKey, conn.from_module_id, tempWave, norm, rms);
 
                 bool drewWave = false;
-                if (hasWave && norm > 0.0F && rms > 0.0F) {
+                if (hasWave && rms > 0.0F) {
                     g.setColour(activeColour);
                     const float amplitudeLevel = juce::jlimit(
                         0.0F, 1.0F, rms / 0.7071F);
                     const float waveformAmplitude =
-                        20.0F * amplitudeLevel;
+                        kWaveformAmplitudeScale * amplitudeLevel;
                     const float waveformThickness = conn.is_hardlink ? 1.2F : 1.2F;
                     const juce::Point<float> delta = splitPoint - p1;
                     const float lineLength = std::sqrt(
@@ -1648,7 +1658,7 @@ void MainComponent::paint(juce::Graphics& g)
                     drawWaveformOnLine(
                         p1, splitPoint, waveformAmplitude,
                         waveformThickness, tempWave,
-                        periodSamples, norm,
+                        periodSamples, /*normalisation=*/1.0F,
                         segmentsForWaveform,
                         /*tiled=*/tiled);
                     drewWave = true;
@@ -1696,11 +1706,11 @@ void MainComponent::paint(juce::Graphics& g)
                     // Skip waveform rendering for connections with a very
                     // low effective level; a straight line is visually
                     // sufficient and significantly cheaper to rasterise.
-                    if (hasWave && norm > 0.0F && rms > 0.0F) {
+                    if (hasWave && rms > 0.0F) {
                         const float amplitudeLevel = juce::jlimit(
                             0.0F, 1.0F, rms / 0.7071F);
                         const float waveformAmplitude =
-                            20.0F * amplitudeLevel;
+                            kWaveformAmplitudeScale * amplitudeLevel;
                         const float waveformThickness = 1.2F;
                         // Avoid per-frame period estimation here – for
                         // connection waveforms a single non-tiled
@@ -1711,7 +1721,8 @@ void MainComponent::paint(juce::Graphics& g)
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
                             waveformThickness, tempWave,
-                            periodSamples, norm, 72,
+                            periodSamples,
+                            /*normalisation=*/1.0F, 72,
                             /*tiled=*/tiled);
                         drewWave = true;
                     }
@@ -1739,11 +1750,11 @@ void MainComponent::paint(juce::Graphics& g)
                     // Skip waveform rendering for connections with a very
                     // low effective level; a straight line is visually
                     // sufficient and significantly cheaper to rasterise.
-                    if (hasWave && norm > 0.0F && rms > 0.0F) {
+                    if (hasWave && rms > 0.0F) {
                         const float amplitudeLevel = juce::jlimit(
                             0.0F, 1.0F, rms / 0.7071F);
                         const float waveformAmplitude =
-                            20.0F * amplitudeLevel;
+                            kWaveformAmplitudeScale * amplitudeLevel;
                         // Use the same activeColour (including yellow when
                         // marked for cut) so that all audio-carrying
                         // connections share the same mute/hover visual
@@ -1757,7 +1768,8 @@ void MainComponent::paint(juce::Graphics& g)
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
                             waveformThickness, tempWave,
-                            periodSamples, norm, 72,
+                            periodSamples,
+                            /*normalisation=*/1.0F, 72,
                             /*tiled=*/tiled);
                         drewWave = true;
                     }
