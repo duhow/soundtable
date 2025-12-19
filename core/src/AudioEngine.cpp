@@ -145,12 +145,33 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         return;
     }
 
+    // Advance the global transport position in beats using the
+    // current BPM and sample rate. This must happen BEFORE the early
+    // return check so that the tempo and beat counter continue to
+    // advance even when no audio is being actively produced (for
+    // example, when all modules are muted or docked). This ensures
+    // that the visual beat pulses, sequencer timing, and loop
+    // alignment remain locked to a continuous master clock
+    // regardless of whether audio is actually being synthesised.
+    const float bpm = loopGlobalBpm_.load(std::memory_order_relaxed);
+    const double beatsPerSecond =
+        (bpm > 0.0F) ? (static_cast<double>(bpm) / 60.0) : 0.0;
+    const double blockDurationSeconds =
+        (sampleRate_ > 0.0)
+            ? (static_cast<double>(numSamples) / sampleRate_)
+            : 0.0;
+    const double blockBeats = beatsPerSecond * blockDurationSeconds;
+    transportBeatsInternal_ += blockBeats;
+    transportBeatsAudio_.store(transportBeatsInternal_,
+                               std::memory_order_relaxed);
+
     // Fast-path exit when there is no active audio requested by the
     // scene and the previous callback block also produced silence.
     // This keeps the audio device initialised but avoids running the
     // heavier synthesis/sampling path while the table is completely
     // idle (for example, when no modules are inside the musical
-    // area).
+    // area). The transport counter has already been advanced above so
+    // visual timing remains continuous.
     const bool shouldProcess =
         processingRequested_.load(std::memory_order_relaxed);
     const bool hadPendingOutput =
@@ -237,27 +258,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         }
     }
 
-    const float bpm = loopGlobalBpm_.load(std::memory_order_relaxed);
-
-    // Advance the global transport position in beats using the
-    // current BPM and sample rate. This provides a high-precision
-    // audio-driven clock that can be queried from the UI so that
-    // Sequencer timing and visual beat pulses remain locked to the
-    // actual audio stream instead of the GUI timer.
-    const double beatsPerSecond =
-        (bpm > 0.0F) ? (static_cast<double>(bpm) / 60.0) : 0.0;
-    const double blockDurationSeconds =
-        (sampleRate_ > 0.0)
-            ? (static_cast<double>(numSamples) / sampleRate_)
-            : 0.0;
-    const double blockBeats = beatsPerSecond * blockDurationSeconds;
-    transportBeatsInternal_ += blockBeats;
-    transportBeatsAudio_.store(transportBeatsInternal_,
-                               std::memory_order_relaxed);
-
-    // Use the audio-driven transport position for Loop alignment so
-    // that Loop playback stays in phase with the same master clock
-    // used by Sequencer timing and beat pulses.
+    // Use the audio-driven transport position (already updated at the
+    // start of this callback) for Loop alignment so that Loop
+    // playback stays in phase with the same master clock used by
+    // Sequencer timing and beat pulses.
     const double loopBeats = transportBeatsInternal_;
 
     bool blockHasNonZeroOutput = false;
