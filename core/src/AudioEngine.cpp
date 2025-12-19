@@ -684,13 +684,30 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     envAmp = value;
                 }
 
-                // Apply the envelope to the captured base level so
-                // that release/decay tails remain audible even when
-                // the target voice level is driven to zero by
-                // Sequencer volume control.
+                // Determine the effective gain for this voice by
+                // combining the current target level (driven by the
+                // UI volume bar and Sequencer) with the envelope. In
+                // normal operation (attack/decay/sustain), the
+                // output should follow the live target level so that
+                // user volume changes immediately affect the sound.
+                // During the release tail, if the target level has
+                // been driven to (or near) zero by the Sequencer, we
+                // fall back to the captured base level so that the
+                // decay remains audible instead of being abruptly
+                // cut.
+                const double targetLevelNow = static_cast<double>(
+                    voices_[v].level.load(std::memory_order_relaxed));
                 const double baseLevel = voiceEnvBaseLevel_[v];
+                const auto currentPhase = voiceEnvPhase_[v];
+                const bool inReleaseTail =
+                    (currentPhase == EnvelopePhase::kRelease);
+                const double levelForMix =
+                    (inReleaseTail && targetLevelNow <= 1.0e-4)
+                        ? baseLevel
+                        : targetLevelNow;
+
                 const float scaledOutput =
-                    s * static_cast<float>(baseLevel * envAmp);
+                    s * static_cast<float>(levelForMix * envAmp);
                 oscMixed += scaledOutput;
             }
 
