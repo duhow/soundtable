@@ -30,6 +30,8 @@ public:
 
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& event) override;
+    void mouseDrag(const juce::MouseEvent& event) override;
+    void mouseUp(const juce::MouseEvent& event) override;
     void mouseWheelMove(const juce::MouseEvent& event,
                         const juce::MouseWheelDetails& wheel) override;
 
@@ -64,8 +66,18 @@ public:
     // TextScrollList into a larger custom-painted surface instead of
     // adding it as a child Component. Coordinates are expressed in
     // the list's local space, with (0,0) at the top-left corner.
+    // Full click helper: presiona y suelta en la misma posición.
     void handleClickAt(float x, float y);
     void handleWheelDelta(float deltaY);
+
+    // Fine-grained pointer helpers mirroring mouseDown/Drag/Up para
+    // integraciones externas (por ejemplo, routers de input de
+    // MainComponent). Las coordenadas están en espacio local.
+    void beginPointerAt(float y);
+    void dragPointerTo(float y);
+    void endPointerAt(float y);
+
+    [[nodiscard]] int indexAtPosition(float y) const noexcept;
 
 private:
     void updateScrollRange();
@@ -77,6 +89,16 @@ private:
     float rowHeight_{18.0F};
     float scrollOffset_{0.0F};
     float maxScrollOffset_{0.0F};
+
+    // Drag-to-scroll state.
+    bool isDragging_{false};
+    float dragStartY_{0.0F};
+    float dragStartScrollOffset_{0.0F};
+
+    // Click-to-select state: index under the pointer at mouseDown
+    // in the current scroll position. Selection is only committed on
+    // mouseUp if the pointer is still over the same item.
+    int pressedIndex_{-1};
 
     std::function<void(int)> onSelectionChanged_;
 

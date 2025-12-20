@@ -126,7 +126,15 @@ void TextScrollList::updateScrollRange()
     const float visibleHeight =
         static_cast<float>(maxVisibleItems_) * rowHeight_;
 
-    maxScrollOffset_ = juce::jmax(0.0F, totalHeight - visibleHeight);
+    // Allow scrolling slightly past the last visible row by adding a
+    // small tail of invisible space so that the final item can be
+    // fully visible and an empty gap marks the end of the list.
+    const float tailPadding =
+        items_.empty() ? 0.0F : rowHeight_;
+    const float totalWithTail = totalHeight + tailPadding;
+
+    maxScrollOffset_ =
+        juce::jmax(0.0F, totalWithTail - visibleHeight);
     scrollOffset_ = juce::jlimit(0.0F, maxScrollOffset_, scrollOffset_);
 }
 
@@ -204,7 +212,17 @@ void TextScrollList::paint(juce::Graphics& g)
 
 void TextScrollList::mouseDown(const juce::MouseEvent& event)
 {
-    handleClickAt(event.position.x, event.position.y);
+    beginPointerAt(event.position.y);
+}
+
+void TextScrollList::mouseDrag(const juce::MouseEvent& event)
+{
+    dragPointerTo(event.position.y);
+}
+
+void TextScrollList::mouseUp(const juce::MouseEvent& event)
+{
+    endPointerAt(event.position.y);
 }
 
 void TextScrollList::mouseWheelMove(
@@ -218,7 +236,56 @@ void TextScrollList::mouseWheelMove(
 void TextScrollList::handleClickAt(const float x, const float y)
 {
     juce::ignoreUnused(x);
+    // Simula un click completo: down+up en la misma posición.
+    beginPointerAt(y);
+    endPointerAt(y);
+}
 
+void TextScrollList::beginPointerAt(const float y)
+{
+    // Start drag-to-scroll and remember which item (if any) was
+    // under the pointer at mouseDown. Selection will only be
+    // committed on endPointerAt if the pointer is still over the
+    // same item.
+    isDragging_ = true;
+    dragStartY_ = y;
+    dragStartScrollOffset_ = scrollOffset_;
+    pressedIndex_ = indexAtPosition(y);
+}
+
+void TextScrollList::dragPointerTo(const float y)
+{
+    if (!isDragging_) {
+        return;
+    }
+
+    const float dy = y - dragStartY_;
+    // Invert the movement so that dragging down reveals earlier
+    // items and dragging up reveals later items.
+    setScrollOffset(dragStartScrollOffset_ - dy);
+}
+
+void TextScrollList::endPointerAt(const float y)
+{
+    if (!isDragging_) {
+        return;
+    }
+
+    isDragging_ = false;
+
+    const int releasedIndex = indexAtPosition(y);
+
+    // Only treat as a click-to-select if the pointer was released on
+    // the same item that was under it at beginPointerAt.
+    if (releasedIndex >= 0 && releasedIndex == pressedIndex_) {
+        setSelectedIndex(releasedIndex, true);
+    }
+
+    pressedIndex_ = -1;
+}
+
+int TextScrollList::indexAtPosition(const float y) const noexcept
+{
     const float maxVisibleHeight =
         rowHeight_ * static_cast<float>(maxVisibleItems_);
     const float viewHeight =
@@ -226,17 +293,16 @@ void TextScrollList::handleClickAt(const float x, const float y)
 
     const float localY = y;
     if (localY < 0.0F || localY >= viewHeight) {
-        return;
+        return -1;
     }
 
     const float absoluteY = localY + scrollOffset_;
     const int index = static_cast<int>(absoluteY / rowHeight_);
 
     if (index < 0 || index >= getNumItems()) {
-        return;
+        return -1;
     }
-
-    setSelectedIndex(index, true);
+    return index;
 }
 
 void TextScrollList::handleWheelDelta(const float deltaY)
@@ -245,12 +311,15 @@ void TextScrollList::handleWheelDelta(const float deltaY)
         return;
     }
 
-    const float step = rowHeight_ * 3.0F;
-    const float delta = -deltaY * step;
-
-    if (std::abs(delta) < 0.001F) {
+    if (std::abs(deltaY) < 0.0001F) {
         return;
     }
+
+    // Scroll exactly two rows per wheel "tick", independientemente
+    // de la magnitud concreta de deltaY.
+    const float step = rowHeight_ * 2.0F;
+    const float direction = (deltaY > 0.0F) ? -1.0F : 1.0F;
+    const float delta = direction * step;
 
     setScrollOffset(scrollOffset_ + delta);
 }
