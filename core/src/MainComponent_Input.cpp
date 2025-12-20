@@ -20,6 +20,73 @@ void MainComponent::mouseMove(const juce::MouseEvent& event)
     juce::Component::mouseMove(event);
 }
 
+void MainComponent::mouseDoubleClick(const juce::MouseEvent& event)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    const auto& objects = scene_.objects();
+    const auto& modules = scene_.modules();
+
+    const juce::Point<float> pos = event.position;
+    constexpr float kHitRadius = 30.0F;
+
+    for (const auto& [id, object] : objects) {
+        juce::ignoreUnused(id);
+
+        if (object.docked() ||
+            object.logical_id() == rectai::MASTER_OUTPUT_ID) {
+            continue;
+        }
+
+        if (!isInsideMusicArea(object)) {
+            continue;
+        }
+
+        const auto centrePos = objectTableToScreen(object, bounds);
+        const float cx = centrePos.x;
+        const float cy = centrePos.y;
+
+        const float dx = pos.x - cx;
+        const float dy = pos.y - cy;
+        const float distSq = dx * dx + dy * dy;
+        if (distSq > kHitRadius * kHitRadius) {
+            continue;
+        }
+
+        // Open or focus the per-module detail panel for the module
+        // under the double-click. The window remains open until the
+        // user explicitly clicks the close tab.
+        ModulePanelState panel{};
+        panel.moduleId = object.logical_id();
+        panel.visible = true;
+
+        // Default to the Settings tab; if the module exposes a
+        // shared envelope via AudioModuleWithEnvelope, the Envelope
+        // tab will be available as well and can be selected by the
+        // user.
+        panel.activeTab = ModulePanelState::Tab::kSettings;
+
+        const auto modIt = modules.find(panel.moduleId);
+        if (modIt != modules.end() && modIt->second != nullptr) {
+            auto* modulePtr = modIt->second.get();
+            if (dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                    modulePtr) != nullptr) {
+                // It is safe to default to the Envelope tab for
+                // modules that support it, as they can switch back
+                // to Settings via the tab strip.
+                panel.activeTab = ModulePanelState::Tab::kEnvelope;
+            }
+        }
+
+        modulePanels_[panel.moduleId] = panel;
+        repaintWithRateLimit();
+        return;
+    }
+
+    // Fallback to default behaviour when double-clicking outside
+    // any module.
+    juce::Component::mouseDoubleClick(event);
+}
+
 void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
                                    const juce::MouseWheelDetails& wheel)
 {
@@ -234,6 +301,124 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
     // not receive coordinates (e.g. radial mode selection) can still
     // reason about where the gesture finished.
     lastPointerPosition_ = position;
+
+    // If a per-module detail panel is visible, give it priority so
+    // clicks on its tabs do not start other gestures such as drags
+    // or cut-mode.
+    if (!modulePanels_.empty()) {
+        const auto& objects = scene_.objects();
+        const auto& modules = scene_.modules();
+
+        for (auto& [moduleId, panelState] : modulePanels_) {
+            if (!panelState.visible) {
+                continue;
+            }
+
+            const rectai::ObjectInstance* panelObject = nullptr;
+            for (const auto& [id, obj] : objects) {
+                juce::ignoreUnused(id);
+                if (obj.logical_id() == moduleId && !obj.docked()) {
+                    panelObject = &obj;
+                    break;
+                }
+            }
+
+            if (panelObject == nullptr ||
+                !isInsideMusicArea(*panelObject)) {
+                continue;
+            }
+            const auto centrePos =
+                objectTableToScreen(*panelObject, bounds);
+            const float cx = centrePos.x;
+            const float cy = centrePos.y;
+
+            // Reutiliza la misma rotación que el pintado del
+            // módulo para llevar la posición del puntero al espacio
+            // local previo a la transformada. El rectángulo del
+            // panel se define en ese mismo sistema de coordenadas.
+            const auto boundsF = bounds.toFloat();
+            const auto tableCentre = boundsF.getCentre();
+            const float dx = cx - tableCentre.x;
+            const float dy = cy - tableCentre.y;
+            float rotationAngle = 0.0F;
+            if (isInsideMusicArea(*panelObject)) {
+                rotationAngle =
+                    std::atan2(dy, dx) -
+                    juce::MathConstants<float>::halfPi;
+            }
+
+            juce::Point<float> localPos = position;
+            if (rotationAngle != 0.0F) {
+                localPos = localPos.transformedBy(
+                    juce::AffineTransform::rotation(-rotationAngle,
+                                                    cx, cy));
+            }
+
+            const auto panelBounds =
+                getModulePanelBounds(*panelObject, bounds);
+            const auto modIt = modules.find(panelState.moduleId);
+            const rectai::AudioModule* moduleForPanel =
+                (modIt != modules.end() && modIt->second != nullptr)
+                    ? modIt->second.get()
+                    : nullptr;
+
+            bool hasEnvelopeTab = false;
+            if (moduleForPanel != nullptr) {
+                if (dynamic_cast<const rectai::AudioModuleWithEnvelope*>(
+                        moduleForPanel) != nullptr) {
+                    hasEnvelopeTab = true;
+                }
+            }
+
+            // Hit-test de tabs: cuadrados justo debajo del panel,
+            // usando la misma geometría que en paint.
+            constexpr float kTabStripHeight = 26.0F;
+            const int tabCount = hasEnvelopeTab ? 3 : 2;
+            const float tabSide = kTabStripHeight;
+            const float tabSpacing = 0.0F;
+            const float tabOriginX = panelBounds.getX();
+            const float tabOriginY = panelBounds.getBottom();
+
+            int hitIndex = -1;
+            for (int i = 0; i < tabCount; ++i) {
+                const float x = tabOriginX +
+                                (tabSide + tabSpacing) *
+                                    static_cast<float>(i);
+                juce::Rectangle<float> tabBounds(
+                    x, tabOriginY, tabSide, kTabStripHeight);
+                if (tabBounds.contains(localPos)) {
+                    hitIndex = i;
+                    break;
+                }
+            }
+
+            if (hitIndex >= 0) {
+                int cursor = 0;
+                int envelopeIndex = -1;
+                int settingsIndex = -1;
+                int closeIndex = -1;
+
+                if (hasEnvelopeTab) {
+                    envelopeIndex = cursor++;
+                }
+                settingsIndex = cursor++;
+                closeIndex = cursor++;
+
+                if (hitIndex == closeIndex) {
+                    panelState.visible = false;
+                } else if (hitIndex == settingsIndex) {
+                    panelState.activeTab =
+                        ModulePanelState::Tab::kSettings;
+                } else if (hitIndex == envelopeIndex) {
+                    panelState.activeTab =
+                        ModulePanelState::Tab::kEnvelope;
+                }
+
+                repaintWithRateLimit();
+                return;
+            }
+        }
+    }
 
     repaintWithRateLimit();
 
@@ -1292,15 +1477,58 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
 
         const float dxLocal = mousePos.x - modeDragStartLocal_.x;
         const float nodeRadius = 26.0F;
-
-        // Progress from 0 (no drag) to 1 (dragged left by one
-        // full node radius). Negative dxLocal corresponds to a drag
-        // towards the module's local left.
-        const float progress =
+        // Left/right drag progress in module-local space. Negative
+        // dxLocal corresponds to a drag towards the module's local
+        // left (radial mode menu), positive towards its local right
+        // (detail panel).
+        const float leftProgress =
             juce::jlimit(0.0F, 1.0F, (-dxLocal) / nodeRadius);
-        modeDragProgress_ = progress;
+        const float rightProgress =
+            juce::jlimit(0.0F, 1.0F, dxLocal / nodeRadius);
 
-        if (progress >= 1.0F) {
+        // Preserve the existing behaviour for the bottom icon alpha:
+        // only leftward drags fade the icon as the adjustment mode
+        // radial menu is revealed.
+        modeDragProgress_ = leftProgress;
+
+        // Dragging from the bottom mode button towards the module's
+        // local right opens the per-module detail panel anchored near
+        // the node. This gesture is mutually exclusive with the
+        // radial mode menu: once the panel opens, we cancel the
+        // mode-drag state.
+        if (rightProgress >= 1.0F) {
+            const auto& modulesLocal = scene_.modules();
+            const auto modIt = modulesLocal.find(object.logical_id());
+
+            ModulePanelState panel{};
+            panel.moduleId = object.logical_id();
+            panel.visible = true;
+            panel.activeTab = ModulePanelState::Tab::kSettings;
+
+            if (modIt != modulesLocal.end() &&
+                modIt->second != nullptr) {
+                auto* modulePtr = modIt->second.get();
+                if (dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                        modulePtr) != nullptr) {
+                    panel.activeTab = ModulePanelState::Tab::kEnvelope;
+                }
+            }
+
+            modulePanels_[panel.moduleId] = panel;
+
+            // Cancel any pending radial adjustment menu.
+            modeSelection_ = ModeSelectionState{};
+            modeDragActive_ = false;
+            modeControlObjectId_ = 0;
+            modeDragProgress_ = 0.0F;
+
+            repaintWithRateLimit();
+            return;
+        }
+
+        // Leftward drags continue to control the adjustment mode
+        // radial menu as before.
+        if (leftProgress >= 1.0F) {
             modeDragActive_ = true;
             modeSelection_.moduleId = object.logical_id();
             modeSelection_.menuVisible = true;

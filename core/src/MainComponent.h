@@ -32,6 +32,7 @@ public:
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
     void mouseUp(const juce::MouseEvent& event) override;
+    void mouseDoubleClick(const juce::MouseEvent& event) override;
     void mouseWheelMove(const juce::MouseEvent& event,
                         const juce::MouseWheelDetails& wheel) override;
 
@@ -350,6 +351,11 @@ private:
     static constexpr float kDockMaxWidth = 100.0F;
     static constexpr float kDockWidthRatio = 0.20F;
 
+    // Default module panel size in component-space pixels.
+    // Use a square window area; tabs live just below it.
+    static constexpr float kModulePanelWidth = 110.0F;
+    static constexpr float kModulePanelHeight = 110.0F;
+
     [[nodiscard]] float calculateDockWidth(float boundsWidth) const {
         return juce::jmin(kDockMaxWidth, boundsWidth * kDockWidthRatio);
     }
@@ -375,6 +381,25 @@ private:
     [[nodiscard]] juce::Image getCachedAtlasIcon(const std::string& iconId,
                                                  int destWidth,
                                                  int destHeight);
+
+    // Per-module detail panel anchored near the node.
+    struct ModulePanelState {
+        enum class Tab { kEnvelope = 0, kSettings = 1 };
+
+        std::string moduleId;
+        Tab activeTab{Tab::kSettings};
+        bool visible{false};
+    };
+
+    // Per-module panel state; allows multiple detail panels to be
+    // abiertos simultáneamente, uno por módulo lógico.
+    std::unordered_map<std::string, ModulePanelState> modulePanels_;
+
+    // Geometry for the module detail panel relative to an object
+    // on the table.
+    [[nodiscard]] juce::Rectangle<float> getModulePanelBounds(
+        const rectai::ObjectInstance& object,
+        const juce::Rectangle<float>& bounds) const;
 
     void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
                                       std::int64_t objectIdB);

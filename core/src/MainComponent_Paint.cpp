@@ -2944,6 +2944,148 @@ void MainComponent::paint(juce::Graphics& g)
         }
 #endif
 
+        // Per-module detail panel (envelope/settings) when active.
+        if (!modulePanels_.empty() && insideMusic) {
+            const auto panelIt =
+                modulePanels_.find(object.logical_id());
+            if (panelIt != modulePanels_.end() &&
+                panelIt->second.visible) {
+                const auto& panelState = panelIt->second;
+                const auto panelBounds =
+                    getModulePanelBounds(object, bounds);
+
+                // Panel body: borde redondeado y fondo azul
+                // oscuro ligeramente más profundo que el color base
+                // de la mesa.
+                constexpr float kPanelCornerRadius = 10.0F;
+                const juce::Colour panelBg =
+                    juce::Colour::fromRGB(0x00, 0x10, 0x50);
+                const juce::Colour panelBorder =
+                    juce::Colours::white.withAlpha(0.20F);
+
+                g.setColour(panelBg.withAlpha(0.96F));
+                g.fillRoundedRectangle(panelBounds, kPanelCornerRadius);
+
+                // Único borde exterior, fino.
+                g.setColour(panelBorder);
+                g.drawRoundedRectangle(panelBounds, kPanelCornerRadius,
+                                       2.0F);
+
+                // Pequeño triángulo en el lateral izquierdo del
+                // panel apuntando hacia el centro del módulo.
+                {
+                    const float triWidth = 12.0F;
+                    const float triHalfHeight = 7.0F;
+                    const float leftX = panelBounds.getX();
+                    // Alineado verticalmente con el centro del
+                    // módulo, no con el centro del panel.
+                    const float centreY = cy;
+
+                    juce::Path tri;
+                    tri.startNewSubPath(leftX, centreY - triHalfHeight);
+                    tri.lineTo(leftX, centreY + triHalfHeight);
+                    tri.lineTo(leftX - triWidth, centreY);
+                    tri.closeSubPath();
+
+                    // Triángulo sin borde explícito, rellenado con
+                    // el mismo color que el borde exterior del panel.
+                    g.setColour(panelBorder);
+                    g.fillPath(tri);
+                }
+
+                // Bottom tab strip; tabs se dibujan justo debajo del
+                // área de ventana, alineados a la izquierda.
+                constexpr float kTabStripHeight = 26.0F;
+                juce::Rectangle<float> tabStrip(
+                    panelBounds.getX(), panelBounds.getBottom(),
+                    panelBounds.getWidth(), kTabStripHeight);
+
+                bool hasEnvelopeTab = false;
+                if (moduleForObject != nullptr) {
+                    if (dynamic_cast<const rectai::AudioModuleWithEnvelope*>(
+                            moduleForObject) != nullptr) {
+                        hasEnvelopeTab = true;
+                    }
+                }
+
+                const int tabCount = hasEnvelopeTab ? 3 : 2;
+                // Tabs cuadrados: lado basado en la altura de la
+                // franja inferior, alineados a la izquierda y
+                // pegados entre sí, sin estirarse al ancho total.
+                const float tabSide = tabStrip.getHeight();
+                const float tabSpacing = 0.0F;
+
+                auto drawTab = [&](int index, const juce::String& iconId,
+                                   bool isActive) {
+                    const float x = tabStrip.getX() +
+                                    (tabSide + tabSpacing) *
+                                        static_cast<float>(index);
+                    juce::Rectangle<float> tabBounds(
+                        x, tabStrip.getY(), tabSide,
+                        tabStrip.getHeight());
+
+                    const auto baseColour =
+                        isActive ? juce::Colours::white.withAlpha(0.14F)
+                                 : juce::Colours::white.withAlpha(0.04F);
+                    g.setColour(baseColour);
+                    g.fillRect(tabBounds);
+
+                    // Icon cuadrado ocupando todo el tab, tocando
+                    // el borde exterior.
+                    const int destSize = static_cast<int>(
+                        std::floor(tabBounds.getHeight()));
+                    if (destSize > 0 && atlasLoaded_) {
+                        auto iconImage = getCachedAtlasIcon(
+                            iconId.toStdString(), destSize, destSize);
+                        if (iconImage.isValid()) {
+                            const int destX = juce::roundToInt(
+                                tabBounds.getX());
+                            const int destY = juce::roundToInt(
+                                tabBounds.getY());
+                            g.setColour(juce::Colours::white.withAlpha(
+                                isActive ? 0.95F : 0.85F));
+                            g.drawImageAt(iconImage, destX, destY);
+                        }
+                    }
+                };
+
+                int nextIndex = 0;
+                if (hasEnvelopeTab) {
+                    const bool active =
+                        panelState.activeTab ==
+                        ModulePanelState::Tab::kEnvelope;
+                    drawTab(nextIndex++, "tab_envelope", active);
+                }
+
+                const bool settingsActive =
+                    panelState.activeTab ==
+                    ModulePanelState::Tab::kSettings;
+                drawTab(nextIndex++, "tab_settings", settingsActive);
+
+                // Close "tab" is always last.
+                drawTab(nextIndex, "close_button", false);
+
+                // Inner content area: todo el cuadrado de ventana,
+                // ya que los tabs viven por debajo.
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(8.0F, 8.0F);
+
+                g.setColour(juce::Colours::white.withAlpha(0.45F));
+                g.setFont(juce::Font(12.0F));
+
+                if (panelState.activeTab ==
+                    ModulePanelState::Tab::kEnvelope) {
+                    g.drawFittedText("Envelope controls coming soon",
+                                      contentBounds.toNearestInt(),
+                                      juce::Justification::centred, 2);
+                } else {
+                    g.drawFittedText("Module settings coming soon",
+                                      contentBounds.toNearestInt(),
+                                      juce::Justification::centred, 2);
+                }
+            }
+        }
+
         // Tempo controller overlay: show the current global BPM as a
         // small integer label positioned just outside the node circle,
         // so it remains legible. The underlying value is kept as a

@@ -7,6 +7,7 @@
 
 #include "MainComponent.h"
 
+#include <cmath>
 #include <memory>
 
 #include "AudioEngine.h"
@@ -160,6 +161,35 @@ void MainComponent::renderDockBackgroundIfNeeded(
                juce::Justification::centredLeft, false);
 
     dockBackgroundDirty_ = false;
+}
+
+juce::Rectangle<float> MainComponent::getModulePanelBounds(
+    const rectai::ObjectInstance& object,
+    const juce::Rectangle<float>& bounds) const
+{
+    const auto centrePos = objectTableToScreen(object, bounds);
+    const float cx = centrePos.x;
+    const float cy = centrePos.y;
+
+    // Base geometry for the panel in the same (pre-rotated)
+    // coordinate system que el cuerpo del módulo y sus barras
+    // laterales. El pintado del nodo aplica después una
+    // AffineTransform de rotación alrededor de (cx, cy), de modo que
+    // este rectángulo también rota y se mantiene siempre en el lado
+    // "derecho" local del módulo.
+    constexpr float kNodeRadius = 26.0F;
+    const float ringRadius = kNodeRadius + 10.0F;
+
+    // Coloca el panel muy cerca de la barra de volumen (Gain),
+    // apenas separado del anillo de controles laterales para que se
+    // perciba visualmente unido al módulo.
+    const float horizontalOffset = ringRadius + 10.0F;
+    const float verticalLift = 10.0F;
+
+    const float px = cx + horizontalOffset;
+    const float py = cy - (kModulePanelHeight * 0.5F) - verticalLift;
+
+    return {px, py, kModulePanelWidth, kModulePanelHeight};
 }
 
 MainComponent::MainComponent(AudioEngine& audioEngine,
