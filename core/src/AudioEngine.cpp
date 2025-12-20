@@ -1547,7 +1547,102 @@ bool AudioEngine::loadLoopSampleFromFile(const std::string& moduleId,
 
     LoopSample sample;
     sample.buffer = std::move(sharedBuffer);
-    sample.beats = std::max(0, beats);
+
+    // Determine the effective beat count for this sample. Priority:
+    //   1) If the caller provides a positive `beats` value (e.g. from
+    //      .rtp metadata), trust it and cache it per file path.
+    //   2) If `beats <= 0` but we have a cached value for this audio
+    //      file, reuse the cached beats so that samples keep their
+    //      original length even when selected from different Loop
+    //      modules.
+    //   3) Otherwise, estimate beats from the decoded duration and
+    //      current loop BPM, biasing towards powers of two where
+    //      possible and caching the result.
+
+    int effectiveBeats = beats;
+
+    if (effectiveBeats > 0) {
+        loopSampleBeatsCache_[canonicalPath] = effectiveBeats;
+    } else {
+        // Try to reuse any previously known beat count for this
+        // sample derived either from .rtp metadata or a prior
+        // auto-detection.
+        const auto beatsIt =
+            loopSampleBeatsCache_.find(canonicalPath);
+        if (beatsIt != loopSampleBeatsCache_.end() &&
+            beatsIt->second > 0) {
+            effectiveBeats = beatsIt->second;
+        } else if (sample.buffer != nullptr &&
+                   sample.buffer->numFrames > 0 &&
+                   sample.buffer->sourceSampleRate > 0.0) {
+            const double durationSeconds =
+                static_cast<double>(sample.buffer->numFrames) /
+                sample.buffer->sourceSampleRate;
+            const float bpm =
+                loopGlobalBpm_.load(std::memory_order_relaxed);
+
+            if (durationSeconds > 0.0 && bpm > 0.0F) {
+                const double rawBeats =
+                    durationSeconds * static_cast<double>(bpm) /
+                    60.0;
+
+                // Clamp to a musically sensible range to avoid
+                // exploding tempo factors in pathological cases.
+                constexpr int kMinBeats = 1;
+                constexpr int kMaxBeats = 64;
+
+                int estimated = 0;
+
+                // First, try snapping to the nearest power of two
+                // within a reasonable relative error. This favours
+                // common musical lengths such as 1, 2, 4, 8, 16
+                // beats even when the session BPM does not match the
+                // original loop tempo exactly.
+                const int candidatePowers[] = {1, 2, 4, 8, 16, 32, 64};
+                double bestError = std::numeric_limits<double>::max();
+                int bestCandidate = 0;
+
+                for (int candidate : candidatePowers) {
+                    const double err = std::abs(
+                        static_cast<double>(candidate) - rawBeats);
+                    const double rel = (candidate > 0)
+                                           ? (err / candidate)
+                                           : err;
+                    // Require the candidate to be within 30% of the
+                    // measured value to avoid snapping wildly.
+                    if (rel <= 0.30 && err < bestError) {
+                        bestError = err;
+                        bestCandidate = candidate;
+                    }
+                }
+
+                if (bestCandidate > 0) {
+                    estimated = bestCandidate;
+                } else {
+                    // Fallback: nearest integer beat count.
+                    const int rounded = static_cast<int>(
+                        std::round(rawBeats));
+                    if (rounded >= kMinBeats &&
+                        rounded <= kMaxBeats) {
+                        estimated = rounded;
+                    }
+                }
+
+                if (estimated >= kMinBeats &&
+                    estimated <= kMaxBeats) {
+                    effectiveBeats = estimated;
+                    loopSampleBeatsCache_[canonicalPath] =
+                        effectiveBeats;
+                }
+            }
+        }
+    }
+
+    if (effectiveBeats < 0) {
+        effectiveBeats = 0;
+    }
+
+    sample.beats = effectiveBeats;
 
     LoopInstance& instance = loopModules_[moduleId];
     if (static_cast<int>(instance.slots.size()) <= slotIndex) {
@@ -1674,6 +1769,28 @@ unsigned int AudioEngine::loopBeatCounter() const noexcept
 void AudioEngine::setProcessingActive(const bool active) noexcept
 {
     processingRequested_.store(active, std::memory_order_relaxed);
+}
+
+int AudioEngine::getLoopSampleBeats(const std::string& moduleId,
+                                    const int slotIndex) const
+{
+    if (slotIndex < 0) {
+        return 0;
+    }
+
+    const auto it = loopModules_.find(moduleId);
+    if (it == loopModules_.end()) {
+        return 0;
+    }
+
+    const LoopInstance& instance = it->second;
+    if (slotIndex >= static_cast<int>(instance.slots.size())) {
+        return 0;
+    }
+
+    const LoopSample& sample =
+        instance.slots[static_cast<std::size_t>(slotIndex)];
+    return sample.beats;
 }
 
 void AudioEngine::setFrequency(const double frequency)

@@ -15,14 +15,17 @@ LoopFileBrowser::LoopFileBrowser(
                        const std::string& fullPath,
                        float beats,
                        std::string* error)>
-        loadSampleFn)
+                loadSampleFn,
+        std::function<int(const std::string& moduleId, int slotIndex)>
+                queryBeatsFn)
     : stateMap_(stateMap),
       listMap_(listMap),
       samplesRootDir_(std::move(samplesRootDir)),
       repaintCallback_(std::move(repaintCallback)),
       markLabelActive_(std::move(markLabelActive)),
       findLoopModule_(std::move(findLoopModule)),
-      loadSampleFn_(std::move(loadSampleFn))
+            loadSampleFn_(std::move(loadSampleFn)),
+            queryBeatsFn_(std::move(queryBeatsFn))
 {
 }
 
@@ -382,16 +385,35 @@ void LoopFileBrowser::handleSelectionChanged(const std::string& moduleId,
         def.filename = relative.toStdString();
         state.selectedFile = entry.file;
 
+        // When selecting a new sample from the browser we always ask
+        // the audio engine to auto-detect the beat count from the
+        // decoded audio instead of reusing the previous metadata from
+        // the .rtp file. Passing beats <= 0 triggers estimation based
+        // on the file duration and current global Loop tempo.
         std::string error;
+        constexpr float kAutoDetectBeats = -1.0F;
         const bool ok = loadSampleFn_(
-            moduleId, slotIndex, fullPath.toStdString(), def.beats,
-            &error);
+            moduleId, slotIndex, fullPath.toStdString(),
+            kAutoDetectBeats, &error);
         if (!ok) {
             juce::Logger::writeToLog(
                 juce::String("[rectai-core] Loop: failed to load "
                              "sample from browser: ") +
                 fullPath + " (" + juce::String(error) + ")");
         } else {
+            // If the audio engine successfully loaded the sample,
+            // query the effective beat count actually used for this
+            // slot (taking into account .rtp metadata, cached values
+            // and auto-detection) and propagate it back into the
+            // LoopDefinition so that UI elements such as the
+            // playhead bar remain in sync with the audio.
+            if (queryBeatsFn_) {
+                const int effectiveBeats =
+                    queryBeatsFn_(moduleId, slotIndex);
+                if (effectiveBeats > 0) {
+                    def.beats = effectiveBeats;
+                }
+            }
             markLabelActive_(moduleId);
         }
 

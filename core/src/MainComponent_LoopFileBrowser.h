@@ -58,7 +58,10 @@ public:
                                        const std::string& fullPath,
                                        float beats,
                                        std::string* error)>
-                        loadSampleFn);
+                        loadSampleFn,
+                    std::function<int(const std::string& moduleId,
+                                       int slotIndex)>
+                        queryBeatsFn);
 
     // Ensure that the browser state for a given module id is
     // initialised and synchronised with the currently active Loop
@@ -96,4 +99,6 @@ private:
                        float beats,
                        std::string* error)>
         loadSampleFn_;
+    std::function<int(const std::string& moduleId, int slotIndex)>
+        queryBeatsFn_;
 };

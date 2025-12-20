@@ -301,6 +301,16 @@ public:
     // idle scenes remains minimal.
     void setProcessingActive(bool active) noexcept;
 
+    // Returns the effective beat count associated with the given
+    // Loop module id and slot index. This reflects the value
+    // currently used by the audio engine for tempo sync, taking into
+    // account any .rtp metadata, cached beat counts and automatic
+    // detection performed when loading the sample. If the module or
+    // slot is missing, or the sample has no valid beat metadata,
+    // returns 0.
+    int getLoopSampleBeats(const std::string& moduleId,
+                           int slotIndex) const;
+
 private:
     juce::AudioDeviceManager deviceManager_;
 
@@ -634,6 +644,18 @@ private:
     // into separate buffers.
     std::unordered_map<std::string, std::shared_ptr<LoopSharedBuffer>>
         loopSampleCache_;
+
+    // Optional cache of canonical beat counts per decoded loop
+    // sample, keyed by the same absolute path used in
+    // `loopSampleCache_`. When a Loop sample is first loaded from a
+    // .rtp session, the explicit `beats` metadata from Reactable is
+    // stored here so that subsequent selections of the same audio
+    // file from the Loop File Browser can reuse that value even if
+    // the caller passes `beats <= 0` to request auto-detection. When
+    // no prior metadata exists, auto-detected beat counts derived
+    // from the file duration and current loop BPM are also cached so
+    // that repeated loads remain stable.
+    std::unordered_map<std::string, int> loopSampleBeatsCache_;
 
     // Set to true when the audio device initialisation succeeded but
     // reported zero output channels (e.g. "no channels"). Used by

@@ -632,6 +632,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                std::string* error) {
             return audioEngine_.loadLoopSampleFromFile(
                 moduleId, slotIndex, fullPath, beats, error);
+        },
+        [this](const std::string& moduleId, int slotIndex) {
+            return audioEngine_.getLoopSampleBeats(moduleId,
+                                                   slotIndex);
         });
 
     const auto loadLoopSamples = [this]() {
