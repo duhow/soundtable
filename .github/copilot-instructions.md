@@ -1,91 +1,51 @@
 # Guía para agentes de IA en `rectai-table`
 
-Estas instrucciones están pensadas para GitHub Copilot y otros agentes de IA que colaboren en este repositorio.
-El objetivo principal es mantenerse alineado con la arquitectura actual y los flujos de trabajo reales del proyecto.
+Estas instrucciones son para GitHub Copilot y otros agentes de IA que trabajen en este repo. El objetivo es respetar la arquitectura real y los flujos de trabajo existentes.
 
-## Visión general del proyecto
+## Visión general y arquitectura
 
-- Proyecto C++20 basado en CMake, orientado a recrear un sistema tipo Reactable.
-- Usa **JUCE** para la aplicación principal (`core/`) y **OpenCV** para el servicio de tracking (`tracker/`).
-- La documentación de diseño y arquitectura está en `research/` (ver especialmente `architecture_concepts.md` y `tech_stack.md`).
-
-## Arquitectura y módulos clave
-
-- `core/`: aplicación principal JUCE (`rectai-core`).
-  - `core/src/Main.cpp`: punto de entrada JUCE (`RectaiApplication` + `MainWindow`).
-  - `core/src/MainComponent.{h,cpp}`: componente principal de UI que pinta una "escena" de objetos/módulos.
-  - `core/src/core/Scene.{h,cpp}`: modelo de dominio con:
-    - `rectai::ObjectInstance`: objeto físico/virtual sobre la mesa (id de tracking, `logical_id`, posición normalizada, ángulo).
-    - `rectai::AudioModule` + `rectai::ModuleType`: módulos lógicos (oscilador, filtro, etc.) con puertos, parámetros y metadata UI.
-    - `rectai::Connection`: conexiones dirigidas entre puertos de módulos.
-    - `rectai::Scene`: agrega módulos, conexiones y objetos con operaciones de alta coherencia (no duplicar ids, limpieza de conexiones al borrar un módulo, etc.).
+- Proyecto C++20 basado en CMake, recreando un sistema tipo Reactable.
+- `core/`: app principal JUCE (`rectai-core`).
+  - `core/src/Main.cpp`: entrada JUCE (`RectaiApplication`, `MainWindow`).
+  - `core/src/MainComponent.{h,cpp}`: UI principal; mantiene `rectai::Scene scene_` y pinta la mesa desde el modelo.
+  - `core/src/core/Scene.{h,cpp}`: dominio (`ObjectInstance`, `AudioModule`/`ModuleType`, `Connection`, `Scene`). Cambios aquí suelen requerir actualizar `tests/scene_tests.cpp` y llamadas en `MainComponent`.
 - `tracker/`: binario `rectai-tracker` basado en OpenCV.
-  - `tracker/src/main.cpp`: por ahora sólo abre la cámara por defecto, calcula FPS aproximados y escribe logs por stdout/stderr.
-- `tests/`:
-  - `tests/scene_tests.cpp`: ejecutable sencillo (no framework externo) que usa `assert` para validar el comportamiento de `Scene/Module/Connection/ObjectInstance` y se integra con **CTest**.
+  - `tracker/src/main.cpp`: bucle principal de cámara + envío OSC/TUIO; logs con prefijo `[rectai-tracker]`.
+  - `tracker/src/OscSender.{h,cpp}` + `core/src/TrackingOscReceiver.{h,cpp}`: contrato de mensajes OSC/TUIO entre tracker y core.
+- Documentación de diseño: `research/architecture_concepts.md`, `research/tech_stack.md` y resto de `research/`.
 
-Al extender el modelo de dominio (nuevos tipos de módulos, propiedades de objetos, lógica de conexiones), toma como referencia `core/src/core/Scene.{h,cpp}` y actualiza también los tests en `tests/scene_tests.cpp`.
+## Flujos de build, tests y ejecución
 
-## Flujos de build y tests
+- Build local estándar:
+  - Desde raíz: `mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Debug .. && cmake --build . --config Debug -- -j"$(nproc)"`.
+  - Targets principales: `rectai-core`, `rectai-tracker` y tests (si `RECTAI_BUILD_TESTS=ON`).
+- Tests C++: desde `build/`, ejecutar `ctest --output-on-failure` (incluye tests de dominio en `tests/scene_tests.cpp` y de tracker en `tests/tracker_tests.cpp`).
+- Build reproducible: ver `README.md` para `earthly +build` y uso de `Dockerfile` si no quieres instalar todas las dependencias en el host.
+- Al cambiar `Scene`, `AudioModule`, `ObjectInstance` o tracking/OSC, recompila con `cmake` y ejecuta `ctest` para validar.
 
-- Build local estándar (fuera de contenedor):
-  - Desde la raíz del repo:
-    - `mkdir -p build`
-    - `cd build`
-    - `cmake -DCMAKE_BUILD_TYPE=Debug ..`
-    - `cmake --build . --config Debug -- -j"$(nproc)"`
-- Targets principales generados (según `CMakeLists.txt`):
-  - `rectai-core`: app JUCE principal.
-  - `rectai-tracker`: servicio de tracking (CLI).
-  - Tests (si `RECTAI_BUILD_TESTS=ON`): ejecutables integrados con CTest.
-- Ejecución de tests C++:
-  - Desde `build/` tras configurar con CMake: `ctest --output-on-failure`.
+## Patrones de dominio y UI
 
-Si haces cambios en `Scene`, `AudioModule` o `ObjectInstance`, asegúrate de que `tests/scene_tests.cpp` siga compilando y pasando con `ctest`.
+- Coordenadas de objetos: `ObjectInstance` usa posición normalizada en la mesa; `MainComponent::paint` las proyecta al tamaño actual del componente.
+- UI siempre deriva del modelo:
+  - Modifica primero `rectai::Scene` (módulos, conexiones, objetos) y deja que la UI lea `scene_.objects()` / `scene_.connections()` para pintar.
+  - Evita estado duplicado de escena dentro de componentes JUCE; si necesitas nuevo estado persistente, considera extender `Scene`.
+  - Prioriza definir la lógica en `AudioModules` siempre que sea posible y/o factible, para centralizar el comportamiento de forma genérica, ya que múltiples modelos se comportarán igual, y ayuda a reducir duplicado de código.
+- El core espera tracking externo vía OSC/TUIO:
+  - `rectai-tracker` emite TUIO 1.1 o `/rectai/*`; `TrackingOscReceiver` traduce esto a `ObjectInstance` y eventos de puntero.
+  - Si cambias el formato de mensajes, mantén ambos lados sincronizados y actualiza los tests de tracker.
 
-## Convenciones de código C++
+## Convenciones de C++ y dependencias
 
-- Estándar: C++20, sin extensiones (`CMAKE_CXX_EXTENSIONS OFF`).
-- Espacio de nombres de dominio: `rectai` (ver `core/src/core/Scene.h`).
-- Estilo observado:
-  - Clases y enums en `PascalCase` (`ObjectInstance`, `ModuleType`).
-  - Métodos en `camelCase` (`AddModule`, `RemoveConnection`, `set_position`).
-  - Uso de `[[nodiscard]]` en getters públicos y métodos que devuelven valores importantes.
-  - Uso de `std::unique_ptr` para ownership en la parte JUCE (`MainWindow` en `Main.cpp`).
-  - En JUCE se usan las macros estándar (`JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR`). No las elimines.
-- Al modificar firmas o estructuras expuestas en `Scene.h`, mantén la coherencia entre declaración y definición en `Scene.cpp` y revisa todos los llamadores (por ejemplo `MainComponent.cpp` y `tests/scene_tests.cpp`).
+- C++20 sin extensiones (`CMAKE_CXX_EXTENSIONS OFF`), espacio de nombres `rectai`.
+- Estilo observado: clases/enums en `PascalCase`, métodos en `camelCase`, `[[nodiscard]]` en getters importantes, `std::unique_ptr` para ownership en JUCE, macros JUCE estándar (`JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR`).
+- Al cambiar firmas públicas en `Scene.h` o módulos de audio, mantén en sync `Scene.cpp`, `MainComponent` y tests.
+- Antes de añadir dependencias nuevas, revisa `DEPENDENCIES.md` y la integración con CMake (raíz, `core/CMakeLists.txt`, `tracker/CMakeLists.txt`).
 
-## Interacción UI ↔ modelo de dominio
+## Expectativas específicas para agentes de IA
 
-- `MainComponent` mantiene un miembro `rectai::Scene scene_;` y construye una escena de ejemplo en el constructor.
-- El método `paint`:
-  - Obtiene `scene_.objects()` y `scene_.connections()`.
-  - Dibuja líneas entre objetos según las conexiones, usando posiciones **normalizadas** `(x, y)` sobre el tamaño actual del componente.
-  - Dibuja cada objeto como un círculo con texto centrado con `logical_id`.
-- Al introducir nueva lógica de UI que refleje cambios de `Scene` (por ejemplo, selección, resaltado, interacción), sigue este patrón: actualizar primero el modelo (`Scene`) y luego derivar el render desde el estado del modelo en `paint`/`resized`.
-
-## Servicio de tracking
-
-- `rectai-tracker` está pensado como servicio separado que leerá de cámara y, en el futuro, enviará información de tracking a la app principal.
-- Por ahora, sólo usa OpenCV para abrir cámara y medir FPS.
-- Al extenderlo:
-  - Mantén la inicialización básica de cámara en `main`.
-  - Extrae la lógica de procesamiento en funciones o clases separadas para poder testearlas y reutilizarlas.
-
-## Expectativas para agentes de IA
-
-- Toma de base la documentación en `research/` para entender el diseño y las decisiones arquitectónicas.
-- La implementación que debes seguir, está en `research/tech_stack.md`.
-- Después de cada cambio, actualiza el documento `research/progress.md` como referencia futura, para saber qué has implementado y cuáles son los siguientes pasos a realizar en el Roadmap definido.
-- Los detalles relevantes tienen que estar escritos en el archivo de progreso, no devolverlos en el chat.
-- La documentación será en español, pero el código y comentarios en inglés.
-  - Si encuentras comentarios o código en español en el código, tradúcelos al inglés.
-- Antes de introducir nuevas dependencias, revisa `DEPENDENCIES.md` y la integración con CMake.
-- Si añades nuevos ejecutables o librerías:
-  - Decláralos en los `CMakeLists.txt` correspondientes (`core/`, `tracker/`, `tests/` o raíz si aplica).
-  - Usa las mismas opciones de compilación (C++20, sin extensiones) y respeta la estructura actual del proyecto.
-- Cuando toques código en `core/src/core/Scene.*`, considera también:
-  - Actualizar ejemplos en `MainComponent.cpp` si dejan de compilar o de tener sentido.
-  - Añadir/ajustar asserts en `tests/scene_tests.cpp` para reflejar el nuevo comportamiento esperado.
-- Mantén los mensajes de log del tracker en inglés y con prefijo `[rectai-tracker]` como en `tracker/src/main.cpp`.
-- Los comandos de build como `cmake` no están disponibles en el host. Si tienes que ejecutar código de build o test en local, hazlo dentro de Podman con el comando `podman run --rm -it -v $PWD:$PWD:z -w $PWD build`, o usa Earthly.
+- Usa primero la documentación de `research/` para entender decisiones de arquitectura antes de introducir diseños nuevos.
+- La implementación a seguir está descrita en `research/tech_stack.md`; evita reintroducir stacks alternativos descartados ahí.
+- Ante la duda sobre cómo implementar ciertos elementos, el objetivo es recrear el comportamiento de un sistema Reactable, pero se pueden añadir funcionalidades avanzadas o experimentales con aprobación del usuario.
+- Tras cada cambio de código o de CMake, crea o edita el archivo con fecha de hoy en formato `YYYY-MM-DD`, añade una entrada breve en `research/progress/YYYY-MM-DD.md` (en español) explicando qué se ha implementado y, si aplica, próximos pasos; no dupliques esa explicación en el chat.
+- La documentación y comentarios de docs van en español; el código y comentarios en código deben estar en inglés. Si encuentras comentarios en español en código, tradúcelos al inglés al tocarlos.
+- Si creas nuevos ejecutables o librerías, decláralos en los `CMakeLists.txt` correspondientes y sigue el patrón de opciones actual (C++20, sin extensiones, integración con tests/CTest si aplica).
