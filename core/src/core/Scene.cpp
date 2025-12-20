@@ -98,6 +98,15 @@ float AudioModule::default_parameter_value(const std::string& /*name*/) const
   return 0.0F;
 }
 
+std::optional<AudioModule::XYControlMapping>
+AudioModule::xy_control_mapping() const
+{
+  // By default modules do not participate in the XYControl UI; audio
+  // modules that want to expose a 2D pad in their detail panel can
+  // override this to describe which parameters are driven by X and Y.
+  return std::nullopt;
+}
+
 const AudioModuleModes& AudioModule::supported_modes() const
 {
   static const AudioModuleModes kEmptyModes;

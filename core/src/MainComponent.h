@@ -10,6 +10,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "MainComponent_TextScroll.h"
+#include "MainComponent_XYControl.h"
 
 class AudioEngine;
 
@@ -405,6 +406,8 @@ private:
             kSettings = 1,
             // Loop-specific tab used for file/sample selection.
             kLoopFiles = 2,
+            // Generic 2D XY control pad (e.g. Filter, LFO).
+            kXYControl = 3,
         };
 
         std::string moduleId;
@@ -426,6 +429,14 @@ private:
                        std::unique_ptr<rectai::ui::TextScrollList>>
         loopFileLists_;
 
+    // Per-module XY control instances used by modules that expose an
+    // XY pad tab (e.g. Filter, LFO). These are lightweight UI-only
+    // components; their logical values are mapped to module
+    // parameters on demand.
+    std::unordered_map<std::string,
+                       std::unique_ptr<rectai::ui::XYControl>>
+        xyControls_;
+
     // Resolved base directory for com.reactable/Samples used by the
     // Loop file browser. May be empty when assets are not available.
     juce::File samplesRootDir_{}
@@ -446,6 +457,8 @@ private:
         kEnvelopeBar,
         // Vertical scrolling over the LoopFiles TextScrollList.
         kLoopFilesScroll,
+        // Continuous drag inside the per-module XY control pad.
+        kXYControl,
     };
 
     struct ActivePanelDrag {
@@ -491,6 +504,10 @@ private:
     getOrCreateLoopFileList(const std::string& moduleId);
     void onLoopFileSelectionChanged(const std::string& moduleId,
                                     int rowIndex);
+
+    // XY control helpers used by modules exposing the XY settings tab.
+    [[nodiscard]] rectai::ui::XYControl*
+    getOrCreateXYControl(const std::string& moduleId);
 
     // Touch interface state.
     bool isTouchActive_{false};

@@ -119,6 +119,8 @@ target_sources(${PROJECT_NAME}
         src/MainComponent_ModulePanelEnvelope.h
         src/MainComponent_TextScroll.cpp
         src/MainComponent_TextScroll.h
+        src/MainComponent_XYControl.cpp
+        src/MainComponent_XYControl.h
         src/MainComponentHelpers.cpp
         src/MainComponentHelpers.h
         src/RectaiLookAndFeel.cpp

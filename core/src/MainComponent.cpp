@@ -938,3 +938,17 @@ MainComponent::getOrCreateLoopFileList(const std::string& moduleId)
     }
     return loopFileBrowser_->getOrCreateList(moduleId);
 }
+
+rectai::ui::XYControl*
+MainComponent::getOrCreateXYControl(const std::string& moduleId)
+{
+    auto it = xyControls_.find(moduleId);
+    if (it != xyControls_.end()) {
+        return it->second.get();
+    }
+
+    auto control = std::make_unique<rectai::ui::XYControl>();
+    rectai::ui::XYControl* raw = control.get();
+    xyControls_.emplace(moduleId, std::move(control));
+    return raw;
+}

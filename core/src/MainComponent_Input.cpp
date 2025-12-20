@@ -79,6 +79,9 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent& event)
                 case Kind::kLoopFiles:
                     panel.activeTab = ModulePanelState::Tab::kLoopFiles;
                     break;
+                case Kind::kXYControl:
+                    panel.activeTab = ModulePanelState::Tab::kXYControl;
+                    break;
                 case Kind::kSettings:
                 default:
                     panel.activeTab = ModulePanelState::Tab::kSettings;
@@ -523,6 +526,10 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                         panelState.activeTab =
                             ModulePanelState::Tab::kLoopFiles;
                         break;
+                    case Kind::kXYControl:
+                        panelState.activeTab =
+                            ModulePanelState::Tab::kXYControl;
+                        break;
                     case Kind::kSettings:
                     default:
                         panelState.activeTab =
@@ -701,6 +708,48 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                 // on pointer-up if released over the same item.
                 activePanelDrag_ = ActivePanelDrag{
                     PanelDragKind::kLoopFilesScroll,
+                    panelState.moduleId,
+                    -1};
+                return;
+            }
+
+            // XYControl tab: start interaction inside the content
+            // area with the per-module XY pad. Movement updates the
+            // underlying module parameters in real time.
+            if (panelState.activeTab ==
+                    ModulePanelState::Tab::kXYControl &&
+                moduleForPanel != nullptr) {
+                auto* filterModule =
+                    dynamic_cast<rectai::FilterModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                auto* lfoModule =
+                    dynamic_cast<rectai::LfoModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+
+                juce::ignoreUnused(filterModule, lfoModule);
+
+                auto* xy = getOrCreateXYControl(panelState.moduleId);
+                if (xy == nullptr) {
+                    continue;
+                }
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(6.0F, 6.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                const float localX =
+                    localPos.x - contentBounds.getX();
+                const float localY =
+                    localPos.y - contentBounds.getY();
+
+                xy->beginPointerAt(localX, localY);
+                activePanelDrag_ = ActivePanelDrag{
+                    PanelDragKind::kXYControl,
                     panelState.moduleId,
                     -1};
                 return;
@@ -1957,6 +2006,76 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
         }
     }
 
+    // Continuous XY pad adjustment while dragging inside the
+    // per-module XYControl view. This behaves similarly to LoopFiles
+    // scroll in that it owns the gesture while active.
+    if (activePanelDrag_.has_value() &&
+        activePanelDrag_->kind == PanelDragKind::kXYControl) {
+        const ActivePanelDrag dragState = *activePanelDrag_;
+        if (!dragState.moduleId.empty()) {
+            const auto& objectsLocal = scene_.objects();
+            const auto& modulesLocal = scene_.modules();
+
+            const auto modIt = modulesLocal.find(dragState.moduleId);
+            if (modIt != modulesLocal.end() &&
+                modIt->second != nullptr) {
+                const auto* modulePtr = modIt->second.get();
+
+                const rectai::ObjectInstance* panelObject = nullptr;
+                for (const auto& [id, obj] : objectsLocal) {
+                    juce::ignoreUnused(id);
+                    if (obj.logical_id() == dragState.moduleId &&
+                        !obj.docked() && isInsideMusicArea(obj)) {
+                        panelObject = &obj;
+                        break;
+                    }
+                }
+
+                if (panelObject != nullptr) {
+                    const auto centrePos =
+                        objectTableToScreen(*panelObject, bounds);
+                    const float cx = centrePos.x;
+                    const float cy = centrePos.y;
+
+                    const auto boundsF = bounds.toFloat();
+                    const auto tableCentre = boundsF.getCentre();
+                    const float dx = cx - tableCentre.x;
+                    const float dy = cy - tableCentre.y;
+                    float rotationAngle = 0.0F;
+                    if (isInsideMusicArea(*panelObject)) {
+                        rotationAngle =
+                            std::atan2(dy, dx) -
+                            juce::MathConstants<float>::halfPi;
+                    }
+
+                    juce::Point<float> localPos = position;
+                    if (rotationAngle != 0.0F) {
+                        localPos = localPos.transformedBy(
+                            juce::AffineTransform::rotation(
+                                -rotationAngle, cx, cy));
+                    }
+
+                    auto panelBounds =
+                        getModulePanelBounds(*panelObject, bounds);
+                    juce::Rectangle<float> contentBounds = panelBounds;
+                    contentBounds.reduce(6.0F, 6.0F);
+
+                    auto* xy =
+                        getOrCreateXYControl(dragState.moduleId);
+                    if (xy != nullptr) {
+                        const float localX =
+                            localPos.x - contentBounds.getX();
+                        const float localY =
+                            localPos.y - contentBounds.getY();
+                        xy->dragPointerTo(localX, localY);
+                        repaintWithRateLimit();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     // Adjustment mode drag: when the gesture started on the bottom
     // mode button for a given module, interpret horizontal movement in
     // module-local space. Dragging towards the module's local left
@@ -2618,6 +2737,88 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
                 const float localY =
                     localPos.y - contentBounds.getY();
                 list->endPointerAt(localY);
+                repaintWithRateLimit();
+                // Do not early-return: cut gestures and other state
+                // updates should still be processed.
+            }
+        }
+
+        if (dragState.kind == PanelDragKind::kXYControl &&
+            !dragState.moduleId.empty()) {
+            const auto activeModuleId = dragState.moduleId;
+
+            for (const auto& [moduleId, panelState] : modulePanels_) {
+                if (!panelState.visible ||
+                    moduleId != activeModuleId) {
+                    continue;
+                }
+
+                const rectai::ObjectInstance* objectPtr = nullptr;
+                for (const auto& [objId, obj] : objects) {
+                    juce::ignoreUnused(objId);
+                    if (obj.logical_id() == moduleId) {
+                        objectPtr = &obj;
+                        break;
+                    }
+                }
+
+                if (objectPtr == nullptr) {
+                    continue;
+                }
+
+                const auto& object = *objectPtr;
+                const auto modIt = modules.find(object.logical_id());
+                if (modIt == modules.end() ||
+                    modIt->second == nullptr) {
+                    continue;
+                }
+
+                if (panelState.activeTab !=
+                    ModulePanelState::Tab::kXYControl) {
+                    continue;
+                }
+
+                const auto centrePos =
+                    objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                const auto tableCentre = bounds.getCentre();
+                const float dx = cx - tableCentre.x;
+                const float dy = cy - tableCentre.y;
+                float rotationAngle = 0.0F;
+                if (isInsideMusicArea(object)) {
+                    rotationAngle =
+                        std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+                }
+
+                juce::Point<float> localPos = lastPointerPosition_;
+                if (rotationAngle != 0.0F) {
+                    localPos = localPos.transformedBy(
+                        juce::AffineTransform::rotation(
+                            -rotationAngle, cx, cy));
+                }
+
+                auto panelBounds =
+                    getModulePanelBounds(object, bounds);
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(6.0F, 6.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                auto* xy = getOrCreateXYControl(panelState.moduleId);
+                if (xy == nullptr) {
+                    continue;
+                }
+
+                const float localX =
+                    localPos.x - contentBounds.getX();
+                const float localY =
+                    localPos.y - contentBounds.getY();
+                xy->endPointerAt(localX, localY);
                 repaintWithRateLimit();
                 // Do not early-return: cut gestures and other state
                 // updates should still be processed.

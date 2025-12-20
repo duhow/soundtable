@@ -1,9 +1,9 @@
 #pragma once
 
-#include <string>
-#include <vector>
 #include <array>
 #include <algorithm>
+#include <string>
+#include <vector>
 
 #include "core/Scene.h"
 
@@ -240,6 +240,16 @@ class FilterModule : public AudioModuleWithEnvelope {
          [[nodiscard]] const AudioModuleModes& supported_modes() const override;
          [[nodiscard]] int default_mode_index() const override;
 
+         // Filter modules expose a dedicated XY control tab where the
+         // X axis typically maps to cutoff (freq) and the Y axis to Q.
+         [[nodiscard]] const SettingsTabs& supported_settings_tabs() const override;
+
+         // Mapping between the generic XYControl UI and the Filter
+         // parameters: X drives `freq` (cutoff) and Y drives `q`
+         // (resonance).
+         [[nodiscard]] std::optional<AudioModule::XYControlMapping>
+         xy_control_mapping() const override;
+
  protected:
          void on_mode_changed(int newIndex, const AudioModuleMode& mode) override;
 
@@ -307,6 +317,16 @@ class LfoModule : public AudioModule {
  public:
         explicit LfoModule(const std::string& id);
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
+
+        // LFO modules expose a dedicated XY control tab where the X
+        // axis typically maps to frequency and the Y axis to depth
+        // (mult), providing an immediate 2D modulation feel.
+        [[nodiscard]] const SettingsTabs& supported_settings_tabs() const override;
+
+        // Mapping between the generic XYControl UI and the LFO
+        // parameters: X drives `freq` and Y drives `mult` (depth).
+        [[nodiscard]] std::optional<AudioModule::XYControlMapping>
+        xy_control_mapping() const override;
 };
 
 // Step sequencer module.
@@ -380,6 +400,12 @@ class DelayModule : public AudioModuleWithEnvelope {
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 
+        // Delay modules expose a dedicated XY control tab where the
+        // X axis typically maps to delay time and the Y axis to
+        // feedback amount, in addition to the standard Envelope and
+        // Settings tabs.
+        [[nodiscard]] const SettingsTabs& supported_settings_tabs() const override;
+
         // Tangible-level hardlinks can be expressed later as Connections,
         // but we keep the original ids here for parsing.
         [[nodiscard]] const std::vector<int>& hardlink_targets() const
@@ -392,6 +418,12 @@ class DelayModule : public AudioModuleWithEnvelope {
                 return hardlink_targets_;
         }
 
+        // Mapping between the generic XYControl UI and the Delay
+        // parameters: X drives `delay` (time) and Y drives `fb`
+        // (feedback amount).
+        [[nodiscard]] std::optional<AudioModule::XYControlMapping>
+        xy_control_mapping() const override;
+
  private:
          std::vector<int> hardlink_targets_;
 };
@@ -402,6 +434,18 @@ class ModulatorModule : public AudioModuleWithEnvelope {
         explicit ModulatorModule(const std::string& id);
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
+
+         // Mapping between the generic XYControl UI and the Modulator
+         // parameters: X drives `effect` (flavour) and Y drives
+         // `depth` (modulation depth).
+         [[nodiscard]] std::optional<AudioModule::XYControlMapping>
+         xy_control_mapping() const override;
+
+        // Modulator modules expose a dedicated XY control tab where
+        // the X axis typically maps to the effect flavour and the Y
+        // axis to modulation depth, in addition to Envelope and
+        // Settings.
+        [[nodiscard]] const SettingsTabs& supported_settings_tabs() const override;
  private:
 };
 
@@ -410,7 +454,19 @@ class WaveShaperModule : public AudioModuleWithEnvelope {
  public:
         explicit WaveShaperModule(const std::string& id);
 
-        [[nodiscard]] const AudioModuleModes& supported_modes() const override;
+         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
+
+        // Waveshaper modules expose a dedicated XY control tab where
+        // the X axis typically maps to the shaping effect and the Y
+        // axis to the dry/wet mix, in addition to Envelope and
+        // Settings.
+        [[nodiscard]] const SettingsTabs& supported_settings_tabs() const override;
+
+        // Mapping between the generic XYControl UI and the Waveshaper
+        // parameters: X drives `effect` and Y drives `drywet`
+        // (processing mix).
+        [[nodiscard]] std::optional<AudioModule::XYControlMapping>
+        xy_control_mapping() const override;
  private:
 };
 

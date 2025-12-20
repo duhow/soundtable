@@ -3065,6 +3065,8 @@ void MainComponent::paint(juce::Graphics& g)
                             return ModulePanelState::Tab::kEnvelope;
                         case Kind::kLoopFiles:
                             return ModulePanelState::Tab::kLoopFiles;
+                        case Kind::kXYControl:
+                            return ModulePanelState::Tab::kXYControl;
                         case Kind::kSettings:
                         default:
                             return ModulePanelState::Tab::kSettings;
@@ -3155,6 +3157,84 @@ void MainComponent::paint(juce::Graphics& g)
                                     listBounds.getX(),
                                     listBounds.getY()));
                             list->paint(g);
+                        }
+                    }
+                } else if (panelState.activeTab ==
+                           ModulePanelState::Tab::kXYControl) {
+                    // Generic 2D XY control pad used by modules such
+                    // as Filter and LFO to expose two correlated
+                    // parameters in a compact view.
+                    juce::Rectangle<float> xyBounds = contentBounds;
+                    xyBounds.reduce(6.0F, 6.0F);
+
+                    auto* xy = getOrCreateXYControl(panelState.moduleId);
+                    if (xy == nullptr) {
+                        g.drawFittedText("XY control not available",
+                                          textBounds.toNearestInt(),
+                                          juce::Justification::centred, 2);
+                    } else {
+                        // Configure the XY pad based on the
+                        // AudioModule-level XYControlMapping so that
+                        // the mapping between axes and parameters
+                        // lives in the model instead of the UI.
+                        const auto* baseModule = moduleForObject;
+
+                        // Default visual minimums: allow using the
+                        // full panel area. Callers can tweak these in
+                        // a future iteration if a dead zone is
+                        // desired near the edges.
+                        xy->setVisualMinimums(0.0F, 0.0F);
+
+                        const std::string moduleId = panelState.moduleId;
+
+                        const auto mapping =
+                            baseModule->xy_control_mapping();
+                        if (!mapping.has_value()) {
+                            g.drawFittedText("XY control not available",
+                                              textBounds.toNearestInt(),
+                                              juce::Justification::centred,
+                                              2);
+                        } else {
+                            const auto& m = mapping.value();
+
+                            const float xValue =
+                                baseModule->GetParameterOrDefault(
+                                    m.x_parameter,
+                                    baseModule->default_parameter_value(
+                                        m.x_parameter));
+                            const float yValue =
+                                baseModule->GetParameterOrDefault(
+                                    m.y_parameter,
+                                    baseModule->default_parameter_value(
+                                        m.y_parameter));
+
+                            xy->setNormalisedPosition(xValue, yValue, false);
+
+                            xy->setOnValueChanged(
+                                [this, moduleId, m](float x01, float y01) {
+                                    // X and Y drive the module
+                                    // parameters declared in
+                                    // xy_control_mapping(). Concrete
+                                    // modules are responsible for
+                                    // choosing non-volume parameters
+                                    // for the Y axis when exposing an
+                                    // XY tab.
+                                    scene_.SetModuleParameter(
+                                        moduleId, m.x_parameter, x01);
+                                    scene_.SetModuleParameter(
+                                        moduleId, m.y_parameter, y01);
+                                    repaintWithRateLimit();
+                                });
+                        }
+
+                        if (xy != nullptr) {
+                            juce::Graphics::ScopedSaveState state(g);
+                            xy->setBounds(xyBounds.toNearestInt());
+                            g.reduceClipRegion(xyBounds.toNearestInt());
+                            g.addTransform(
+                                juce::AffineTransform::translation(
+                                    xyBounds.getX(), xyBounds.getY()));
+                            xy->paint(g);
                         }
                     }
                 } else {

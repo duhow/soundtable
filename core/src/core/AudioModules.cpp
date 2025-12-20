@@ -122,6 +122,12 @@ float FilterModule::default_parameter_value(const std::string& name) const
   return AudioModuleWithEnvelope::default_parameter_value(name);
 }
 
+std::optional<AudioModule::XYControlMapping>
+FilterModule::xy_control_mapping() const
+{
+  return AudioModule::XYControlMapping{"freq", "q"};
+}
+
 const AudioModuleModes& FilterModule::supported_modes() const
 {
   // Filter response types are exposed to the UI in the same order as
@@ -147,6 +153,22 @@ void FilterModule::on_mode_changed(const int newIndex,
   // state beyond what the audio engine derives from the mode id, so
   // we simply reuse the base implementation to update the icon.
   AudioModule::on_mode_changed(newIndex, mode);
+}
+
+const AudioModule::SettingsTabs& FilterModule::supported_settings_tabs() const
+{
+  using SettingsTabs = AudioModule::SettingsTabs;
+  using SettingsTabDescriptor = AudioModule::SettingsTabDescriptor;
+
+  static const SettingsTabs kTabs = {
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kXYControl,
+                            "tab_2d"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kEnvelope,
+                            "tab_envelope"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kSettings,
+                            "tab_settings"},
+  };
+  return kTabs;
 }
 
 OutputModule::OutputModule(const std::string& id)
@@ -278,6 +300,26 @@ const AudioModuleModes& LfoModule::supported_modes() const
       AudioModuleMode{3, "noise", "lfo_noise"},
   };
   return kModes;
+}
+
+const AudioModule::SettingsTabs& LfoModule::supported_settings_tabs() const
+{
+  using SettingsTabs = AudioModule::SettingsTabs;
+  using SettingsTabDescriptor = AudioModule::SettingsTabDescriptor;
+
+  static const SettingsTabs kTabs = {
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kXYControl,
+                            "tab_2d"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kSettings,
+                            "tab_settings"},
+  };
+  return kTabs;
+}
+
+std::optional<AudioModule::XYControlMapping>
+LfoModule::xy_control_mapping() const
+{
+  return AudioModule::XYControlMapping{"freq", "mult"};
 }
 
 SequencerModule::SequencerModule(const std::string& id)
@@ -450,6 +492,28 @@ const AudioModuleModes& DelayModule::supported_modes() const
   return kModes;
 }
 
+std::optional<AudioModule::XYControlMapping>
+DelayModule::xy_control_mapping() const
+{
+  return AudioModule::XYControlMapping{"delay", "fb"};
+}
+
+const AudioModule::SettingsTabs& DelayModule::supported_settings_tabs() const
+{
+  using SettingsTabs = AudioModule::SettingsTabs;
+  using SettingsTabDescriptor = AudioModule::SettingsTabDescriptor;
+
+  static const SettingsTabs kTabs = {
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kXYControl,
+                            "tab_2d"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kEnvelope,
+                            "tab_envelope"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kSettings,
+                            "tab_settings"},
+  };
+  return kTabs;
+}
+
 ModulatorModule::ModulatorModule(const std::string& id)
   : AudioModuleWithEnvelope(id, ModuleType::kAudio,
                 /*produces_audio=*/true,
@@ -480,6 +544,28 @@ const AudioModuleModes& ModulatorModule::supported_modes() const
   return kModes;
 }
 
+std::optional<AudioModule::XYControlMapping>
+ModulatorModule::xy_control_mapping() const
+{
+  return AudioModule::XYControlMapping{"effect", "depth"};
+}
+
+const AudioModule::SettingsTabs& ModulatorModule::supported_settings_tabs() const
+{
+  using SettingsTabs = AudioModule::SettingsTabs;
+  using SettingsTabDescriptor = AudioModule::SettingsTabDescriptor;
+
+  static const SettingsTabs kTabs = {
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kXYControl,
+                            "tab_2d"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kEnvelope,
+                            "tab_envelope"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kSettings,
+                            "tab_settings"},
+  };
+  return kTabs;
+}
+
 WaveShaperModule::WaveShaperModule(const std::string& id)
   : AudioModuleWithEnvelope(id, ModuleType::kAudio,
                 /*produces_audio=*/true,
@@ -505,6 +591,28 @@ const AudioModuleModes& WaveShaperModule::supported_modes() const
       AudioModuleMode{2, "resample", "waveshaper_resample"},
   };
   return kModes;
+}
+
+std::optional<AudioModule::XYControlMapping>
+WaveShaperModule::xy_control_mapping() const
+{
+  return AudioModule::XYControlMapping{"effect", "drywet"};
+}
+
+const AudioModule::SettingsTabs& WaveShaperModule::supported_settings_tabs() const
+{
+  using SettingsTabs = AudioModule::SettingsTabs;
+  using SettingsTabDescriptor = AudioModule::SettingsTabDescriptor;
+
+  static const SettingsTabs kTabs = {
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kXYControl,
+                            "tab_2d"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kEnvelope,
+                            "tab_envelope"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kSettings,
+                            "tab_settings"},
+  };
+  return kTabs;
 }
 
 InputModule::InputModule(const std::string& id)

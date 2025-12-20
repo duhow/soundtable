@@ -152,9 +152,6 @@ void TextScrollList::paint(juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
 
-    g.setColour(juce::Colours::white.withAlpha(0.03F));
-    g.fillRoundedRectangle(bounds, 4.0F);
-
     const float maxVisibleHeight =
         rowHeight_ * static_cast<float>(maxVisibleItems_);
     const float viewHeight =

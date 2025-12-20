@@ -2,11 +2,12 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <typeinfo>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <typeinfo>
 
 namespace rectai {
 
@@ -204,6 +205,9 @@ class AudioModule {
     kSettings = 0,
     kEnvelope,
     kLoopFiles,
+    // Generic 2D XY control pad used by modules such as Filter or LFO
+    // to expose two correlated parameters in a single view.
+    kXYControl,
   };
 
   struct SettingsTabDescriptor {
@@ -219,6 +223,22 @@ class AudioModule {
   // this to add Envelope or module-specific tabs.
   [[nodiscard]] virtual const SettingsTabs& supported_settings_tabs()
       const;
+
+  // Optional configuration for modules that expose a 2D XY control
+  // pad in their detail panel. The mapping describes which
+  // normalised parameters are driven by the X and Y axes.
+  struct XYControlMapping {
+    std::string x_parameter;
+    std::string y_parameter;
+  };
+
+  // Return the XYControlMapping for this module when applicable, or
+  // std::nullopt when the module does not back any XYControl-based
+  // view. The default implementation returns std::nullopt; concrete
+  // modules that participate in the XY UI (Filter, LFO, Delay,
+  // Modulator, WaveShaper, etc.) override this.
+  [[nodiscard]] virtual std::optional<XYControlMapping>
+  xy_control_mapping() const;
 
   // Check if the module matches the same concrete C++ type (subclass).
   template<typename T>
