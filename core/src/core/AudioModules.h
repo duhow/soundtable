@@ -281,6 +281,20 @@ class TempoModule : public AudioModule {
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 
+        // Static BPM preset definitions used by the Tempo settings view.
+        struct BpmPreset {
+                const char* label;
+                float bpm;
+        };
+
+        using BpmPresetList = std::array<BpmPreset, 9>;
+
+        [[nodiscard]] static const BpmPresetList& bpm_presets();
+
+        // Tempo exposes a dedicated settings tab that uses a
+        // TextScroll-based view for BPM presets.
+        [[nodiscard]] const SettingsTabs& supported_settings_tabs() const override;
+
         // Canonical BPM range for the global Tempo controller.
         static constexpr float kMinBpm = 40.0F;
         static constexpr float kMaxBpm = 400.0F;

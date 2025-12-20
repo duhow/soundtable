@@ -429,6 +429,11 @@ private:
                        std::unique_ptr<rectai::ui::TextScrollList>>
         loopFileLists_;
 
+    // Per-TempoModule BPM preset lists backed by TextScrollList.
+    std::unordered_map<std::string,
+                       std::unique_ptr<rectai::ui::TextScrollList>>
+        tempoPresetLists_;
+
     // Per-module XY control instances used by modules that expose an
     // XY pad tab (e.g. Filter, LFO). These are lightweight UI-only
     // components; their logical values are mapped to module
@@ -504,6 +509,10 @@ private:
     getOrCreateLoopFileList(const std::string& moduleId);
     void onLoopFileSelectionChanged(const std::string& moduleId,
                                     int rowIndex);
+
+    // Tempo BPM preset helpers used by the Tempo settings tab.
+    [[nodiscard]] rectai::ui::TextScrollList*
+    getOrCreateTempoPresetList(const std::string& moduleId);
 
     // XY control helpers used by modules exposing the XY settings tab.
     [[nodiscard]] rectai::ui::XYControl*

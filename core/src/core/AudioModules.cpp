@@ -259,6 +259,37 @@ const AudioModuleModes& TempoModule::supported_modes() const
   return kModes;
 }
 
+const TempoModule::BpmPresetList& TempoModule::bpm_presets()
+{
+  static const BpmPresetList kPresets = {{
+      {"Grave", 40.0F},
+      {"Lento", 50.0F},
+      {"Larghetto", 63.0F},
+      {"Adagio", 73.0F},
+      {"Moderato", 95.0F},
+      {"House", 125.0F},
+      {"Allegro", 139.0F},
+      {"Presto", 184.0F},
+      {"Prestissimo", 250.0F},
+  }};
+
+  return kPresets;
+}
+
+const AudioModule::SettingsTabs& TempoModule::supported_settings_tabs() const
+{
+  using SettingsTabs = AudioModule::SettingsTabs;
+  using SettingsTabDescriptor = AudioModule::SettingsTabDescriptor;
+
+  // Single settings tab using a TextScroll-based BPM preset view,
+  // rendered with the "tab_bars" icon from the atlas.
+  static const SettingsTabs kTabs = {
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kSettings,
+                            "tempo_tempo"},
+  };
+  return kTabs;
+}
+
 AccelerometerModule::AccelerometerModule(const std::string& id)
     : AudioModule(id, ModuleType::kSettings,
                   /*produces_audio=*/false, /*consumes_audio=*/false)

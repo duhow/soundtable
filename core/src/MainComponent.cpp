@@ -7,6 +7,7 @@
 
 #include "MainComponent.h"
 
+#include <array>
 #include <cmath>
 #include <memory>
 
@@ -937,6 +938,49 @@ MainComponent::getOrCreateLoopFileList(const std::string& moduleId)
         return nullptr;
     }
     return loopFileBrowser_->getOrCreateList(moduleId);
+}
+
+rectai::ui::TextScrollList*
+MainComponent::getOrCreateTempoPresetList(const std::string& moduleId)
+{
+    auto it = tempoPresetLists_.find(moduleId);
+    if (it != tempoPresetLists_.end()) {
+        return it->second.get();
+    }
+
+    auto list = std::make_unique<rectai::ui::TextScrollList>();
+    list->setMaxVisibleItems(6);
+    list->setRowHeight(18.0F);
+
+    // Selection callback: update the global BPM and the Tempo module
+    // parameter whenever a preset is chosen from the TextScrollList.
+    list->setOnSelectionChanged(
+        [this, moduleId](int index) {
+            const auto& presets = rectai::TempoModule::bpm_presets();
+            if (index < 0 ||
+                index >= static_cast<int>(presets.size())) {
+                return;
+            }
+
+            const float newBpm = rectai::TempoModule::ClampBpm(
+                presets[static_cast<std::size_t>(index)].bpm);
+
+            if (newBpm == bpm_) {
+                return;
+            }
+
+            bpm_ = newBpm;
+            bpmLastChangeSeconds_ =
+                juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+            scene_.SetModuleParameter(moduleId, "tempo", bpm_);
+
+            repaintWithRateLimit();
+        });
+
+    rectai::ui::TextScrollList* raw = list.get();
+    tempoPresetLists_.emplace(moduleId, std::move(list));
+    return raw;
 }
 
 rectai::ui::XYControl*

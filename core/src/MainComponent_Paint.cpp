@@ -3238,9 +3238,79 @@ void MainComponent::paint(juce::Graphics& g)
                         }
                     }
                 } else {
-                    g.drawFittedText("Module settings coming soon",
-                                      textBounds.toNearestInt(),
-                                      juce::Justification::centred, 2);
+                    // Default settings tab: for most modules this is a
+                    // placeholder, but Tempo exposes a dedicated
+                    // TextScroll-based BPM preset view.
+                    const auto* tempoModule =
+                        dynamic_cast<const rectai::TempoModule*>(
+                            moduleForObject);
+
+                    if (tempoModule != nullptr) {
+                        juce::Rectangle<float> listBounds =
+                            contentBounds.reduced(4.0F, 4.0F);
+
+                        auto* list =
+                            getOrCreateTempoPresetList(
+                                panelState.moduleId);
+                        if (list != nullptr) {
+                            // Populate static BPM presets.
+                            const auto& presets =
+                                rectai::TempoModule::bpm_presets();
+                            std::vector<rectai::ui::TextScrollList::Item>
+                                items;
+                            items.reserve(presets.size());
+
+                            for (const auto& preset : presets) {
+                                rectai::ui::TextScrollList::Item item;
+                                item.text = preset.label;
+                                items.push_back(std::move(item));
+                            }
+
+                            list->setItems(std::move(items));
+
+                            // Select the preset whose BPM is closest to
+                            // the current global BPM.
+                            if (!presets.empty()) {
+                                const float currentBpm = bpm_;
+                                int bestIndex = 0;
+                                float bestDiff =
+                                    std::numeric_limits<float>::max();
+
+                                for (std::size_t i = 0;
+                                     i < presets.size(); ++i) {
+                                    const float diff = std::fabs(
+                                        currentBpm - presets[i].bpm);
+                                    if (diff < bestDiff) {
+                                        bestDiff = diff;
+                                        bestIndex =
+                                            static_cast<int>(i);
+                                    }
+                                }
+
+                                if (list->getSelectedIndex() !=
+                                    bestIndex) {
+                                    list->setSelectedIndex(
+                                        bestIndex, false);
+                                }
+                            }
+
+                            juce::Graphics::ScopedSaveState state(g);
+                            list->setBounds(
+                                listBounds.toNearestInt());
+                            g.reduceClipRegion(
+                                listBounds.toNearestInt());
+                            g.addTransform(
+                                juce::AffineTransform::translation(
+                                    listBounds.getX(),
+                                    listBounds.getY()));
+                            list->paint(g);
+                        }
+                    } else {
+                        g.drawFittedText(
+                            "Module settings coming soon",
+                            textBounds.toNearestInt(),
+                            juce::Justification::centred, 2);
+                    }
                 }
             }
         }

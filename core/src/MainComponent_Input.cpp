@@ -216,17 +216,103 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
                 dynamic_cast<rectai::LoopModule*>(
                     const_cast<rectai::AudioModule*>(
                         moduleForPanel));
-            if (loopModule == nullptr) {
+            if (loopModule != nullptr) {
+                ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                loopModule);
+                rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                              loopModule);
+
+                auto* list =
+                    getOrCreateLoopFileList(panelState.moduleId);
+                if (list == nullptr) {
+                    continue;
+                }
+
+                const auto centrePos =
+                    objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                const auto tableCentre = bounds.getCentre();
+                const float dx = cx - tableCentre.x;
+                const float dy = cy - tableCentre.y;
+                float rotationAngle = 0.0F;
+                if (isInsideMusicArea(object)) {
+                    rotationAngle =
+                        std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+                }
+
+                juce::Point<float> localPos = event.position;
+                if (rotationAngle != 0.0F) {
+                    localPos = localPos.transformedBy(
+                        juce::AffineTransform::rotation(-rotationAngle,
+                                                        cx, cy));
+                }
+
+                auto panelBounds =
+                    getModulePanelBounds(object, bounds);
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                list->handleWheelDelta(wheelDelta);
+                repaintWithRateLimit();
+                return;
+            }
+        }
+    }
+
+    // -----
+    // 3) Tempo settings panel: scroll BPM preset TextScrollList with
+    // mouse wheel.
+    {
+        const auto& modules = scene_.modules();
+        const auto& objects = scene_.objects();
+
+        for (const auto& [moduleId, panelState] : modulePanels_) {
+            if (!panelState.visible ||
+                panelState.activeTab !=
+                    ModulePanelState::Tab::kSettings) {
                 continue;
             }
 
-            ensureLoopFileBrowserInitialised(panelState.moduleId,
-                                            loopModule);
-            rebuildLoopFileBrowserEntries(panelState.moduleId,
-                                          loopModule);
+            // Locate the object that owns this panel.
+            const rectai::ObjectInstance* objectPtr = nullptr;
+            for (const auto& [objId, obj] : objects) {
+                juce::ignoreUnused(objId);
+                if (obj.logical_id() == moduleId) {
+                    objectPtr = &obj;
+                    break;
+                }
+            }
+
+            if (objectPtr == nullptr) {
+                continue;
+            }
+
+            const auto& object = *objectPtr;
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt == modules.end() ||
+                modIt->second == nullptr) {
+                continue;
+            }
+
+            const auto* moduleForPanel = modIt->second.get();
+            auto* tempoModule =
+                dynamic_cast<rectai::TempoModule*>(
+                    const_cast<rectai::AudioModule*>(
+                        moduleForPanel));
+            if (tempoModule == nullptr) {
+                continue;
+            }
 
             auto* list =
-                getOrCreateLoopFileList(panelState.moduleId);
+                getOrCreateTempoPresetList(panelState.moduleId);
             if (list == nullptr) {
                 continue;
             }
@@ -750,6 +836,48 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                 xy->beginPointerAt(localX, localY);
                 activePanelDrag_ = ActivePanelDrag{
                     PanelDragKind::kXYControl,
+                    panelState.moduleId,
+                    -1};
+                return;
+            }
+
+            // Tempo settings tab: start interaction inside the BPM
+            // preset TextScrollList so that dragging scrolls the
+            // list and releasing over an item selects it.
+            if (panelState.activeTab ==
+                    ModulePanelState::Tab::kSettings &&
+                moduleForPanel != nullptr) {
+                auto* tempoModule =
+                    dynamic_cast<rectai::TempoModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                if (tempoModule == nullptr) {
+                    continue;
+                }
+
+                auto* list =
+                    getOrCreateTempoPresetList(panelState.moduleId);
+                if (list == nullptr) {
+                    continue;
+                }
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                // Map pointer position to list-local coordinates and
+                // start a potential drag-to-scroll gesture. The
+                // TextScrollList will only commit the selection on
+                // pointer-up when releasing over the same item.
+                const float localY =
+                    localPos.y - contentBounds.getY();
+
+                list->beginPointerAt(localY);
+                activePanelDrag_ = ActivePanelDrag{
+                    PanelDragKind::kLoopFilesScroll,
                     panelState.moduleId,
                     -1};
                 return;
@@ -1573,9 +1701,9 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
         }
 
         // Before line cutting, allow scrolling inside an open
-        // LoopFiles panel by dragging over its TextScrollList, but
-        // only when a drag actually started inside that panel's
-        // content area.
+        // TextScroll-based module panel (LoopFiles, Tempo presets)
+        // by dragging over its TextScrollList, but only when a drag
+        // actually started inside that panel's content area.
         if (activePanelDrag_.has_value() &&
             activePanelDrag_->kind ==
                 PanelDragKind::kLoopFilesScroll) {
@@ -1614,15 +1742,15 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
             }
 
             const auto* moduleForPanel = modIt->second.get();
-            if (panelState.activeTab !=
-                ModulePanelState::Tab::kLoopFiles) {
-                continue;
-            }
 
-            auto* loopModule =
-                dynamic_cast<rectai::LoopModule*>(
-                    const_cast<rectai::AudioModule*>(
-                        moduleForPanel));
+            rectai::ui::TextScrollList* list = nullptr;
+
+            if (panelState.activeTab ==
+                ModulePanelState::Tab::kLoopFiles) {
+                auto* loopModule =
+                    dynamic_cast<rectai::LoopModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
                 if (loopModule == nullptr) {
                     continue;
                 }
@@ -1632,11 +1760,23 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                 rebuildLoopFileBrowserEntries(panelState.moduleId,
                                               loopModule);
 
-                auto* list =
-                    getOrCreateLoopFileList(panelState.moduleId);
-                if (list == nullptr) {
+                list = getOrCreateLoopFileList(panelState.moduleId);
+            } else if (panelState.activeTab ==
+                       ModulePanelState::Tab::kSettings) {
+                auto* tempoModule =
+                    dynamic_cast<rectai::TempoModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                if (tempoModule == nullptr) {
                     continue;
                 }
+
+                list = getOrCreateTempoPresetList(panelState.moduleId);
+            }
+
+            if (list == nullptr) {
+                continue;
+            }
 
                 const auto centrePos =
                     objectTableToScreen(object, bounds);
@@ -2635,9 +2775,9 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
     const auto& modules = scene_.modules();
 
     // Before applying cut-gesture semantics, propagate pointer-up to
-    // the active panel drag (if any). For LoopFiles, this allows the
-    // TextScrollList to commit a click-to-select when releasing over
-    // the same item.
+    // the active panel drag (if any). For TextScroll-based panels
+    // (LoopFiles, Tempo presets), this allows the TextScrollList to
+    // commit a click-to-select when releasing over the same item.
     if (activePanelDrag_.has_value()) {
         const ActivePanelDrag dragState = *activePanelDrag_;
 
@@ -2675,26 +2815,38 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
                 }
 
                 const auto* moduleForPanel = modIt->second.get();
-                if (panelState.activeTab !=
+
+                rectai::ui::TextScrollList* list = nullptr;
+
+                if (panelState.activeTab ==
                     ModulePanelState::Tab::kLoopFiles) {
-                    continue;
+                    auto* loopModule =
+                        dynamic_cast<rectai::LoopModule*>(
+                            const_cast<rectai::AudioModule*>(
+                                moduleForPanel));
+                    if (loopModule == nullptr) {
+                        continue;
+                    }
+
+                    ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                    loopModule);
+                    rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                                  loopModule);
+
+                    list = getOrCreateLoopFileList(panelState.moduleId);
+                } else if (panelState.activeTab ==
+                           ModulePanelState::Tab::kSettings) {
+                    auto* tempoModule =
+                        dynamic_cast<rectai::TempoModule*>(
+                            const_cast<rectai::AudioModule*>(
+                                moduleForPanel));
+                    if (tempoModule == nullptr) {
+                        continue;
+                    }
+
+                    list = getOrCreateTempoPresetList(panelState.moduleId);
                 }
 
-                auto* loopModule =
-                    dynamic_cast<rectai::LoopModule*>(
-                        const_cast<rectai::AudioModule*>(
-                            moduleForPanel));
-                if (loopModule == nullptr) {
-                    continue;
-                }
-
-                ensureLoopFileBrowserInitialised(panelState.moduleId,
-                                                loopModule);
-                rebuildLoopFileBrowserEntries(panelState.moduleId,
-                                              loopModule);
-
-                auto* list =
-                    getOrCreateLoopFileList(panelState.moduleId);
                 if (list == nullptr) {
                     continue;
                 }
