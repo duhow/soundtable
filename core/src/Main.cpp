@@ -3,6 +3,7 @@
 #include "AudioEngine.h"
 #include "MainComponent.h"
 #include "RectaiLookAndFeel.h"
+#include "BinaryData.h"
 
 class MainWindow : public juce::DocumentWindow {
 public:
@@ -14,6 +15,14 @@ public:
     {
         setUsingNativeTitleBar(true);
         setResizable(true, true);
+        {
+            auto iconImage = juce::ImageFileFormat::loadFrom(
+                BinaryData::reactablelogo_png,
+                BinaryData::reactablelogo_pngSize);
+            if (iconImage.isValid()) {
+                setIcon(iconImage);
+            }
+        }
         setContentOwned(
             new MainComponent(audioEngine,
                                std::move(initialSessionPath)),

@@ -44,6 +44,7 @@ the-base:
     COPY core ./core
     COPY tracker ./tracker
     COPY tests ./tests
+    COPY resources ./resources
     COPY reacTIVision ./reacTIVision
     COPY research ./research
 
@@ -71,17 +72,25 @@ build:
 appimage:
     FROM +build
 
-    # Herramientas adicionales necesarias para crear AppImage
+    # Herramientas adicionales necesarias para crear AppImage (incluye ImageMagick para redimensionar el icono)
     RUN apt-get update && \
         apt-get install -y --no-install-recommends \
             curl \
             file \
-            ca-certificates && \
+            ca-certificates \
+            imagemagick && \
         rm -rf /var/lib/apt/lists/*
 
     # Preparamos AppDir con los binarios principales e iconos en ruta hicolor
     RUN mkdir -p /AppDir/usr/bin /AppDir/usr/share/applications /AppDir/usr/share/icons/hicolor/256x256/apps
-    COPY resources/reactable-logo.png /AppDir/usr/share/icons/hicolor/256x256/apps/reactable-logo.png
+    # Icono principal: se ajusta a 256x256 para cumplir con el tamaño del tema hicolor
+    COPY resources/reactable-logo.png /AppDir/usr/share/icons/hicolor/256x256/apps/RectaiTable.png
+    RUN convert /AppDir/usr/share/icons/hicolor/256x256/apps/RectaiTable.png \
+        -resize 256x256^ -gravity center -extent 256x256 \
+        /AppDir/usr/share/icons/hicolor/256x256/apps/RectaiTable.png
+    # Copia/symlink en la raíz del AppDir para que appimagetool/linuxdeploy lo detecten como icono de AppImage
+    RUN ln -sf usr/share/icons/hicolor/256x256/apps/RectaiTable.png /AppDir/RectaiTable.png && \
+        ln -sf RectaiTable.png /AppDir/.DirIcon
 
     RUN cp build/core/rectai-core_artefacts/Release/RectaiTable /AppDir/usr/bin/RectaiTable && \
         cp build/rectai-tracker /AppDir/usr/bin/rectai-tracker
@@ -92,9 +101,10 @@ appimage:
         'Type=Application' \
         'Name=RectaiTable' \
         'Exec=RectaiTable' \
-        'Icon=reactable-logo' \
+        'Icon=RectaiTable' \
+        'StartupWMClass=RectaiTable' \
         'Categories=AudioVideo;Audio;' \
-        > /AppDir/usr/share/applications/rectai-table.desktop
+        > /AppDir/usr/share/applications/RectaiTable.desktop
 
     # Descargamos linuxdeploy y appimagetool como AppImages
     RUN curl -L https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -o /usr/local/bin/linuxdeploy && \
@@ -105,18 +115,19 @@ appimage:
     ENV APPIMAGE_EXTRACT_AND_RUN=1
     ENV ARCH=x86_64
 
-    # linuxdeploy analiza los binarios y copia todas las dependencias compartidas
+    # linuxdeploy analiza los binarios, registra el .desktop y el icono, y copia dependencias compartidas
     RUN /usr/local/bin/linuxdeploy \
         --appdir /AppDir \
         --executable /AppDir/usr/bin/RectaiTable \
         --executable /AppDir/usr/bin/rectai-tracker \
-        --desktop-file /AppDir/usr/share/applications/rectai-table.desktop
+        --desktop-file /AppDir/usr/share/applications/RectaiTable.desktop \
+        --icon-file /AppDir/usr/share/icons/hicolor/256x256/apps/RectaiTable.png
 
     # Empaquetamos el AppDir en un AppImage con nombre fijo
-    RUN /usr/local/bin/appimagetool /AppDir rectai-table-x86_64.AppImage
+    RUN /usr/local/bin/appimagetool /AppDir RectaiTable-x86_64.AppImage
 
     # Exportamos el AppImage como artefacto local
-    SAVE ARTIFACT rectai-table-x86_64.AppImage AS LOCAL build/rectai-table-x86_64.AppImage
+    SAVE ARTIFACT RectaiTable-x86_64.AppImage AS LOCAL build/RectaiTable-x86_64.AppImage
 
 
 # Target de tests: construye y ejecuta CTest

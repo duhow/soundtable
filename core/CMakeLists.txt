@@ -98,6 +98,8 @@ juce_add_gui_app(${PROJECT_NAME}
     COMPANY_NAME "rectai"
     PRODUCT_NAME "RectaiTable"
     NEEDS_WEB_BROWSER TRUE
+    ICON_BIG "${CMAKE_SOURCE_DIR}/resources/reactable-logo.png"
+    ICON_SMALL "${CMAKE_SOURCE_DIR}/resources/reactable-logo.png"
 )
 
 juce_generate_juce_header(${PROJECT_NAME})
@@ -120,6 +122,11 @@ target_sources(${PROJECT_NAME}
         src/TrackingOscReceiver.h
 )
 
+juce_add_binary_data(rectai-core-assets
+    SOURCES
+        "${CMAKE_SOURCE_DIR}/resources/reactable-logo.png"
+)
+
 if (MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /W4 /permissive-)
 else()
@@ -133,6 +140,7 @@ endif()
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
         rectai-core-lib
+        rectai-core-assets
         juce::juce_gui_extra
         juce::juce_audio_utils
         juce::juce_audio_formats
