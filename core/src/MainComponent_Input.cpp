@@ -7,6 +7,7 @@
 
 #include "AudioEngine.h"
 #include "MainComponentHelpers.h"
+#include "MainComponent_ModulePanelEnvelope.h"
 #include "core/AudioModules.h"
 
 using rectai::ui::isConnectionGeometricallyActive;
@@ -276,6 +277,9 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
     const float radius = 30.0F;
     const bool isRightClick = mods.isRightButtonDown();
 
+    // Any new pointer-down gesture cancels active envelope drags.
+    activeEnvelopeDrag_.reset();
+
     // Track touch interface state for visual feedback.
     isTouchActive_ = true;
     isTouchHeld_ = false;
@@ -416,6 +420,129 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
 
                 repaintWithRateLimit();
                 return;
+            }
+
+            // If no tab was clicked, handle interaction inside the
+            // Envelope content area (ADSR bars and preset buttons)
+            // when the Envelope tab is active.
+            if (panelState.activeTab ==
+                    ModulePanelState::Tab::kEnvelope &&
+                moduleForPanel != nullptr) {
+                auto* envModule =
+                    dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                if (envModule == nullptr) {
+                    continue;
+                }
+                const ModuleEnvelopeHitResult hit = hitTestModuleEnvelope(
+                    panelBounds, localPos,
+                    kModuleEnvelopeMaxAttackMs,
+                    kModuleEnvelopeMaxDecayMs,
+                    kModuleEnvelopeMaxDurationMs,
+                    kModuleEnvelopeMaxReleaseMs);
+
+                if (hit.kind == ModuleEnvelopeHitKind::kNone) {
+                    continue;
+                }
+
+                auto clampMs = [](float value, float maxMs) {
+                    if (!std::isfinite(value) || value < 0.0F) {
+                        return 0.0F;
+                    }
+                    if (value > maxMs) {
+                        return maxMs;
+                    }
+                    return value;
+                };
+
+                if (hit.kind == ModuleEnvelopeHitKind::kPresetLeft ||
+                    hit.kind == ModuleEnvelopeHitKind::kPresetRight) {
+                    // Apply one of the two predefined ADSR templates.
+                    auto& env = envModule->mutable_envelope();
+                    if (hit.kind == ModuleEnvelopeHitKind::kPresetLeft) {
+                        // Erase-style short envelope.
+                        envModule->set_envelope_attack(0.0F);
+                        envModule->set_envelope_decay(0.0F);
+                        envModule->set_envelope_duration(25.0F);
+                        envModule->set_envelope_release(20.0F);
+                        env.points_x = {0.0F, 0.0F, 0.0F, 0.2F, 1.0F};
+                        env.points_y = {0.0F, 1.0F, 1.0F, 1.0F, 0.0F};
+                    } else {
+                        // Canonical ADSR-style envelope.
+                        envModule->set_envelope_attack(125.0F);
+                        envModule->set_envelope_decay(125.0F);
+                        envModule->set_envelope_duration(468.75F);
+                        envModule->set_envelope_release(125.0F);
+                        env.points_x = {0.0F, 0.266667F, 0.533333F,
+                                        0.733333F, 1.0F};
+                        env.points_y = {0.0F, 1.0F, 0.75F, 0.75F, 0.0F};
+                    }
+
+                    // If this module is an Oscillator currently
+                    // carrying audio, update its sustain level so
+                    // the audible volume follows the new envelope
+                    // shape immediately.
+                    updateOscillatorSustainFromEnvelope(
+                        panelState.moduleId);
+
+                    repaintWithRateLimit();
+                    return;
+                }
+
+                if (hit.kind == ModuleEnvelopeHitKind::kBar &&
+                    hit.barIndex >= 0 && hit.barIndex < 4) {
+                    const int bar = hit.barIndex;
+                    const float visual01 = juce::jlimit(0.0F, 1.0F,
+                                                       hit.value01);
+
+                    if (bar == 2) {
+                        // Sustain bar: use linear visual mapping based on
+                        // the third control point in points_y (index 2).
+                        auto& env = envModule->mutable_envelope();
+                        const float sustain01 = juce::jlimit(
+                            0.0F, 1.0F, visual01);
+
+                        if (env.points_y.size() > 2) {
+                            env.points_y[2] = sustain01;
+                            if (env.points_y.size() > 3) {
+                                env.points_y[3] = sustain01;
+                            }
+                        }
+
+                        // Keep the currently active Oscillator voice in
+                        // sync so sustain changes are audible immediately.
+                        updateOscillatorSustainFromEnvelope(
+                            panelState.moduleId);
+                    } else {
+                        const float clamped01 =
+                            moduleEnvelopeNormalisedFromVisual(visual01);
+
+                        const float maxMs =
+                            (bar == 0)
+                                ? kModuleEnvelopeMaxAttackMs
+                                : (bar == 1)
+                                      ? kModuleEnvelopeMaxDecayMs
+                                      : kModuleEnvelopeMaxReleaseMs;
+
+                        const float scaled = clampMs(clamped01 * maxMs, maxMs);
+
+                        if (bar == 0) {
+                            envModule->set_envelope_attack(scaled);
+                        } else if (bar == 1) {
+                            envModule->set_envelope_decay(scaled);
+                        } else {
+                            envModule->set_envelope_release(scaled);
+                        }
+                    }
+
+                    // Start continuous drag tracking for this bar.
+                    activeEnvelopeDrag_ = ActiveEnvelopeDrag{
+                        panelState.moduleId, bar};
+
+                    repaintWithRateLimit();
+                    return;
+                }
             }
         }
     }
@@ -1435,6 +1562,130 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
         }
     }
 
+    // Continuous ADSR envelope adjustment while dragging on a bar in
+    // the per-module Envelope view. This takes precedence over cut
+    // gestures and other drags.
+    if (activeEnvelopeDrag_.has_value()) {
+        const ActiveEnvelopeDrag dragState = *activeEnvelopeDrag_;
+        if (!dragState.moduleId.empty() && dragState.barIndex >= 0 &&
+            dragState.barIndex < 4) {
+            const auto& objects = scene_.objects();
+            const auto& modules = scene_.modules();
+
+            const auto modIt = modules.find(dragState.moduleId);
+            if (modIt != modules.end() && modIt->second != nullptr) {
+                auto* modulePtr = modIt->second.get();
+                auto* envModule =
+                    dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                        modulePtr);
+                if (envModule != nullptr) {
+                    const rectai::ObjectInstance* panelObject = nullptr;
+                    for (const auto& [id, obj] : objects) {
+                        juce::ignoreUnused(id);
+                        if (obj.logical_id() == dragState.moduleId &&
+                            !obj.docked() && isInsideMusicArea(obj)) {
+                            panelObject = &obj;
+                            break;
+                        }
+                    }
+
+                    if (panelObject != nullptr) {
+                        const auto centrePos =
+                            objectTableToScreen(*panelObject, bounds);
+                        const float cx = centrePos.x;
+                        const float cy = centrePos.y;
+
+                        const auto boundsF = bounds.toFloat();
+                        const auto tableCentre = boundsF.getCentre();
+                        const float dx = cx - tableCentre.x;
+                        const float dy = cy - tableCentre.y;
+                        float rotationAngle = 0.0F;
+                        if (isInsideMusicArea(*panelObject)) {
+                            rotationAngle =
+                                std::atan2(dy, dx) -
+                                juce::MathConstants<float>::halfPi;
+                        }
+
+                        juce::Point<float> localPos = position;
+                        if (rotationAngle != 0.0F) {
+                            localPos = localPos.transformedBy(
+                                juce::AffineTransform::rotation(
+                                    -rotationAngle, cx, cy));
+                        }
+
+                        const auto panelBounds =
+                            getModulePanelBounds(*panelObject, bounds);
+                        const auto geom = computeModuleEnvelopeGeometry(
+                            panelBounds);
+
+                        const float valueRangeTop = geom.barsArea.getY();
+                        const float valueRangeBottom =
+                            geom.barsArea.getBottom();
+                        const float clampedY = juce::jlimit(
+                            valueRangeTop, valueRangeBottom, localPos.y);
+                        const float value01Visual = juce::jmap(
+                            clampedY, valueRangeBottom, valueRangeTop,
+                            0.0F, 1.0F);
+
+                        if (dragState.barIndex == 2) {
+                            // Sustain bar: edit sustain level linearly via
+                            // the third control point in points_y.
+                            auto& env = envModule->mutable_envelope();
+                            const float sustain01 = juce::jlimit(
+                                0.0F, 1.0F, value01Visual);
+
+                            if (env.points_y.size() > 2) {
+                                env.points_y[2] = sustain01;
+                                if (env.points_y.size() > 3) {
+                                    env.points_y[3] = sustain01;
+                                }
+                            }
+
+                            updateOscillatorSustainFromEnvelope(
+                                dragState.moduleId);
+                        } else {
+                            auto clampMs = [](float value, float maxMs) {
+                                if (!std::isfinite(value) || value < 0.0F) {
+                                    return 0.0F;
+                                }
+                                if (value > maxMs) {
+                                    return maxMs;
+                                }
+                                return value;
+                            };
+
+                            const float maxMs =
+                                (dragState.barIndex == 0)
+                                    ? kModuleEnvelopeMaxAttackMs
+                                    : (dragState.barIndex == 1)
+                                          ? kModuleEnvelopeMaxDecayMs
+                                          : kModuleEnvelopeMaxReleaseMs;
+
+                            const float visual01 = juce::jlimit(
+                                0.0F, 1.0F, value01Visual);
+                            const float normalised01 =
+                                moduleEnvelopeNormalisedFromVisual(
+                                    visual01);
+                            const float scaled = clampMs(
+                                normalised01 * maxMs, maxMs);
+
+                            if (dragState.barIndex == 0) {
+                                envModule->set_envelope_attack(scaled);
+                            } else if (dragState.barIndex == 1) {
+                                envModule->set_envelope_decay(scaled);
+                            } else {
+                                envModule->set_envelope_release(scaled);
+                            }
+                        }
+
+                        repaintWithRateLimit();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     // Adjustment mode drag: when the gesture started on the bottom
     // mode button for a given module, interpret horizontal movement in
     // module-local space. Dragging towards the module's local left
@@ -1896,6 +2147,89 @@ void MainComponent::maybeRetriggerOscillatorOnFreqChange(
     audioEngine_.triggerVoiceEnvelope(voiceIndex);
 }
 
+void MainComponent::updateOscillatorSustainFromEnvelope(
+    const std::string& moduleId)
+{
+    const auto& modules = scene_.modules();
+    const auto modIt = modules.find(moduleId);
+    if (modIt == modules.end() || modIt->second == nullptr) {
+        return;
+    }
+
+    auto* module = modIt->second.get();
+    auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(module);
+    if (oscModule == nullptr) {
+        return;
+    }
+
+    const auto& env = oscModule->envelope();
+    const auto& xs = env.points_x;
+    const auto& ys = env.points_y;
+    const std::size_t n = ys.size();
+
+    float sustainLevel = 1.0F;
+    bool hasSustainPlateau = false;
+
+    if (n > 0 && xs.size() == n) {
+        constexpr float kMinPlateauWidth = 0.15F;
+
+        float bestLevel = 1.0F;
+        float bestWidth = 0.0F;
+
+        for (std::size_t i = 1; i + 1 < n;) {
+            const float y = ys[i];
+            if (y <= 0.0F) {
+                ++i;
+                continue;
+            }
+
+            std::size_t j = i + 1;
+            while (j + 1 < n && std::abs(ys[j] - y) < 1.0e-3F) {
+                ++j;
+            }
+
+            const float width =
+                static_cast<float>(xs[j - 1] - xs[i]);
+            if (width > bestWidth) {
+                bestWidth = width;
+                bestLevel = y;
+            }
+
+            i = j;
+        }
+
+        if (bestWidth >= kMinPlateauWidth && bestLevel > 0.0F) {
+            sustainLevel = bestLevel;
+            hasSustainPlateau = true;
+        } else {
+            float maxY = 0.0F;
+            for (std::size_t i = 0; i + 1 < n; ++i) {
+                maxY = std::max(maxY, ys[i]);
+            }
+            sustainLevel = (maxY > 0.0F) ? maxY : 1.0F;
+        }
+    }
+
+    const float effectiveReleaseMs =
+        (env.release > 0.0F) ? env.release : env.decay;
+    const float durationMsToUse =
+        hasSustainPlateau ? 0.0F : env.duration;
+
+    const auto voiceIt = moduleVoiceIndex_.find(moduleId);
+    if (voiceIt == moduleVoiceIndex_.end()) {
+        return;
+    }
+
+    const int voiceIndex = voiceIt->second;
+    if (voiceIndex < 0 || voiceIndex >= AudioEngine::kMaxVoices) {
+        return;
+    }
+
+    audioEngine_.setVoiceEnvelope(voiceIndex, env.attack, env.decay,
+                                  durationMsToUse, effectiveReleaseMs,
+                                  sustainLevel);
+}
+
 void MainComponent::mouseUp(const juce::MouseEvent& event)
 {
     handlePointerUp(event.mods);
@@ -1904,6 +2238,9 @@ void MainComponent::mouseUp(const juce::MouseEvent& event)
 void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
 {
     juce::ignoreUnused(mods);
+
+    // Releasing the pointer always ends any active envelope bar drag.
+    activeEnvelopeDrag_.reset();
 
     const auto& objects = scene_.objects();
     const auto& connections = scene_.connections();

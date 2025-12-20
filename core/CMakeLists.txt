@@ -113,6 +113,8 @@ target_sources(${PROJECT_NAME}
         src/MainComponent_Input.cpp
         src/MainComponent_Audio.cpp
         src/MainComponent_Atlas.cpp
+        src/MainComponent_ModulePanelEnvelope.cpp
+        src/MainComponent_ModulePanelEnvelope.h
         src/MainComponentHelpers.cpp
         src/MainComponentHelpers.h
         src/RectaiLookAndFeel.cpp

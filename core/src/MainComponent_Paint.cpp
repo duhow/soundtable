@@ -6,6 +6,7 @@
 
 #include "AudioEngine.h"
 #include "MainComponentHelpers.h"
+#include "MainComponent_ModulePanelEnvelope.h"
 #include "core/AudioModules.h"
 
 using rectai::ui::colourFromArgb;
@@ -3065,22 +3066,45 @@ void MainComponent::paint(juce::Graphics& g)
                 // Close "tab" is always last.
                 drawTab(nextIndex, "close_button", false);
 
-                // Inner content area: todo el cuadrado de ventana,
-                // ya que los tabs viven por debajo.
+                // Inner content area. The Envelope tab uses the full
+                // panel bounds (no extra padding) for its bars and
+                // bottom buttons; the Settings tab keeps a small
+                // margin around its placeholder text for legibility.
                 juce::Rectangle<float> contentBounds = panelBounds;
-                contentBounds.reduce(8.0F, 8.0F);
+                juce::Rectangle<float> textBounds = contentBounds;
+                textBounds.reduce(8.0F, 8.0F);
 
                 g.setColour(juce::Colours::white.withAlpha(0.45F));
                 g.setFont(juce::Font(12.0F));
 
                 if (panelState.activeTab ==
                     ModulePanelState::Tab::kEnvelope) {
-                    g.drawFittedText("Envelope controls coming soon",
-                                      contentBounds.toNearestInt(),
-                                      juce::Justification::centred, 2);
+                    const auto* envModule =
+                        dynamic_cast<const rectai::AudioModuleWithEnvelope*>(
+                            moduleForObject);
+
+                    if (envModule != nullptr) {
+                        auto getIcon = [this](const std::string& iconId,
+                                              int width, int height) {
+                            return getCachedAtlasIcon(iconId, width,
+                                                      height);
+                        };
+
+                        paintModuleEnvelopeView(
+                            g, contentBounds, *envModule, atlasLoaded_,
+                            getIcon,
+                            kModuleEnvelopeMaxAttackMs,
+                            kModuleEnvelopeMaxDecayMs,
+                            kModuleEnvelopeMaxDurationMs,
+                            kModuleEnvelopeMaxReleaseMs);
+                    } else {
+                        g.drawFittedText("Envelope not available",
+                                          textBounds.toNearestInt(),
+                                          juce::Justification::centred, 2);
+                    }
                 } else {
                     g.drawFittedText("Module settings coming soon",
-                                      contentBounds.toNearestInt(),
+                                      textBounds.toNearestInt(),
                                       juce::Justification::centred, 2);
                 }
             }

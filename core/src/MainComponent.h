@@ -91,6 +91,13 @@ private:
         const std::string& moduleId,
         rectai::AudioModule* module);
 
+    // When the sustain-related shape of an Oscillator envelope
+    // changes (for example, points_y in the Reactable envelope),
+    // update the sustain level used by the currently assigned voice
+    // so that the audible volume reflects the new sustain without
+    // requiring a note retrigger.
+    void updateOscillatorSustainFromEnvelope(const std::string& moduleId);
+
     bool loadAtlasResources();
     bool unloadAtlasResources();
 
@@ -394,6 +401,13 @@ private:
     // Per-module panel state; allows multiple detail panels to be
     // abiertos simultáneamente, uno por módulo lógico.
     std::unordered_map<std::string, ModulePanelState> modulePanels_;
+
+    struct ActiveEnvelopeDrag {
+        std::string moduleId;
+        int barIndex{-1};  // 0 = A, 1 = D, 2 = S (duration), 3 = R
+    };
+
+    std::optional<ActiveEnvelopeDrag> activeEnvelopeDrag_;
 
     // Geometry for the module detail panel relative to an object
     // on the table.
