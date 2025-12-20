@@ -5,14 +5,23 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <memory>
 
 #include <juce_gui_extra/juce_gui_extra.h>
+
+#include "MainComponent_TextScroll.h"
+
+class AudioEngine;
+
+namespace rectai {
+class LoopModule;
+}  // namespace rectai
+
+#include "MainComponent_LoopFileBrowser.h"
 
 #include "TrackingOscReceiver.h"
 #include "core/AudioGraph.h"
 #include "core/Scene.h"
-
-class AudioEngine;
 
 class MainComponent : public juce::Component, public juce::Timer {
 public:
@@ -391,7 +400,12 @@ private:
 
     // Per-module detail panel anchored near the node.
     struct ModulePanelState {
-        enum class Tab { kEnvelope = 0, kSettings = 1 };
+        enum class Tab {
+            kEnvelope = 0,
+            kSettings = 1,
+            // Loop-specific tab used for file/sample selection.
+            kLoopFiles = 2,
+        };
 
         std::string moduleId;
         Tab activeTab{Tab::kSettings};
@@ -401,6 +415,25 @@ private:
     // Per-module panel state; allows multiple detail panels to be
     // abiertos simultáneamente, uno por módulo lógico.
     std::unordered_map<std::string, ModulePanelState> modulePanels_;
+
+    // Lightweight per-LoopModule browser state and associated
+    // TextScrollList. The concrete behaviour lives in the
+    // LoopFileBrowser helper.
+    using LoopFileBrowserState = LoopFileBrowser::State;
+    std::unordered_map<std::string, LoopFileBrowserState>
+        loopFileBrowsers_;
+    std::unordered_map<std::string,
+                       std::unique_ptr<rectai::ui::TextScrollList>>
+        loopFileLists_;
+
+    // Resolved base directory for com.reactable/Samples used by the
+    // Loop file browser. May be empty when assets are not available.
+    juce::File samplesRootDir_{}
+        ;
+
+    // Helper that encapsulates Loop file browser logic (directory
+    // traversal, TextScrollList population and selection handling).
+    std::unique_ptr<class LoopFileBrowser> loopFileBrowser_;
 
     struct ActiveEnvelopeDrag {
         std::string moduleId;
@@ -433,6 +466,16 @@ private:
     // active so that the UI keeps it visible and restarts its
     // fade-out timer.
     void markLoopSampleLabelActive(const std::string& moduleId);
+
+    // Loop file browser helpers used by the LoopFiles panel tab.
+    void ensureLoopFileBrowserInitialised(const std::string& moduleId,
+                                          rectai::LoopModule* loopModule);
+    void rebuildLoopFileBrowserEntries(const std::string& moduleId,
+                                       rectai::LoopModule* loopModule);
+    [[nodiscard]] rectai::ui::TextScrollList*
+    getOrCreateLoopFileList(const std::string& moduleId);
+    void onLoopFileSelectionChanged(const std::string& moduleId,
+                                    int rowIndex);
 
     // Touch interface state.
     bool isTouchActive_{false};

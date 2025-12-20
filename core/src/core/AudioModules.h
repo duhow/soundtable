@@ -30,6 +30,8 @@ struct Envelope {
 class AudioModuleWithEnvelope : public AudioModule {
  public:
         using AudioModule::AudioModule;
+        using SettingsTabDescriptor = AudioModule::SettingsTabDescriptor;
+        using SettingsTabs = AudioModule::SettingsTabs;
 
         [[nodiscard]] const Envelope& envelope() const { return envelope_; }
         Envelope& mutable_envelope() { return envelope_; }
@@ -75,6 +77,20 @@ class AudioModuleWithEnvelope : public AudioModule {
         [[nodiscard]] void set_envelope_release(const float release_ms) {
                 envelope_.release = release_ms;
                 SetParameter("release", release_ms);
+        }
+
+        // Envelope-capable modules expose a dedicated Envelope tab in
+        // addition to the generic Settings tab so that the UI can render
+        // ADSR controls in a consistent place across module types.
+        [[nodiscard]] const SettingsTabs& supported_settings_tabs() const override
+        {
+                static const SettingsTabs kTabs = {
+                        SettingsTabDescriptor{SettingsTabKind::kEnvelope,
+                                              "tab_envelope"},
+                        SettingsTabDescriptor{SettingsTabKind::kSettings,
+                                              "tab_settings"},
+                };
+                return kTabs;
         }
 
  protected:
@@ -411,6 +427,8 @@ class LoopModule : public AudioModuleWithEnvelope {
         explicit LoopModule(const std::string& id);
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
+
+        [[nodiscard]] const SettingsTabs& supported_settings_tabs() const override;
 
         [[nodiscard]] const std::vector<LoopDefinition>& loops() const
         {

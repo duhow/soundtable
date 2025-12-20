@@ -255,6 +255,18 @@ bool AudioModule::CanConnectTo(const AudioModule& other) const
   return allowed_targets_.find(other.type_) != allowed_targets_.end();
 }
 
+const AudioModule::SettingsTabs& AudioModule::supported_settings_tabs()
+    const
+{
+  // By default, expose only the generic Settings tab using the
+  // standard icon from the atlas. Concrete modules can override this
+  // to add Envelope or module-specific tabs.
+  static const SettingsTabs kTabs = {
+      SettingsTabDescriptor{SettingsTabKind::kSettings, "tab_settings"},
+  };
+  return kTabs;
+}
+
 bool Scene::AddModule(std::unique_ptr<AudioModule> module)
 {
   if (!module) {

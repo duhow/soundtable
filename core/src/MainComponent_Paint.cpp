@@ -2945,7 +2945,8 @@ void MainComponent::paint(juce::Graphics& g)
         }
 #endif
 
-        // Per-module detail panel (envelope/settings) when active.
+        // Per-module detail panel (envelope/settings and module-specific
+        // tabs) when active.
         if (!modulePanels_.empty() && insideMusic) {
             const auto panelIt =
                 modulePanels_.find(object.logical_id());
@@ -2955,9 +2956,8 @@ void MainComponent::paint(juce::Graphics& g)
                 const auto panelBounds =
                     getModulePanelBounds(object, bounds);
 
-                // Panel body: borde redondeado y fondo azul
-                // oscuro ligeramente más profundo que el color base
-                // de la mesa.
+                // Panel body: rounded border and dark blue background
+                // slightly deeper than the base table colour.
                 constexpr float kPanelCornerRadius = 10.0F;
                 const juce::Colour panelBg =
                     juce::Colour::fromRGB(0x00, 0x10, 0x50);
@@ -2967,19 +2967,19 @@ void MainComponent::paint(juce::Graphics& g)
                 g.setColour(panelBg.withAlpha(0.96F));
                 g.fillRoundedRectangle(panelBounds, kPanelCornerRadius);
 
-                // Único borde exterior, fino.
+                // Single thin outer border.
                 g.setColour(panelBorder);
                 g.drawRoundedRectangle(panelBounds, kPanelCornerRadius,
                                        2.0F);
 
-                // Pequeño triángulo en el lateral izquierdo del
-                // panel apuntando hacia el centro del módulo.
+                // Small triangle on the left side of the panel
+                // pointing towards the centre of the module.
                 {
                     const float triWidth = 12.0F;
                     const float triHalfHeight = 7.0F;
                     const float leftX = panelBounds.getX();
-                    // Alineado verticalmente con el centro del
-                    // módulo, no con el centro del panel.
+                    // Vertically aligned with the module centre,
+                    // not with the panel centre.
                     const float centreY = cy;
 
                     juce::Path tri;
@@ -2988,31 +2988,38 @@ void MainComponent::paint(juce::Graphics& g)
                     tri.lineTo(leftX - triWidth, centreY);
                     tri.closeSubPath();
 
-                    // Triángulo sin borde explícito, rellenado con
-                    // el mismo color que el borde exterior del panel.
+                    // Triangle with no explicit border, filled with
+                    // the same colour as the panel border.
                     g.setColour(panelBorder);
                     g.fillPath(tri);
                 }
 
-                // Bottom tab strip; tabs se dibujan justo debajo del
-                // área de ventana, alineados a la izquierda.
+                // Bottom tab strip; tabs are drawn just below the
+                // panel window area, left-aligned.
                 constexpr float kTabStripHeight = 26.0F;
                 juce::Rectangle<float> tabStrip(
                     panelBounds.getX(), panelBounds.getBottom(),
                     panelBounds.getWidth(), kTabStripHeight);
 
-                bool hasEnvelopeTab = false;
+                // Query the module for its supported settings tabs in
+                // visual order. The close button is always appended as
+                // the last pseudo-tab on the right.
+                const rectai::AudioModule::SettingsTabs* settingsTabsPtr =
+                    nullptr;
                 if (moduleForObject != nullptr) {
-                    if (dynamic_cast<const rectai::AudioModuleWithEnvelope*>(
-                            moduleForObject) != nullptr) {
-                        hasEnvelopeTab = true;
-                    }
+                    settingsTabsPtr =
+                        &moduleForObject->supported_settings_tabs();
                 }
 
-                const int tabCount = hasEnvelopeTab ? 3 : 2;
-                // Tabs cuadrados: lado basado en la altura de la
-                // franja inferior, alineados a la izquierda y
-                // pegados entre sí, sin estirarse al ancho total.
+                const int settingsTabCount =
+                    (settingsTabsPtr != nullptr)
+                        ? static_cast<int>(settingsTabsPtr->size())
+                        : 0;
+                const int tabCount = settingsTabCount + 1;  // + close
+
+                // Square tabs: side based on the strip height,
+                // left-aligned and packed together without stretching
+                // to the full width.
                 const float tabSide = tabStrip.getHeight();
                 const float tabSpacing = 0.0F;
 
@@ -3031,8 +3038,8 @@ void MainComponent::paint(juce::Graphics& g)
                     g.setColour(baseColour);
                     g.fillRect(tabBounds);
 
-                    // Icon cuadrado ocupando todo el tab, tocando
-                    // el borde exterior.
+                    // Square icon filling the tab and touching the
+                    // outer edge.
                     const int destSize = static_cast<int>(
                         std::floor(tabBounds.getHeight()));
                     if (destSize > 0 && atlasLoaded_) {
@@ -3050,26 +3057,38 @@ void MainComponent::paint(juce::Graphics& g)
                     }
                 };
 
-                int nextIndex = 0;
-                if (hasEnvelopeTab) {
-                    const bool active =
-                        panelState.activeTab ==
-                        ModulePanelState::Tab::kEnvelope;
-                    drawTab(nextIndex++, "tab_envelope", active);
+                auto mapSettingsKindToPanelTab =
+                    [](rectai::AudioModule::SettingsTabKind kind) {
+                        using Kind = rectai::AudioModule::SettingsTabKind;
+                        switch (kind) {
+                        case Kind::kEnvelope:
+                            return ModulePanelState::Tab::kEnvelope;
+                        case Kind::kLoopFiles:
+                            return ModulePanelState::Tab::kLoopFiles;
+                        case Kind::kSettings:
+                        default:
+                            return ModulePanelState::Tab::kSettings;
+                        }
+                    };
+
+                // Draw settings tabs followed by the close pseudo-tab.
+                for (int i = 0; i < settingsTabCount; ++i) {
+                    const auto& desc =
+                        (*settingsTabsPtr)[static_cast<std::size_t>(i)];
+                    const ModulePanelState::Tab tabKind =
+                        mapSettingsKindToPanelTab(desc.kind);
+                    const bool isActive =
+                        (panelState.activeTab == tabKind);
+                    drawTab(i, juce::String(desc.icon_id), isActive);
                 }
 
-                const bool settingsActive =
-                    panelState.activeTab ==
-                    ModulePanelState::Tab::kSettings;
-                drawTab(nextIndex++, "tab_settings", settingsActive);
-
                 // Close "tab" is always last.
-                drawTab(nextIndex, "close_button", false);
+                drawTab(settingsTabCount, "close_button", false);
 
                 // Inner content area. The Envelope tab uses the full
                 // panel bounds (no extra padding) for its bars and
-                // bottom buttons; the Settings tab keeps a small
-                // margin around its placeholder text for legibility.
+                // bottom buttons; other tabs keep a small margin
+                // around their content for legibility.
                 juce::Rectangle<float> contentBounds = panelBounds;
                 juce::Rectangle<float> textBounds = contentBounds;
                 textBounds.reduce(8.0F, 8.0F);
@@ -3101,6 +3120,42 @@ void MainComponent::paint(juce::Graphics& g)
                         g.drawFittedText("Envelope not available",
                                           textBounds.toNearestInt(),
                                           juce::Justification::centred, 2);
+                    }
+                } else if (panelState.activeTab ==
+                           ModulePanelState::Tab::kLoopFiles) {
+                    // Loop file/sample selection view backed by the
+                    // generic TextScrollList and LoopFileBrowser.
+                    auto* loopModule =
+                        dynamic_cast<rectai::LoopModule*>(
+                            const_cast<rectai::AudioModule*>(
+                                moduleForObject));
+                    if (loopModule == nullptr) {
+                        g.drawFittedText("Loop files not available",
+                                          textBounds.toNearestInt(),
+                                          juce::Justification::centred, 2);
+                    } else {
+                        ensureLoopFileBrowserInitialised(
+                            panelState.moduleId, loopModule);
+                        rebuildLoopFileBrowserEntries(
+                            panelState.moduleId, loopModule);
+
+                        auto* list =
+                            getOrCreateLoopFileList(panelState.moduleId);
+                        if (list != nullptr) {
+                            juce::Rectangle<float> listBounds =
+                                contentBounds.reduced(4.0F, 4.0F);
+
+                            juce::Graphics::ScopedSaveState state(g);
+                            list->setBounds(
+                                listBounds.toNearestInt());
+                            g.reduceClipRegion(
+                                listBounds.toNearestInt());
+                            g.addTransform(
+                                juce::AffineTransform::translation(
+                                    listBounds.getX(),
+                                    listBounds.getY()));
+                            list->paint(g);
+                        }
                     }
                 } else {
                     g.drawFittedText("Module settings coming soon",

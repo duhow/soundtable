@@ -60,21 +60,30 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent& event)
         panel.moduleId = object.logical_id();
         panel.visible = true;
 
-        // Default to the Settings tab; if the module exposes a
-        // shared envelope via AudioModuleWithEnvelope, the Envelope
-        // tab will be available as well and can be selected by the
-        // user.
+        // Default to the first settings tab declared by the module.
+        // This allows each module to decide whether the initial view
+        // should be Envelope, Files, Settings, etc.
         panel.activeTab = ModulePanelState::Tab::kSettings;
 
         const auto modIt = modules.find(panel.moduleId);
         if (modIt != modules.end() && modIt->second != nullptr) {
             auto* modulePtr = modIt->second.get();
-            if (dynamic_cast<rectai::AudioModuleWithEnvelope*>(
-                    modulePtr) != nullptr) {
-                // It is safe to default to the Envelope tab for
-                // modules that support it, as they can switch back
-                // to Settings via the tab strip.
-                panel.activeTab = ModulePanelState::Tab::kEnvelope;
+            const auto& tabs = modulePtr->supported_settings_tabs();
+            if (!tabs.empty()) {
+                using Kind = rectai::AudioModule::SettingsTabKind;
+                const Kind kind = tabs.front().kind;
+                switch (kind) {
+                case Kind::kEnvelope:
+                    panel.activeTab = ModulePanelState::Tab::kEnvelope;
+                    break;
+                case Kind::kLoopFiles:
+                    panel.activeTab = ModulePanelState::Tab::kLoopFiles;
+                    break;
+                case Kind::kSettings:
+                default:
+                    panel.activeTab = ModulePanelState::Tab::kSettings;
+                    break;
+                }
             }
         }
 
@@ -366,18 +375,23 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                     ? modIt->second.get()
                     : nullptr;
 
-            bool hasEnvelopeTab = false;
-            if (moduleForPanel != nullptr) {
-                if (dynamic_cast<const rectai::AudioModuleWithEnvelope*>(
-                        moduleForPanel) != nullptr) {
-                    hasEnvelopeTab = true;
-                }
-            }
-
-            // Hit-test de tabs: cuadrados justo debajo del panel,
-            // usando la misma geometría que en paint.
+            // Tab hit-test: square tabs just below the panel, using
+            // the same geometry as in the paint path. Consult the
+            // module for its supported settings tabs so that the
+            // interaction logic stays in sync with the visual
+            // ordering.
             constexpr float kTabStripHeight = 26.0F;
-            const int tabCount = hasEnvelopeTab ? 3 : 2;
+            const rectai::AudioModule::SettingsTabs* settingsTabsPtr =
+                nullptr;
+            if (moduleForPanel != nullptr) {
+                settingsTabsPtr =
+                    &moduleForPanel->supported_settings_tabs();
+            }
+            const int settingsTabCount =
+                (settingsTabsPtr != nullptr)
+                    ? static_cast<int>(settingsTabsPtr->size())
+                    : 0;
+            const int tabCount = settingsTabCount + 1;  // + close
             const float tabSide = kTabStripHeight;
             const float tabSpacing = 0.0F;
             const float tabOriginX = panelBounds.getX();
@@ -397,25 +411,32 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
             }
 
             if (hitIndex >= 0) {
-                int cursor = 0;
-                int envelopeIndex = -1;
-                int settingsIndex = -1;
-                int closeIndex = -1;
-
-                if (hasEnvelopeTab) {
-                    envelopeIndex = cursor++;
-                }
-                settingsIndex = cursor++;
-                closeIndex = cursor++;
+                const int closeIndex = settingsTabCount;
 
                 if (hitIndex == closeIndex) {
                     panelState.visible = false;
-                } else if (hitIndex == settingsIndex) {
-                    panelState.activeTab =
-                        ModulePanelState::Tab::kSettings;
-                } else if (hitIndex == envelopeIndex) {
-                    panelState.activeTab =
-                        ModulePanelState::Tab::kEnvelope;
+                } else if (settingsTabsPtr != nullptr &&
+                           hitIndex >= 0 &&
+                           hitIndex < settingsTabCount) {
+                    const auto& desc =
+                        (*settingsTabsPtr)[static_cast<std::size_t>(
+                            hitIndex)];
+                    using Kind = rectai::AudioModule::SettingsTabKind;
+                    switch (desc.kind) {
+                    case Kind::kEnvelope:
+                        panelState.activeTab =
+                            ModulePanelState::Tab::kEnvelope;
+                        break;
+                    case Kind::kLoopFiles:
+                        panelState.activeTab =
+                            ModulePanelState::Tab::kLoopFiles;
+                        break;
+                    case Kind::kSettings:
+                    default:
+                        panelState.activeTab =
+                            ModulePanelState::Tab::kSettings;
+                        break;
+                    }
                 }
 
                 repaintWithRateLimit();
@@ -543,6 +564,48 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                     repaintWithRateLimit();
                     return;
                 }
+            }
+
+            // LoopFiles tab: route clicks inside the content area to
+            // the TextScrollList backing the Loop file browser.
+            if (panelState.activeTab ==
+                    ModulePanelState::Tab::kLoopFiles &&
+                moduleForPanel != nullptr) {
+                auto* loopModule =
+                    dynamic_cast<rectai::LoopModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                if (loopModule == nullptr) {
+                    continue;
+                }
+
+                ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                loopModule);
+                rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                              loopModule);
+
+                auto* list =
+                    getOrCreateLoopFileList(panelState.moduleId);
+                if (list == nullptr) {
+                    continue;
+                }
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                const float localX =
+                    localPos.x - contentBounds.getX();
+                const float localY =
+                    localPos.y - contentBounds.getY();
+
+                list->handleClickAt(localX, localY);
+                // Selection callback will update samples and request
+                // repaints as needed.
+                return;
             }
         }
     }

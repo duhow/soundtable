@@ -16,6 +16,8 @@
 #include "core/ReactableRtzLoader.h"
 #include "core/SoundfontUtils.h"
 #include "MainComponentHelpers.h"
+#include "MainComponent_TextScroll.h"
+#include "MainComponent_LoopFileBrowser.h"
 
 void MainComponent::invalidateTableBackground()
 {
@@ -219,6 +221,11 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             comReactableRoot = cwd.getChildFile("com.reactable");
         }
     }
+
+    // Base directory for Samples/ content used by the Loop file
+    // browser. It is resolved even if assets are missing so that the
+    // browser can still operate against an empty directory.
+    samplesRootDir_ = comReactableRoot.getChildFile("Samples");
 
     // Load initial Reactable patch. If an explicit session file was
     // provided on the command line, try that first; otherwise fall
@@ -606,6 +613,27 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             repaintWithRateLimit();
         });
 
+    // Lazy-initialised helper for the Loop file browser. It is
+    // constructed once we know the Samples/ root directory.
+    loopFileBrowser_ = std::make_unique<LoopFileBrowser>(
+        loopFileBrowsers_, loopFileLists_, samplesRootDir_,
+        [this]() { repaintWithRateLimit(); },
+        [this](const std::string& moduleId) {
+            markLoopSampleLabelActive(moduleId);
+        },
+        [this](const std::string& moduleId) -> rectai::LoopModule* {
+            auto* base = scene_.FindModule(moduleId);
+            return dynamic_cast<rectai::LoopModule*>(base);
+        },
+        [this](const std::string& moduleId,
+               int slotIndex,
+               const std::string& fullPath,
+               float beats,
+               std::string* error) {
+            return audioEngine_.loadLoopSampleFromFile(
+                moduleId, slotIndex, fullPath, beats, error);
+        });
+
     const auto loadLoopSamples = [this]() {
         const auto& modules = scene_.modules();
 
@@ -869,4 +897,40 @@ void MainComponent::markLoopSampleLabelActive(
     const double nowSeconds =
         juce::Time::getMillisecondCounterHiRes() / 1000.0;
     loopLabelLastChangeSeconds_[moduleId] = nowSeconds;
+}
+
+void MainComponent::ensureLoopFileBrowserInitialised(
+    const std::string& moduleId, rectai::LoopModule* loopModule)
+{
+    if (loopFileBrowser_ == nullptr) {
+        return;
+    }
+    loopFileBrowser_->ensureInitialised(moduleId, loopModule);
+}
+
+void MainComponent::rebuildLoopFileBrowserEntries(
+    const std::string& moduleId, rectai::LoopModule* loopModule)
+{
+    if (loopFileBrowser_ == nullptr) {
+        return;
+    }
+    loopFileBrowser_->rebuildEntries(moduleId, loopModule);
+}
+
+void MainComponent::onLoopFileSelectionChanged(
+    const std::string& moduleId, const int rowIndex)
+{
+    if (loopFileBrowser_ == nullptr) {
+        return;
+    }
+    loopFileBrowser_->handleSelectionChanged(moduleId, rowIndex);
+}
+
+rectai::ui::TextScrollList*
+MainComponent::getOrCreateLoopFileList(const std::string& moduleId)
+{
+    if (loopFileBrowser_ == nullptr) {
+        return nullptr;
+    }
+    return loopFileBrowser_->getOrCreateList(moduleId);
 }

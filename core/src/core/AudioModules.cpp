@@ -555,6 +555,22 @@ const AudioModuleModes& LoopModule::supported_modes() const
   return kModes;
 }
 
+const AudioModule::SettingsTabs& LoopModule::supported_settings_tabs() const
+{
+  using SettingsTabs = AudioModule::SettingsTabs;
+  using SettingsTabDescriptor = AudioModule::SettingsTabDescriptor;
+
+  static const SettingsTabs kTabs = {
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kLoopFiles,
+                            "tab_file"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kEnvelope,
+                            "tab_envelope"},
+      SettingsTabDescriptor{AudioModule::SettingsTabKind::kSettings,
+                            "tab_settings"},
+  };
+  return kTabs;
+}
+
 SampleplayModule::SampleplayModule(const std::string& id)
     : AudioModule(id, ModuleType::kAudio,
           /*produces_audio=*/true, /*consumes_audio=*/false,

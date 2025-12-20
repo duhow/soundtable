@@ -195,6 +195,31 @@ class AudioModule {
 
   [[nodiscard]] bool CanConnectTo(const AudioModule& other) const;
 
+  // ------------------------------------------------------------------
+  // Per-module detail panel tabs (Envelope / Settings / module-specific)
+  // ------------------------------------------------------------------
+
+  // Kind of module detail tab supported by a module.
+  enum class SettingsTabKind {
+    kSettings = 0,
+    kEnvelope,
+    kLoopFiles,
+  };
+
+  struct SettingsTabDescriptor {
+    SettingsTabKind kind;
+    std::string icon_id;
+  };
+
+  using SettingsTabs = std::vector<SettingsTabDescriptor>;
+
+  // Return the list of settings tabs supported by this module, in
+  // visual order (left to right). The default implementation only
+  // exposes the generic Settings tab; concrete modules can override
+  // this to add Envelope or module-specific tabs.
+  [[nodiscard]] virtual const SettingsTabs& supported_settings_tabs()
+      const;
+
   // Check if the module matches the same concrete C++ type (subclass).
   template<typename T>
   [[nodiscard]] bool is() const {
