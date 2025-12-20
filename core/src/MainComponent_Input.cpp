@@ -378,8 +378,8 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
     const float radius = 30.0F;
     const bool isRightClick = mods.isRightButtonDown();
 
-    // Any new pointer-down gesture cancels active envelope drags.
-    activeEnvelopeDrag_.reset();
+    // Any new pointer-down gesture cancels active panel drags.
+    activePanelDrag_.reset();
 
     // Track touch interface state for visual feedback.
     isTouchActive_ = true;
@@ -650,8 +650,10 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                     }
 
                     // Start continuous drag tracking for this bar.
-                    activeEnvelopeDrag_ = ActiveEnvelopeDrag{
-                        panelState.moduleId, bar};
+                    activePanelDrag_ = ActivePanelDrag{
+                        PanelDragKind::kEnvelopeBar,
+                        panelState.moduleId,
+                        bar};
 
                     repaintWithRateLimit();
                     return;
@@ -697,6 +699,10 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                 list->beginPointerAt(localY);
                 // The selection (and sample loading) will be handled
                 // on pointer-up if released over the same item.
+                activePanelDrag_ = ActivePanelDrag{
+                    PanelDragKind::kLoopFilesScroll,
+                    panelState.moduleId,
+                    -1};
                 return;
             }
         }
@@ -1517,14 +1523,23 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
             touchTrail_.erase(touchTrail_.begin());
         }
 
-        // Before line cutting, allow scrolling inside an open LoopFiles
-        // panel by dragging over its TextScrollList.
-        const auto& modules = scene_.modules();
-        const auto& objects = scene_.objects();
-        for (const auto& [moduleId, panelState] : modulePanels_) {
-            if (!panelState.visible) {
-                continue;
-            }
+        // Before line cutting, allow scrolling inside an open
+        // LoopFiles panel by dragging over its TextScrollList, but
+        // only when a drag actually started inside that panel's
+        // content area.
+        if (activePanelDrag_.has_value() &&
+            activePanelDrag_->kind ==
+                PanelDragKind::kLoopFilesScroll) {
+            const auto activeModuleId =
+                activePanelDrag_->moduleId;
+
+            const auto& modules = scene_.modules();
+            const auto& objects = scene_.objects();
+            for (const auto& [moduleId, panelState] : modulePanels_) {
+                if (!panelState.visible ||
+                    moduleId != activeModuleId) {
+                    continue;
+                }
 
             // Locate the object that owns this panel by matching
             // logical_id with the module id stored in the panel
@@ -1559,60 +1574,62 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                 dynamic_cast<rectai::LoopModule*>(
                     const_cast<rectai::AudioModule*>(
                         moduleForPanel));
-            if (loopModule == nullptr) {
-                continue;
+                if (loopModule == nullptr) {
+                    continue;
+                }
+
+                ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                loopModule);
+                rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                              loopModule);
+
+                auto* list =
+                    getOrCreateLoopFileList(panelState.moduleId);
+                if (list == nullptr) {
+                    continue;
+                }
+
+                const auto centrePos =
+                    objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                // Match the same rotation logic used for panel
+                // hit-tests in handlePointerDown so that the
+                // LoopFiles content area stays aligned with the
+                // rotated module.
+                const auto tableCentre = bounds.getCentre();
+                const float dx = cx - tableCentre.x;
+                const float dy = cy - tableCentre.y;
+                float rotationAngle = 0.0F;
+                if (isInsideMusicArea(object)) {
+                    rotationAngle =
+                        std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+                }
+
+                juce::Point<float> localPos = position;
+                if (rotationAngle != 0.0F) {
+                    localPos = localPos.transformedBy(
+                        juce::AffineTransform::rotation(
+                            -rotationAngle, cx, cy));
+                }
+
+                auto panelBounds =
+                    getModulePanelBounds(object, bounds);
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                // Even when the pointer is dragged outside the
+                // visual content area, keep updating the scroll
+                // based on its vertical displacement.
+                const float localY =
+                    localPos.y - contentBounds.getY();
+                list->dragPointerTo(localY);
+                repaintWithRateLimit();
+                return;
             }
-
-            ensureLoopFileBrowserInitialised(panelState.moduleId,
-                                            loopModule);
-            rebuildLoopFileBrowserEntries(panelState.moduleId,
-                                          loopModule);
-
-            auto* list =
-                getOrCreateLoopFileList(panelState.moduleId);
-            if (list == nullptr) {
-                continue;
-            }
-
-            const auto centrePos =
-                objectTableToScreen(object, bounds);
-            const float cx = centrePos.x;
-            const float cy = centrePos.y;
-
-            // Match the same rotation logic used for panel hit-tests
-            // in handlePointerDown so that the LoopFiles content
-            // area stays aligned with the rotated module.
-            const auto tableCentre = bounds.getCentre();
-            const float dx = cx - tableCentre.x;
-            const float dy = cy - tableCentre.y;
-            float rotationAngle = 0.0F;
-            if (isInsideMusicArea(object)) {
-                rotationAngle =
-                    std::atan2(dy, dx) -
-                    juce::MathConstants<float>::halfPi;
-            }
-
-            juce::Point<float> localPos = position;
-            if (rotationAngle != 0.0F) {
-                localPos = localPos.transformedBy(
-                    juce::AffineTransform::rotation(-rotationAngle,
-                                                    cx, cy));
-            }
-
-            auto panelBounds =
-                getModulePanelBounds(object, bounds);
-
-            juce::Rectangle<float> contentBounds = panelBounds;
-            contentBounds.reduce(4.0F, 4.0F);
-
-            // Even when the pointer is dragged outside the visual
-            // content area, keep updating the scroll based on its
-            // vertical displacement.
-            const float localY =
-                localPos.y - contentBounds.getY();
-            list->dragPointerTo(localY);
-            repaintWithRateLimit();
-            return;
         }
 
         // Line cutting: detect when the touch trail crosses audio lines
@@ -1818,10 +1835,11 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
     // Continuous ADSR envelope adjustment while dragging on a bar in
     // the per-module Envelope view. This takes precedence over cut
     // gestures and other drags.
-    if (activeEnvelopeDrag_.has_value()) {
-        const ActiveEnvelopeDrag dragState = *activeEnvelopeDrag_;
-        if (!dragState.moduleId.empty() && dragState.barIndex >= 0 &&
-            dragState.barIndex < 4) {
+    if (activePanelDrag_.has_value() &&
+        activePanelDrag_->kind == PanelDragKind::kEnvelopeBar) {
+        const ActivePanelDrag dragState = *activePanelDrag_;
+        if (!dragState.moduleId.empty() && dragState.index >= 0 &&
+            dragState.index < 4) {
             const auto& objects = scene_.objects();
             const auto& modules = scene_.modules();
 
@@ -1880,7 +1898,7 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                             clampedY, valueRangeBottom, valueRangeTop,
                             0.0F, 1.0F);
 
-                        if (dragState.barIndex == 2) {
+                        if (dragState.index == 2) {
                             // Sustain bar: edit sustain level linearly via
                             // the third control point in points_y.
                             auto& env = envModule->mutable_envelope();
@@ -1908,9 +1926,9 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                             };
 
                             const float maxMs =
-                                (dragState.barIndex == 0)
+                                (dragState.index == 0)
                                     ? kModuleEnvelopeMaxAttackMs
-                                    : (dragState.barIndex == 1)
+                                    : (dragState.index == 1)
                                           ? kModuleEnvelopeMaxDecayMs
                                           : kModuleEnvelopeMaxReleaseMs;
 
@@ -1922,9 +1940,9 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                             const float scaled = clampMs(
                                 normalised01 * maxMs, maxMs);
 
-                            if (dragState.barIndex == 0) {
+                            if (dragState.index == 0) {
                                 envModule->set_envelope_attack(scaled);
-                            } else if (dragState.barIndex == 1) {
+                            } else if (dragState.index == 1) {
                                 envModule->set_envelope_decay(scaled);
                             } else {
                                 envModule->set_envelope_release(scaled);
@@ -2498,104 +2516,117 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
     const auto& modules = scene_.modules();
 
     // Before applying cut-gesture semantics, propagate pointer-up to
-    // any active LoopFiles TextScrollList so it can commit a
-    // click-to-select if appropriate.
-    for (const auto& [moduleId, panelState] : modulePanels_) {
-        if (!panelState.visible) {
-            continue;
-        }
+    // the active panel drag (if any). For LoopFiles, this allows the
+    // TextScrollList to commit a click-to-select when releasing over
+    // the same item.
+    if (activePanelDrag_.has_value()) {
+        const ActivePanelDrag dragState = *activePanelDrag_;
 
-        // Locate the object that owns this panel by matching
-        // logical_id with the module id stored in the panel state.
-        const rectai::ObjectInstance* objectPtr = nullptr;
-        for (const auto& [objId, obj] : objects) {
-            juce::ignoreUnused(objId);
-            if (obj.logical_id() == moduleId) {
-                objectPtr = &obj;
-                break;
+        if (dragState.kind == PanelDragKind::kLoopFilesScroll &&
+            !dragState.moduleId.empty()) {
+            const auto activeModuleId = dragState.moduleId;
+
+            for (const auto& [moduleId, panelState] : modulePanels_) {
+                if (!panelState.visible ||
+                    moduleId != activeModuleId) {
+                    continue;
+                }
+
+                // Locate the object that owns this panel by matching
+                // logical_id with the module id stored in the panel
+                // state.
+                const rectai::ObjectInstance* objectPtr = nullptr;
+                for (const auto& [objId, obj] : objects) {
+                    juce::ignoreUnused(objId);
+                    if (obj.logical_id() == moduleId) {
+                        objectPtr = &obj;
+                        break;
+                    }
+                }
+
+                if (objectPtr == nullptr) {
+                    continue;
+                }
+
+                const auto& object = *objectPtr;
+                const auto modIt = modules.find(object.logical_id());
+                if (modIt == modules.end() ||
+                    modIt->second == nullptr) {
+                    continue;
+                }
+
+                const auto* moduleForPanel = modIt->second.get();
+                if (panelState.activeTab !=
+                    ModulePanelState::Tab::kLoopFiles) {
+                    continue;
+                }
+
+                auto* loopModule =
+                    dynamic_cast<rectai::LoopModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                if (loopModule == nullptr) {
+                    continue;
+                }
+
+                ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                loopModule);
+                rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                              loopModule);
+
+                auto* list =
+                    getOrCreateLoopFileList(panelState.moduleId);
+                if (list == nullptr) {
+                    continue;
+                }
+
+                const auto centrePos =
+                    objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                // Match the same rotation logic used for panel hit-tests
+                // in handlePointerDown so that the LoopFiles content
+                // area stays aligned with the rotated module.
+                const auto tableCentre = bounds.getCentre();
+                const float dx = cx - tableCentre.x;
+                const float dy = cy - tableCentre.y;
+                float rotationAngle = 0.0F;
+                if (isInsideMusicArea(object)) {
+                    rotationAngle =
+                        std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+                }
+
+                juce::Point<float> localPos = lastPointerPosition_;
+                if (rotationAngle != 0.0F) {
+                    localPos = localPos.transformedBy(
+                        juce::AffineTransform::rotation(
+                            -rotationAngle, cx, cy));
+                }
+
+                auto panelBounds =
+                    getModulePanelBounds(object, bounds);
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                const float localY =
+                    localPos.y - contentBounds.getY();
+                list->endPointerAt(localY);
+                repaintWithRateLimit();
+                // Do not early-return: cut gestures and other state
+                // updates should still be processed.
             }
         }
 
-        if (objectPtr == nullptr) {
-            continue;
-        }
-
-        const auto& object = *objectPtr;
-        const auto modIt = modules.find(object.logical_id());
-        if (modIt == modules.end() ||
-            modIt->second == nullptr) {
-            continue;
-        }
-
-        const auto* moduleForPanel = modIt->second.get();
-        if (panelState.activeTab !=
-            ModulePanelState::Tab::kLoopFiles) {
-            continue;
-        }
-
-        auto* loopModule =
-            dynamic_cast<rectai::LoopModule*>(
-                const_cast<rectai::AudioModule*>(
-                    moduleForPanel));
-        if (loopModule == nullptr) {
-            continue;
-        }
-
-        ensureLoopFileBrowserInitialised(panelState.moduleId,
-                                        loopModule);
-        rebuildLoopFileBrowserEntries(panelState.moduleId,
-                                      loopModule);
-
-        auto* list =
-            getOrCreateLoopFileList(panelState.moduleId);
-        if (list == nullptr) {
-            continue;
-        }
-
-        const auto centrePos = objectTableToScreen(object, bounds);
-        const float cx = centrePos.x;
-        const float cy = centrePos.y;
-
-        // Match the same rotation logic used for panel hit-tests in
-        // handlePointerDown so that the LoopFiles content area stays
-        // aligned with the rotated module.
-        const auto tableCentre = bounds.getCentre();
-        const float dx = cx - tableCentre.x;
-        const float dy = cy - tableCentre.y;
-        float rotationAngle = 0.0F;
-        if (isInsideMusicArea(object)) {
-            rotationAngle =
-                std::atan2(dy, dx) -
-                juce::MathConstants<float>::halfPi;
-        }
-
-        juce::Point<float> localPos = lastPointerPosition_;
-        if (rotationAngle != 0.0F) {
-            localPos = localPos.transformedBy(
-                juce::AffineTransform::rotation(-rotationAngle,
-                                                cx, cy));
-        }
-
-        auto panelBounds =
-            getModulePanelBounds(object, bounds);
-
-        juce::Rectangle<float> contentBounds = panelBounds;
-        contentBounds.reduce(4.0F, 4.0F);
-
-        if (!contentBounds.contains(localPos)) {
-            continue;
-        }
-
-        const float localY =
-            localPos.y - contentBounds.getY();
-        list->endPointerAt(localY);
-        repaintWithRateLimit();
-        // Do not early-return: cut gestures and other state updates
-        // should still be processed.
+        // Clear any active panel drag state after handling pointer-up.
+        activePanelDrag_.reset();
     }
-
-    // Releasing the pointer always ends any active envelope bar drag.
-    activeEnvelopeDrag_.reset();
 
     // Handle click-and-hold mute release.
     // Always clear hold state when releasing. If the hold started on

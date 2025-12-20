@@ -413,7 +413,7 @@ private:
     };
 
     // Per-module panel state; allows multiple detail panels to be
-    // abiertos simultáneamente, uno por módulo lógico.
+    // open simultaneously, one per logical module.
     std::unordered_map<std::string, ModulePanelState> modulePanels_;
 
     // Lightweight per-LoopModule browser state and associated
@@ -435,12 +435,27 @@ private:
     // traversal, TextScrollList population and selection handling).
     std::unique_ptr<class LoopFileBrowser> loopFileBrowser_;
 
-    struct ActiveEnvelopeDrag {
-        std::string moduleId;
-        int barIndex{-1};  // 0 = A, 1 = D, 2 = S (duration), 3 = R
+    // Generic drag state for per-module detail panels (Envelope, LoopFiles,
+    // and future settings views). When a gesture starts inside a panel's
+    // interactive area, this structure captures ownership of the pointer so
+    // that drags do not leak into global gestures such as line cutting or
+    // module moves.
+    enum class PanelDragKind {
+        kNone = 0,
+        // Continuous ADSR envelope adjustment on one of the four bars.
+        kEnvelopeBar,
+        // Vertical scrolling over the LoopFiles TextScrollList.
+        kLoopFilesScroll,
     };
 
-    std::optional<ActiveEnvelopeDrag> activeEnvelopeDrag_;
+    struct ActivePanelDrag {
+        PanelDragKind kind{PanelDragKind::kNone};
+        std::string moduleId;
+        // Per-kind index (for example, 0..3 for envelope bars).
+        int index{-1};
+    };
+
+    std::optional<ActivePanelDrag> activePanelDrag_;
 
     // Geometry for the module detail panel relative to an object
     // on the table.
