@@ -12,6 +12,8 @@
 #include "MainComponent_TextScroll.h"
 #include "MainComponent_XYControl.h"
 
+#include "InteractionSystem.h"
+
 class AudioEngine;
 
 namespace rectai {
@@ -703,6 +705,16 @@ private:
         bool unmute_on_release{false};
     };
     std::optional<ConnectionHoldState> activeConnectionHold_;
+
+    // Centralised interaction façade that receives normalised pointer and
+    // wheel events from mouse and TUIO sources and forwards them into the
+    // shared input logic.
+    rectai::ui::InteractionSystem interactionSystem_{*this};
+
+    // Allow the interaction system to access private helpers and state so
+    // that it can delegate to the existing input logic without duplicating
+    // public wrappers.
+    friend class rectai::ui::InteractionSystem;
 
     // Rebuild the mapping from Scene::connections() to visual
     // waveform sources (pre/post voice or Sampleplay) using the

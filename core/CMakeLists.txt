@@ -123,6 +123,8 @@ target_sources(${PROJECT_NAME}
         src/MainComponent_XYControl.h
         src/MainComponentHelpers.cpp
         src/MainComponentHelpers.h
+        src/InteractionSystem.cpp
+        src/InteractionSystem.h
         src/RectaiLookAndFeel.cpp
         src/AudioEngine.cpp
         src/AudioEngine.h

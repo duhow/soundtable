@@ -1,0 +1,3413 @@
+#include "InteractionSystem.h"
+
+#include "MainComponent.h"
+#include "MainComponent_ModulePanelEnvelope.h"
+#include "MainComponentHelpers.h"
+#include "core/AudioModules.h"
+
+namespace rectai::ui {
+
+namespace {
+
+juce::ModifierKeys buildModifierKeys(const InteractionSystem::PointerEvent& event)
+{
+    juce::ModifierKeys mods;
+    if (event.isRightButton) {
+        mods = mods.withFlags(juce::ModifierKeys::rightButtonModifier);
+    }
+    if (event.isCtrlDown) {
+        mods = mods.withFlags(juce::ModifierKeys::ctrlModifier);
+    }
+    if (event.isShiftDown) {
+        mods = mods.withFlags(juce::ModifierKeys::shiftModifier);
+    }
+    return mods;
+}
+
+}  // namespace
+
+InteractionSystem::InteractionSystem(MainComponent& owner) noexcept
+    : owner_(owner)
+{
+}
+
+void InteractionSystem::handlePointerDown(const PointerEvent& event)
+{
+    const auto bounds = owner_.getLocalBounds().toFloat();
+    const float radius = 30.0F;
+    const bool isRightClick = event.isRightButton;
+
+    const juce::Point<float> position = event.position;
+    const juce::ModifierKeys mods = buildModifierKeys(event);
+
+    // Any new pointer-down gesture cancels active panel drags.
+    owner_.activePanelDrag_.reset();
+
+    // Track touch interface state for visual feedback.
+    owner_.isTouchActive_ = true;
+    owner_.isTouchHeld_ = false;
+    owner_.currentTouchPosition_ = position;
+    owner_.touchTrail_.clear();
+    owner_.touchCutConnections_.clear();
+    owner_.touchCutObjects_.clear();
+    owner_.touchCurrentlyIntersectingConnections_.clear();
+    owner_.touchCurrentlyIntersectingObjects_.clear();
+    // Reset cut mode; it will only be enabled explicitly at the end
+    // of this handler if the pointer started on empty musical space
+    // (no module, no line, no dock interaction).
+    owner_.isCutModeActive_ = false;
+
+    // Determine if touch started in dock area.
+    const float dockWidthMain = owner_.calculateDockWidth(bounds.getWidth());
+    auto boundsCopy = bounds;
+    juce::Rectangle<float> dockAreaMain =
+        boundsCopy.removeFromRight(dockWidthMain);
+    owner_.touchStartedInDock_ = dockAreaMain.contains(position);
+
+    // Remember the start position so that pointer-up logic that does
+    // not receive coordinates (e.g. radial mode selection) can still
+    // reason about where the gesture finished.
+    owner_.lastPointerPosition_ = position;
+
+    // If a per-module detail panel is visible, give it priority so
+    // clicks on its tabs do not start other gestures such as drags
+    // or cut-mode.
+    if (!owner_.modulePanels_.empty()) {
+        const auto& objects = owner_.scene_.objects();
+        const auto& modules = owner_.scene_.modules();
+
+        for (auto& [moduleId, panelState] : owner_.modulePanels_) {
+            if (!panelState.visible) {
+                continue;
+            }
+
+            const rectai::ObjectInstance* panelObject = nullptr;
+            for (const auto& [id, obj] : objects) {
+                juce::ignoreUnused(id);
+                if (obj.logical_id() == moduleId && !obj.docked()) {
+                    panelObject = &obj;
+                    break;
+                }
+            }
+
+            if (panelObject == nullptr ||
+                !owner_.isInsideMusicArea(*panelObject)) {
+                continue;
+            }
+            const auto centrePos =
+                MainComponent::objectTableToScreen(*panelObject, bounds);
+            const float cx = centrePos.x;
+            const float cy = centrePos.y;
+
+            const auto boundsF = bounds.toFloat();
+            const auto tableCentre = boundsF.getCentre();
+            const float dx = cx - tableCentre.x;
+            const float dy = cy - tableCentre.y;
+            float rotationAngle = 0.0F;
+            if (owner_.isInsideMusicArea(*panelObject)) {
+                rotationAngle =
+                    std::atan2(dy, dx) -
+                    juce::MathConstants<float>::halfPi;
+            }
+
+            juce::Point<float> localPos = position;
+            if (rotationAngle != 0.0F) {
+                localPos = localPos.transformedBy(
+                    juce::AffineTransform::rotation(-rotationAngle,
+                                                    cx, cy));
+            }
+
+            const auto panelBounds =
+                owner_.getModulePanelBounds(*panelObject, bounds);
+            const auto modIt = modules.find(panelState.moduleId);
+            const rectai::AudioModule* moduleForPanel =
+                (modIt != modules.end() && modIt->second != nullptr)
+                    ? modIt->second.get()
+                    : nullptr;
+
+            // Tab hit-test: square tabs just below the panel, using
+            // the same geometry as in the paint path. Consult the
+            // module for its supported settings tabs so that the
+            // interaction logic stays in sync with the visual
+            // ordering.
+            constexpr float kTabStripHeight = 26.0F;
+            const rectai::AudioModule::SettingsTabs* settingsTabsPtr =
+                nullptr;
+            if (moduleForPanel != nullptr) {
+                settingsTabsPtr =
+                    &moduleForPanel->supported_settings_tabs();
+            }
+            const int settingsTabCount =
+                (settingsTabsPtr != nullptr)
+                    ? static_cast<int>(settingsTabsPtr->size())
+                    : 0;
+            const int tabCount = settingsTabCount + 1;  // + close
+            const float tabSide = kTabStripHeight;
+            const float tabSpacing = 0.0F;
+            const float tabOriginX = panelBounds.getX();
+            const float tabOriginY = panelBounds.getBottom();
+
+            int hitIndex = -1;
+            for (int i = 0; i < tabCount; ++i) {
+                const float x = tabOriginX +
+                                (tabSide + tabSpacing) *
+                                    static_cast<float>(i);
+                juce::Rectangle<float> tabBounds(
+                    x, tabOriginY, tabSide, kTabStripHeight);
+                if (tabBounds.contains(localPos)) {
+                    hitIndex = i;
+                    break;
+                }
+            }
+
+            if (hitIndex >= 0) {
+                const int closeIndex = settingsTabCount;
+
+                if (hitIndex == closeIndex) {
+                    panelState.visible = false;
+                } else if (settingsTabsPtr != nullptr &&
+                           hitIndex >= 0 &&
+                           hitIndex < settingsTabCount) {
+                    const auto& desc =
+                        (*settingsTabsPtr)[static_cast<std::size_t>(
+                            hitIndex)];
+                    using Kind = rectai::AudioModule::SettingsTabKind;
+                    switch (desc.kind) {
+                    case Kind::kEnvelope:
+                        panelState.activeTab =
+                            MainComponent::ModulePanelState::Tab::kEnvelope;
+                        break;
+                    case Kind::kLoopFiles:
+                        panelState.activeTab =
+                            MainComponent::ModulePanelState::Tab::kLoopFiles;
+                        break;
+                    case Kind::kXYControl:
+                        panelState.activeTab =
+                            MainComponent::ModulePanelState::Tab::kXYControl;
+                        break;
+                    case Kind::kSettings:
+                    default:
+                        panelState.activeTab =
+                            MainComponent::ModulePanelState::Tab::kSettings;
+                        break;
+                    }
+                }
+
+                owner_.repaintWithRateLimit();
+                return;
+            }
+
+            // If no tab was clicked, handle interaction inside the
+            // Envelope content area (ADSR bars and preset buttons)
+            // when the Envelope tab is active.
+            if (panelState.activeTab ==
+                    MainComponent::ModulePanelState::Tab::kEnvelope &&
+                moduleForPanel != nullptr) {
+                auto* envModule =
+                    dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                if (envModule == nullptr) {
+                    continue;
+                }
+                const ModuleEnvelopeHitResult hit =
+                    hitTestModuleEnvelope(
+                        panelBounds, localPos,
+                        kModuleEnvelopeMaxAttackMs,
+                        kModuleEnvelopeMaxDecayMs,
+                        kModuleEnvelopeMaxDurationMs,
+                        kModuleEnvelopeMaxReleaseMs);
+
+                if (hit.kind == ModuleEnvelopeHitKind::kNone) {
+                    continue;
+                }
+
+                auto clampMs = [](float value, float maxMs) {
+                    if (!std::isfinite(value) || value < 0.0F) {
+                        return 0.0F;
+                    }
+                    if (value > maxMs) {
+                        return maxMs;
+                    }
+                    return value;
+                };
+
+                if (hit.kind == ModuleEnvelopeHitKind::kPresetLeft ||
+                    hit.kind == ModuleEnvelopeHitKind::kPresetRight) {
+                    // Apply one of the two predefined ADSR templates.
+                    auto& env = envModule->mutable_envelope();
+                    if (hit.kind == ModuleEnvelopeHitKind::kPresetLeft) {
+                        // Erase-style short envelope.
+                        envModule->set_envelope_attack(0.0F);
+                        envModule->set_envelope_decay(0.0F);
+                        envModule->set_envelope_duration(25.0F);
+                        envModule->set_envelope_release(20.0F);
+                        env.points_x = {0.0F, 0.0F, 0.0F, 0.2F, 1.0F};
+                        env.points_y = {0.0F, 1.0F, 1.0F, 1.0F, 0.0F};
+                    } else {
+                        // Canonical ADSR-style envelope.
+                        envModule->set_envelope_attack(125.0F);
+                        envModule->set_envelope_decay(125.0F);
+                        envModule->set_envelope_duration(468.75F);
+                        envModule->set_envelope_release(125.0F);
+                        env.points_x = {0.0F, 0.266667F, 0.533333F,
+                                        0.733333F, 1.0F};
+                        env.points_y = {0.0F, 1.0F, 0.75F, 0.75F, 0.0F};
+                    }
+
+                    // If this module is an Oscillator currently
+                    // carrying audio, update its sustain level so
+                    // the audible volume follows the new envelope
+                    // shape immediately.
+                    owner_.updateOscillatorSustainFromEnvelope(
+                        panelState.moduleId);
+
+                    owner_.repaintWithRateLimit();
+                    return;
+                }
+
+                if (hit.kind == ModuleEnvelopeHitKind::kBar &&
+                    hit.barIndex >= 0 && hit.barIndex < 4) {
+                    const int bar = hit.barIndex;
+                    const float visual01 = juce::jlimit(0.0F, 1.0F,
+                                                       hit.value01);
+
+                    if (bar == 2) {
+                        // Sustain bar: use linear visual mapping based on
+                        // the third control point in points_y (index 2).
+                        auto& env = envModule->mutable_envelope();
+                        const float sustain01 = juce::jlimit(
+                            0.0F, 1.0F, visual01);
+
+                        if (env.points_y.size() > 2) {
+                            env.points_y[2] = sustain01;
+                            if (env.points_y.size() > 3) {
+                                env.points_y[3] = sustain01;
+                            }
+                        }
+
+                        // Keep the currently active Oscillator voice in
+                        // sync so sustain changes are audible immediately.
+                        owner_.updateOscillatorSustainFromEnvelope(
+                            panelState.moduleId);
+                    } else {
+                        const float clamped01 =
+                            moduleEnvelopeNormalisedFromVisual(visual01);
+
+                        const float maxMs =
+                            (bar == 0)
+                                ? kModuleEnvelopeMaxAttackMs
+                                : (bar == 1)
+                                      ? kModuleEnvelopeMaxDecayMs
+                                      : kModuleEnvelopeMaxReleaseMs;
+
+                        const float scaled = clampMs(clamped01 * maxMs, maxMs);
+
+                        if (bar == 0) {
+                            envModule->set_envelope_attack(scaled);
+                        } else if (bar == 1) {
+                            envModule->set_envelope_decay(scaled);
+                        } else {
+                            envModule->set_envelope_release(scaled);
+                        }
+                    }
+
+                    // Start continuous drag tracking for this bar.
+                    owner_.activePanelDrag_ = MainComponent::ActivePanelDrag{
+                        MainComponent::PanelDragKind::kEnvelopeBar,
+                        panelState.moduleId,
+                        bar};
+
+                    owner_.repaintWithRateLimit();
+                    return;
+                }
+            }
+
+            // LoopFiles tab: start interaction inside the content
+            // area with the TextScrollList backing the Loop file
+            // browser. Dragging will scroll the list; releasing over
+            // the same item will select it.
+            if (panelState.activeTab ==
+                    MainComponent::ModulePanelState::Tab::kLoopFiles &&
+                moduleForPanel != nullptr) {
+                auto* loopModule =
+                    dynamic_cast<rectai::LoopModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                if (loopModule == nullptr) {
+                    continue;
+                }
+
+                owner_.ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                        loopModule);
+                owner_.rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                                     loopModule);
+
+                auto* list =
+                    owner_.getOrCreateLoopFileList(panelState.moduleId);
+                if (list == nullptr) {
+                    continue;
+                }
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                const float localY =
+                    localPos.y - contentBounds.getY();
+
+                list->beginPointerAt(localY);
+                // The selection (and sample loading) will be handled
+                // on pointer-up if released over the same item.
+                owner_.activePanelDrag_ = MainComponent::ActivePanelDrag{
+                    MainComponent::PanelDragKind::kLoopFilesScroll,
+                    panelState.moduleId,
+                    -1};
+                return;
+            }
+
+            // XYControl tab: start interaction inside the content
+            // area with the per-module XY pad. Movement updates the
+            // underlying module parameters in real time.
+            if (panelState.activeTab ==
+                    MainComponent::ModulePanelState::Tab::kXYControl &&
+                moduleForPanel != nullptr) {
+                auto* filterModule =
+                    dynamic_cast<rectai::FilterModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                auto* lfoModule =
+                    dynamic_cast<rectai::LfoModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+
+                juce::ignoreUnused(filterModule, lfoModule);
+
+                auto* xy = owner_.getOrCreateXYControl(panelState.moduleId);
+                if (xy == nullptr) {
+                    continue;
+                }
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(6.0F, 6.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                const float localX =
+                    localPos.x - contentBounds.getX();
+                const float localY =
+                    localPos.y - contentBounds.getY();
+
+                xy->beginPointerAt(localX, localY);
+                owner_.activePanelDrag_ = MainComponent::ActivePanelDrag{
+                    MainComponent::PanelDragKind::kXYControl,
+                    panelState.moduleId,
+                    -1};
+                return;
+            }
+
+            // Tempo settings tab: start interaction inside the BPM
+            // preset TextScrollList so that dragging scrolls the
+            // list and releasing over an item selects it.
+            if (panelState.activeTab ==
+                    MainComponent::ModulePanelState::Tab::kSettings &&
+                moduleForPanel != nullptr) {
+                auto* tempoModule =
+                    dynamic_cast<rectai::TempoModule*>(
+                        const_cast<rectai::AudioModule*>(
+                            moduleForPanel));
+                if (tempoModule == nullptr) {
+                    continue;
+                }
+
+                auto* list =
+                    owner_.getOrCreateTempoPresetList(panelState.moduleId);
+                if (list == nullptr) {
+                    continue;
+                }
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                // Map pointer position to list-local coordinates and
+                // start a potential drag-to-scroll gesture. The
+                // TextScrollList will only commit the selection on
+                // pointer-up when releasing over the same item.
+                const float localY =
+                    localPos.y - contentBounds.getY();
+
+                list->beginPointerAt(localY);
+                owner_.activePanelDrag_ = MainComponent::ActivePanelDrag{
+                    MainComponent::PanelDragKind::kLoopFilesScroll,
+                    panelState.moduleId,
+                    -1};
+                return;
+            }
+        }
+    }
+
+    owner_.repaintWithRateLimit();
+
+    owner_.draggedObjectId_ = 0;
+    owner_.sideControlObjectId_ = 0;
+    owner_.sideControlKind_ = MainComponent::SideControlKind::kNone;
+    owner_.modeControlObjectId_ = 0;
+    owner_.modeDragActive_ = false;
+    owner_.modeDragProgress_ = 0.0F;
+
+    const auto& objects = owner_.scene_.objects();
+    const auto& modules = owner_.scene_.modules();
+
+    // Right-click on an Oscillator tangible cycles its waveform
+    // (sine -> saw -> square -> noise -> ...), updating the icon
+    // to match the selected subtype. Right-click on a Filter tangible
+    // cycles its mode (low-pass -> band-pass -> high-pass) and updates
+    // the icon accordingly. Right-click on a Sampleplay tangible
+    // cycles through the available instruments declared in the
+    // Reactable patch, updating the title rendered next to the
+    // module.
+    if (isRightClick) {
+        for (const auto& [id, object] : objects) {
+            if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+                object.docked()) {
+                continue;
+            }
+
+            const auto centrePos = MainComponent::objectTableToScreen(object, bounds);
+            const auto cx = centrePos.x;
+            const auto cy = centrePos.y;
+
+            const auto dx = static_cast<float>(position.x) - cx;
+            const auto dy = static_cast<float>(position.y) - cy;
+            const auto distanceSquared = dx * dx + dy * dy;
+
+            if (distanceSquared > radius * radius) {
+                continue;
+            }
+
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt == modules.end() ||
+                modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
+                modIt->second.get());
+            if (oscModule != nullptr) {
+                oscModule->cycle_mode_forward();
+                owner_.repaint();
+                return;
+            }
+
+            auto* filterModule =
+                dynamic_cast<rectai::FilterModule*>(modIt->second.get());
+            if (filterModule != nullptr) {
+                filterModule->cycle_mode_forward();
+                owner_.repaint();
+                return;
+            }
+
+            if (auto* sampleModule =
+                    dynamic_cast<rectai::SampleplayModule*>(
+                        modIt->second.get())) {
+                // Right-click on Sampleplay cycles instruments within
+                // the current logical bank. Holding CTRL while
+                // right-clicking switches to the next logical bank
+                // (e.g. drums  synth) using the default preset
+                // associated with that bank.
+                if (mods.isCtrlDown()) {
+                    sampleModule->CycleBank();
+                } else {
+                    sampleModule->CycleInstrument();
+                }
+                owner_.markSampleplayInstrumentLabelActive(
+                    sampleModule->id());
+                owner_.repaint();
+                return;
+            }
+        }
+        // Right-click that does not hit any oscillator or filter tangible
+        // falls through without side effects.
+        return;
+    }
+
+    // First, try to grab one of the per-instrument side controls
+    // (left: Freq, right: Gain). Clicking anywhere on the control
+    // bar (not solo en el handle) moves the value to that position
+    // and starts a drag gesture from there.
+    const float nodeRadius = 26.0F;
+    const float ringRadius = nodeRadius + 10.0F;
+    // Match the visual geometry of the side Freq/Gain arcs: they
+    // almost complete a semi-circle around the node, with a small
+    // gap at the top so the radial audio line can pass between
+    // both bars without being occluded.
+    const float sliderMargin = 3.0F;
+
+    for (const auto& [id, object] : objects) {
+        if (object.logical_id() == rectai::MASTER_OUTPUT_ID) {
+            continue;
+        }
+
+        const auto centrePos = MainComponent::objectTableToScreen(object, bounds);
+        const auto cx = centrePos.x;
+        const auto cy = centrePos.y;
+
+        const bool insideMusic = owner_.isInsideMusicArea(object);
+        float rotationAngle = 0.0F;
+        if (insideMusic) {
+            const float dx = cx - bounds.getCentreX();
+            const float dy = cy - bounds.getCentreY();
+            rotationAngle =
+                std::atan2(dy, dx) -
+                juce::MathConstants<float>::halfPi;
+        }
+
+        const auto modIt = modules.find(object.logical_id());
+        const rectai::AudioModule* moduleForObject =
+            (modIt != modules.end()) ? modIt->second.get() : nullptr;
+        const bool isTempoModule =
+            (moduleForObject != nullptr &&
+             moduleForObject->is<rectai::TempoModule>());
+        bool freqEnabled = false;
+        bool gainEnabled = false;
+        float freqValue = 0.5F;
+        float gainValue = 0.5F;
+        if (moduleForObject != nullptr) {
+            if (isTempoModule) {
+                freqValue = rectai::TempoModule::NormalisedFromBpm(owner_.bpm_);
+            } else if (moduleForObject->is<rectai::LoopModule>()) {
+                // Loop modules use the left bar to select the
+                // current sample slot via the normalised "sample"
+                // parameter.
+                freqValue = moduleForObject->GetParameterOrDefault(
+                    "sample", 0.0F);
+            } else {
+                freqValue = moduleForObject->GetParameterOrDefault(
+                    "freq",
+                    moduleForObject->default_parameter_value("freq"));
+            }
+
+            gainEnabled = moduleForObject->uses_gain_control();
+
+            if (const auto* volumeModule =
+                    dynamic_cast<const rectai::VolumeModule*>(
+                        moduleForObject)) {
+                gainValue = volumeModule->GetParameterOrDefault(
+                    "volume",
+                    volumeModule->default_parameter_value("volume"));
+            } else if (moduleForObject->type() ==
+                       rectai::ModuleType::kFilter) {
+                gainValue = moduleForObject->GetParameterOrDefault(
+                    "q",
+                    moduleForObject->default_parameter_value("q"));
+            } else {
+                gainValue = moduleForObject->GetParameterOrDefault(
+                    "gain",
+                    moduleForObject->default_parameter_value("gain"));
+            }
+
+            freqEnabled =
+                moduleForObject->uses_frequency_control() ||
+                moduleForObject->uses_pitch_control() ||
+                isTempoModule ||
+                moduleForObject->is<rectai::LoopModule>();
+        }
+        freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
+        gainValue = juce::jlimit(0.0F, 1.0F, gainValue);
+
+        const float sliderTop = cy - ringRadius + sliderMargin;
+        const float sliderBottom = cy + ringRadius - sliderMargin;
+
+        const float freqHandleY = juce::jmap(freqValue, 0.0F, 1.0F,
+                                             sliderBottom, sliderTop);
+        const float gainHandleY = juce::jmap(gainValue, 0.0F, 1.0F,
+                                             sliderBottom, sliderTop);
+
+        const float freqDy = freqHandleY - cy;
+        const float gainDy = gainHandleY - cy;
+        const float freqInside = ringRadius * ringRadius - freqDy * freqDy;
+        const float gainInside = ringRadius * ringRadius - gainDy * gainDy;
+
+        float freqHandleX = cx - ringRadius;
+        float gainHandleX = cx + ringRadius;
+        if (freqInside >= 0.0F) {
+            const float dx = std::sqrt(freqInside);
+            freqHandleX = cx - dx;
+        }
+        if (gainInside >= 0.0F) {
+            const float dx = std::sqrt(gainInside);
+            gainHandleX = cx + dx;
+        }
+
+        juce::Point<float> click = position;
+        if (insideMusic) {
+            click = click.transformedBy(
+                juce::AffineTransform::rotation(-rotationAngle, cx, cy));
+        }
+
+        const float clickDx = click.x - cx;
+        const float clickDy = click.y - cy;
+        const float clickDistSq = clickDx * clickDx + clickDy * clickDy;
+        const float moduleCircleRadius = nodeRadius;
+        const bool insideModuleCircle =
+            (clickDistSq <= moduleCircleRadius * moduleCircleRadius);
+
+        auto isOnFreqControlBar = [sliderTop, sliderBottom](float hx,
+                                    juce::Point<float> p) {
+            // Treat the side control as a vertical bar that extends
+            // further towards the outside of the table (screen left),
+            // while keeping the inner edge close to the node so that
+            // the centre area remains available to grab the module.
+            const float halfWidthRight = 14.0F;
+            const float extraLeft = 7.0F;
+            const float leftBoundary = hx - (halfWidthRight + extraLeft);
+            const float rightBoundary = hx + halfWidthRight;
+            const bool withinX = (p.x >= leftBoundary && p.x <= rightBoundary);
+            const bool withinY = (p.y >= sliderTop && p.y <= sliderBottom);
+            return withinX && withinY;
+        };
+
+        auto isOnGainControlBar = [sliderTop, sliderBottom](float hx,
+                                    juce::Point<float> p) {
+            // Extend the clickable area slightly further towards the
+            // outside of the table (screen right) while keeping the
+            // inner edge close to the node so that the centre area
+            // remains available to grab the module.
+            const float halfWidthLeft = 14.0F;
+            const float extraRight = 7.0F;
+            const float leftBoundary = hx - halfWidthLeft;
+            const float rightBoundary = hx + halfWidthLeft + extraRight;
+            const bool withinX = (p.x >= leftBoundary && p.x <= rightBoundary);
+            const bool withinY = (p.y >= sliderTop && p.y <= sliderBottom);
+            return withinX && withinY;
+        };
+
+        const bool modeMenuVisibleForThisModule =
+            (owner_.modeSelection_.menuVisible &&
+             owner_.modeSelection_.moduleId == object.logical_id());
+
+        // Clicking anywhere on the frequency bar. While the
+        // adjustment mode menu is open for this module, disable
+        // interaction with the Freq bar to avoid accidental
+        // parameter changes when the user is targeting the mode
+        // icons.
+        if (!insideModuleCircle && !modeMenuVisibleForThisModule &&
+            freqEnabled && isOnFreqControlBar(freqHandleX, click)) {
+            owner_.sideControlObjectId_ = id;
+            owner_.sideControlKind_ = MainComponent::SideControlKind::kFreq;
+
+            const float clampedY = juce::jlimit(sliderTop, sliderBottom, click.y);
+            const float value = juce::jmap(clampedY, sliderBottom, sliderTop,
+                                           0.0F, 1.0F);
+
+            if (isTempoModule) {
+                const float newBpm =
+                    rectai::TempoModule::BpmFromNormalised(value);
+                owner_.bpm_ = rectai::TempoModule::ClampBpm(newBpm);
+
+                owner_.bpmLastChangeSeconds_ =
+                    juce::Time::getMillisecondCounterHiRes() /
+                    1000.0;
+
+                owner_.scene_.SetModuleParameter(object.logical_id(), "tempo",
+                                          owner_.bpm_);
+            } else {
+                const auto& modulesForFreq = owner_.scene_.modules();
+                const auto modItFreq =
+                    modulesForFreq.find(object.logical_id());
+                rectai::AudioModule* moduleForFreq =
+                    (modItFreq != modulesForFreq.end() &&
+                     modItFreq->second != nullptr)
+                        ? modItFreq->second.get()
+                        : nullptr;
+
+                if (moduleForFreq != nullptr &&
+                    moduleForFreq->uses_pitch_control()) {
+                    // Map absolute click position on the pitch
+                    // control to a MIDI note within the same musical
+                    // window used by the visual segments (roughly
+                    // C2C8). This updates the `midifreq` parameter
+                    // and, for
+                    // Oscillator modules, also keeps the underlying
+                    // `freq` parameter in sync so that the audio
+                    // engine continues to derive Hz from the same
+                    // pitch.
+                    constexpr float kMinMidi = 24.0F;
+                    constexpr float kMaxMidi = 108.0F;
+
+                    const float previousMidi =
+                        moduleForFreq->GetParameterOrDefault(
+                            "midifreq", 57.0F);
+
+                    const float clamped = juce::jlimit(0.0F, 1.0F, value);
+                    float newMidi = juce::jmap(clamped,
+                                               0.0F, 1.0F,
+                                               kMinMidi,
+                                               kMaxMidi);
+
+                    auto* oscModule =
+                        dynamic_cast<rectai::OscillatorModule*>(
+                            moduleForFreq);
+                    float effectivePrevMidi = previousMidi;
+                    float effectiveNewMidi = newMidi;
+                    if (oscModule != nullptr) {
+                        if (oscModule->play_midi_note_from_rotation()) {
+                            // Quantise only the *effective* MIDI
+                            // note used for audio, while keeping the
+                            // stored `midifreq` parameter continuous
+                            // so the UI (triangle marker) can follow
+                            // rotation smoothly between segments.
+                            effectivePrevMidi = std::round(previousMidi);
+                            effectiveNewMidi = std::round(newMidi);
+                            effectivePrevMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                             effectivePrevMidi);
+                            effectiveNewMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                             effectiveNewMidi);
+                        }
+
+                        const double targetHz = 440.0 *
+                                                std::pow(
+                                                    2.0,
+                                                    (static_cast<double>(
+                                                         effectiveNewMidi) -
+                                                     69.0) /
+                                                        12.0);
+
+                        const double baseHz =
+                            oscModule->base_frequency_hz();
+                        const double rangeHz =
+                            oscModule->frequency_range_hz();
+                        if (rangeHz > 0.0) {
+                            const double norm =
+                                (targetHz - baseHz) / rangeHz;
+                            const float freqParam = juce::jlimit(
+                                0.0F, 1.0F,
+                                static_cast<float>(norm));
+                            owner_.scene_.SetModuleParameter(
+                                object.logical_id(), "freq",
+                                freqParam);
+                        }
+                    }
+                    // Always update the raw MIDI parameter so the
+                    // radial UI (segments + triangle) follows
+                    // rotation or clicks smoothly.
+                    owner_.scene_.SetModuleParameter(object.logical_id(),
+                                              "midifreq", newMidi);
+
+                    // Only retrigger the Oscillator envelope when
+                    // the *effective* musical note changes. In
+                    // MIDI-from-rotation mode this corresponds to a
+                    // semitone change; otherwise it behaves like a
+                    // continuous pitch change.
+                    if (oscModule != nullptr) {
+                        const float comparePrev =
+                            oscModule->play_midi_note_from_rotation()
+                                ? effectivePrevMidi
+                                : previousMidi;
+                        const float compareNew =
+                            oscModule->play_midi_note_from_rotation()
+                                ? effectiveNewMidi
+                                : newMidi;
+
+                        if (std::abs(compareNew - comparePrev) >
+                            1.0e-4F) {
+                            owner_.maybeRetriggerOscillatorOnFreqChange(
+                                object.logical_id(), moduleForFreq);
+                        }
+                    }
+                } else if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
+                               moduleForFreq)) {
+                    // Map click position to one of four discrete
+                    // sample slots and update the "sample"
+                    // parameter. Also mark the loop label as
+                    // recently active so the filename overlay
+                    // appears.
+                    // The bottom segment (near sliderBottom) is
+                    // index 0 and the top segment is index 3,
+                    // consistent with the drawing order in
+                    // MainComponent_Paint.
+                    const float clamped = juce::jlimit(0.0F, 1.0F, value);
+                    int segIndex =
+                        static_cast<int>(clamped * 4.0F);
+                    if (segIndex < 0) {
+                        segIndex = 0;
+                    } else if (segIndex > 3) {
+                        segIndex = 3;
+                    }
+                    const float sampleValue =
+                        (static_cast<float>(segIndex) + 0.5F) / 4.0F;
+                    owner_.scene_.SetModuleParameter(object.logical_id(),
+                                              "sample", sampleValue);
+                    owner_.markLoopSampleLabelActive(loopModule->id());
+                } else {
+                    float previousFreq = 0.0F;
+                    if (moduleForFreq != nullptr) {
+                        previousFreq = moduleForFreq->GetParameterOrDefault(
+                            "freq",
+                            moduleForFreq->default_parameter_value("freq"));
+                    }
+
+                    if (std::abs(value - previousFreq) <= 1.0e-4F) {
+                        return;
+                    }
+
+                    owner_.scene_.SetModuleParameter(object.logical_id(), "freq",
+                                              value);
+
+                    owner_.maybeRetriggerOscillatorOnFreqChange(
+                        object.logical_id(), moduleForFreq);
+                }
+            }
+
+            owner_.repaintWithRateLimit();
+            return;
+        }
+
+        // Clicking anywhere on the gain bar.
+        if (!insideModuleCircle &&
+            gainEnabled && isOnGainControlBar(gainHandleX, click)) {
+            owner_.sideControlObjectId_ = id;
+            owner_.sideControlKind_ = MainComponent::SideControlKind::kGain;
+
+            const float clampedY = juce::jlimit(sliderTop, sliderBottom, click.y);
+            const float value = juce::jmap(clampedY, sliderBottom, sliderTop,
+                                           0.0F, 1.0F);
+
+            const auto& modulesForGain = owner_.scene_.modules();
+            const auto modItGain = modulesForGain.find(object.logical_id());
+            if (modItGain != modulesForGain.end() &&
+                modItGain->second != nullptr) {
+                auto* module = modItGain->second.get();
+                if (module->type() == rectai::ModuleType::kFilter) {
+                    owner_.scene_.SetModuleParameter(object.logical_id(), "q",
+                                              value);
+                } else if (dynamic_cast<rectai::VolumeModule*>(module) !=
+                           nullptr) {
+                    owner_.scene_.SetModuleParameter(object.logical_id(), "volume",
+                                              value);
+                } else if (dynamic_cast<rectai::LoopModule*>(module) !=
+                           nullptr ||
+                           dynamic_cast<rectai::SampleplayModule*>(
+                               module) != nullptr) {
+                    // Loop and Sampleplay expose their main level as
+                    // "amp" instead of "gain".
+                    owner_.scene_.SetModuleParameter(object.logical_id(), "amp",
+                                              value);
+                } else {
+                    owner_.scene_.SetModuleParameter(object.logical_id(), "gain",
+                                              value);
+                }
+            } else {
+                owner_.scene_.SetModuleParameter(object.logical_id(), "gain",
+                                          value);
+            }
+
+            owner_.repaintWithRateLimit();
+            return;
+        }
+
+        // Bottom adjustment mode button: small rectangular area centred
+        // below the node body, in the gap between the left/right side
+        // controls. We perform hit-testing in module-local coordinates
+        // so that the button naturally rotates with the module when it
+        // lives inside the musical area.
+        if (moduleForObject != nullptr &&
+            !moduleForObject->supported_modes().empty()) {
+            const float buttonWidth = nodeRadius * 1.4F;
+            const float buttonHeight = 12.0F;
+            const float buttonCenterY = cy + nodeRadius + 8.0F;
+
+            const float buttonLeft = cx - buttonWidth * 0.5F;
+            const float buttonRight = cx + buttonWidth * 0.5F;
+            const float buttonTop = buttonCenterY - buttonHeight * 0.5F;
+            const float buttonBottom =
+                buttonCenterY + buttonHeight * 0.5F;
+
+            if (!insideModuleCircle && click.x >= buttonLeft &&
+                click.x <= buttonRight && click.y >= buttonTop &&
+                click.y <= buttonBottom) {
+                const bool menuVisibleForThis =
+                    (owner_.modeSelection_.menuVisible &&
+                     owner_.modeSelection_.moduleId ==
+                         object.logical_id());
+
+                if (menuVisibleForThis) {
+                    // Toggle off: cancel the mode menu for this
+                    // module without changing its current mode.
+                    owner_.modeSelection_ = MainComponent::ModeSelectionState{};
+                    owner_.modeControlObjectId_ = 0;
+                    owner_.modeDragActive_ = false;
+                    owner_.modeDragProgress_ = 0.0F;
+                    owner_.repaintWithRateLimit();
+                    return;
+                }
+
+                // Start a new drag gesture from the bottom button.
+                owner_.modeControlObjectId_ = id;
+                owner_.modeDragActive_ = false;
+                owner_.modeDragProgress_ = 0.0F;
+                owner_.modeDragStartLocal_ = click;
+                owner_.modeSelection_ = MainComponent::ModeSelectionState{};
+                owner_.modeSelection_.moduleId = object.logical_id();
+                owner_.repaintWithRateLimit();
+                return;
+            }
+        }
+    }
+
+    // Next, try to select an object by clicking on its circle.
+    for (const auto& [id, object] : objects) {
+        if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+            object.docked()) {
+            continue;
+        }
+        const auto centrePos = MainComponent::objectTableToScreen(object, bounds);
+        const auto cx = centrePos.x;
+        const auto cy = centrePos.y;
+
+        const auto dx = static_cast<float>(position.x) - cx;
+        const auto dy = static_cast<float>(position.y) - cy;
+        const auto distanceSquared = dx * dx + dy * dy;
+
+        if (distanceSquared <= radius * radius) {
+            owner_.draggedObjectId_ = id;
+            break;
+        }
+    }
+
+    // If no free object was picked, try selecting a docked module from the
+    // right-hand dock strip so it can be dragged into the musical area.
+    if (owner_.draggedObjectId_ == 0) {
+        std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+            dockedObjects;
+        dockedObjects.reserve(objects.size());
+        for (const auto& [id, obj] : objects) {
+            if (obj.docked()) {
+                dockedObjects.emplace_back(id, &obj);
+            }
+        }
+
+        if (!dockedObjects.empty()) {
+            std::sort(dockedObjects.begin(), dockedObjects.end(),
+                      [](const auto& a, const auto& b) {
+                          return a.first < b.first;
+                      });
+
+            auto dockBounds = bounds;
+            const float dockWidthPick =
+                owner_.calculateDockWidth(dockBounds.getWidth());
+            juce::Rectangle<float> dockAreaPick =
+                dockBounds.removeFromRight(dockWidthPick);
+
+            const float titleHeight = 24.0F;
+            juce::Rectangle<float> titleArea =
+                dockAreaPick.removeFromTop(titleHeight);
+            juce::ignoreUnused(titleArea);
+
+            const float availableHeight = dockAreaPick.getHeight();
+            const float nodeRadiusDock = 18.0F;
+            const float verticalPadding = 12.0F;
+            const float slotHeight =
+                nodeRadiusDock * 2.0F + verticalPadding;
+            const float contentHeight =
+                slotHeight * static_cast<float>(dockedObjects.size());
+            const float minOffset =
+                (contentHeight > availableHeight)
+                    ? (availableHeight - contentHeight)
+                    : 0.0F;
+            owner_.dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
+                                             owner_.dockScrollOffset_);
+            const float baseY = dockAreaPick.getY() + owner_.dockScrollOffset_;
+
+            for (std::size_t i = 0; i < dockedObjects.size(); ++i) {
+                const auto id = dockedObjects[i].first;
+
+                const float cy = baseY + (static_cast<float>(i) + 0.5F) *
+                                            slotHeight;
+                const float cx = dockAreaPick.getX() +
+                                 dockAreaPick.getWidth() * 0.5F;
+
+                const float dx = static_cast<float>(position.x) - cx;
+                const float dy = static_cast<float>(position.y) - cy;
+                const float distanceSquared = dx * dx + dy * dy;
+
+                if (distanceSquared <= nodeRadiusDock * nodeRadiusDock) {
+                    owner_.draggedObjectId_ = id;
+                    return;
+                }
+            }
+        }
+        // If click is inside the dock but not on any module, start a
+        // simple drag-based scroll gesture.
+        auto dockBounds = bounds;
+        const float dockWidthDrag =
+            owner_.calculateDockWidth(dockBounds.getWidth());
+        juce::Rectangle<float> dockAreaDrag =
+            dockBounds.removeFromRight(dockWidthDrag);
+        if (dockAreaDrag.contains(position)) {
+            owner_.isDraggingDockScroll_ = true;
+            owner_.dockLastDragY_ = static_cast<float>(position.y);
+            return;
+        }
+    }
+
+    // If no object was selected, check if the click is near a line
+    // connecting an object to the centre to toggle that instrument's mute,
+    // or near a connection between instruments to toggle the source's mute.
+    if (owner_.draggedObjectId_ == 0) {
+        const auto centre = bounds.getCentre();
+        const auto click = position;
+        constexpr float maxDistance = 6.0F;
+        const float maxDistanceSq = maxDistance * maxDistance;
+
+        const auto& objectsLocal = owner_.scene_.objects();
+        const auto& modulesLocal = owner_.scene_.modules();
+
+        auto isPointNearSegment = [](juce::Point<float> p, juce::Point<float> a,
+                                     juce::Point<float> b,
+                                     const float maxDistSq) {
+            const auto ab = b - a;
+            const auto ap = p - a;
+            const auto abLenSq = ab.x * ab.x + ab.y * ab.y;
+            float t = 0.0F;
+            if (abLenSq > 0.0F) {
+                t = (ap.x * ab.x + ap.y * ab.y) / abLenSq;
+                t = juce::jlimit(0.0F, 1.0F, t);
+            }
+            const auto closest = a + ab * t;
+            const auto dx = p.x - closest.x;
+            const auto dy = p.y - closest.y;
+            const auto distSq = dx * dx + dy * dy;
+            return distSq <= maxDistSq;
+        };
+
+        // First, allow muting via connections between instruments.
+        const auto geometry = owner_.buildGeometryCache();
+        const auto& moduleToObjectId = geometry.moduleToObjectId;
+
+        // Track which objects currently have an active outgoing connection
+        // so that the hit-test for the centre \u0016 object line follows the
+        // same visibility rules used in paint(): generators that are feeding
+        // another module through an active connection do not render a direct
+        // line to the master and therefore should not be clickable either.
+        std::unordered_set<std::int64_t> objectsWithOutgoingActiveConnection;
+        for (const auto& conn : owner_.scene_.connections()) {
+            // Ignore connections targeting the invisible Output/master
+            // module (id MASTER_OUTPUT_ID) so that auto-wired master
+            // links do not affect centre-line hit-testing.
+            if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                continue;
+            }
+
+            const auto fromIdIt = moduleToObjectId.find(conn.from_module_id);
+            const auto toIdIt = moduleToObjectId.find(conn.to_module_id);
+            if (fromIdIt == moduleToObjectId.end() ||
+                toIdIt == moduleToObjectId.end()) {
+                continue;
+            }
+
+            const auto fromObjIt = objectsLocal.find(fromIdIt->second);
+            const auto toObjIt = objectsLocal.find(toIdIt->second);
+            if (fromObjIt == objectsLocal.end() ||
+                toObjIt == objectsLocal.end()) {
+                continue;
+            }
+
+            const auto& fromObj = fromObjIt->second;
+            const auto& toObj = toObjIt->second;
+
+            if (!owner_.isInsideMusicArea(fromObj) || !owner_.isInsideMusicArea(toObj)) {
+                continue;
+            }
+
+            if (conn.is_hardlink ||
+                isConnectionGeometricallyActive(fromObj, toObj)) {
+                objectsWithOutgoingActiveConnection.insert(fromIdIt->second);
+            }
+        }
+
+        for (const auto& conn : owner_.scene_.connections()) {
+            const auto fromIdIt = moduleToObjectId.find(conn.from_module_id);
+            const auto toIdIt = moduleToObjectId.find(conn.to_module_id);
+            if (fromIdIt == moduleToObjectId.end() ||
+                toIdIt == moduleToObjectId.end()) {
+                continue;
+            }
+
+            const auto fromObjIt = objectsLocal.find(fromIdIt->second);
+            const auto toObjIt = objectsLocal.find(toIdIt->second);
+            if (fromObjIt == objectsLocal.end() ||
+                toObjIt == objectsLocal.end()) {
+                continue;
+            }
+
+            const auto& fromObj = fromObjIt->second;
+            const auto& toObj = toObjIt->second;
+
+            if (!owner_.isInsideMusicArea(fromObj) || !owner_.isInsideMusicArea(toObj) ||
+                (!conn.is_hardlink &&
+                 !isConnectionGeometricallyActive(fromObj, toObj))) {
+                continue;
+            }
+
+            const auto fromPos = MainComponent::objectTableToScreen(fromObj, bounds);
+            const auto fx = fromPos.x;
+            const auto fy = fromPos.y;
+            const auto toPos = MainComponent::objectTableToScreen(toObj, bounds);
+            const auto tx = toPos.x;
+            const auto ty = toPos.y;
+
+            if (isPointNearSegment(click, {fx, fy}, {tx, ty}, maxDistanceSq)) {
+                const std::string key = makeConnectionKey(conn);
+
+                // Calculate normalized position along the line (0=from, 1=to).
+                const juce::Point<float> p1{fx, fy};
+                const juce::Point<float> p2{tx, ty};
+                const auto ab = p2 - p1;
+                const auto ap = click - p1;
+                const auto abLenSq = ab.x * ab.x + ab.y * ab.y;
+                float splitPoint = 0.5F;  // Default to mid-point.
+                if (abLenSq > 0.0F) {
+                    splitPoint = (ap.x * ab.x + ap.y * ab.y) / abLenSq;
+                    splitPoint = juce::jlimit(0.0F, 1.0F, splitPoint);
+                }
+
+                // Store hold state for temporary mute/visualisation.
+                // The actual mute is driven by activeConnectionHold_
+                // in timerCallback() rather than by mutating
+                // mutedConnections_. When the connection is already
+                // muted at the start of the gesture, remember that so
+                // that releasing the hold can clear that mute.
+                const bool isCurrentlyMuted =
+                    owner_.mutedConnections_.find(key) !=
+                    owner_.mutedConnections_.end();
+                owner_.activeConnectionHold_ = MainComponent::ConnectionHoldState{
+                    key,
+                    0,   // Not an object-to-center line.
+                    false,
+                    splitPoint,
+                    isCurrentlyMuted};
+
+                owner_.repaintWithRateLimit();
+                return;
+            }
+        }
+
+        // Fallback: muting via the line centre -> object. Only objects that
+        // actually render a visible line to the master in paint() should be
+        // clickable here (i.e. only modules that carry audio and not pure
+        // control/MIDI modules such as the Sequencer).
+        for (const auto& [id, object] : objectsLocal) {
+            if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+                object.docked()) {
+                continue;
+            }
+
+            if (!owner_.isInsideMusicArea(object)) {
+                continue;
+            }
+
+            const bool hasActiveOutgoingConnection =
+                objectsWithOutgoingActiveConnection.find(id) !=
+                objectsWithOutgoingActiveConnection.end();
+
+            const auto modForConnectionIt =
+                modulesLocal.find(object.logical_id());
+            const rectai::AudioModule* moduleForConnection = nullptr;
+            if (modForConnectionIt != modulesLocal.end() &&
+                modForConnectionIt->second != nullptr) {
+                moduleForConnection = modForConnectionIt->second.get();
+            }
+
+            const bool isGenerator =
+                moduleForConnection != nullptr &&
+                moduleForConnection->type() ==
+                    rectai::ModuleType::kGenerator;
+            const bool isGlobalController =
+                moduleForConnection != nullptr &&
+                moduleForConnection->is_global_controller();
+            const bool isAudioModule =
+                moduleForConnection != nullptr &&
+                (moduleForConnection->produces_audio() ||
+                 moduleForConnection->consumes_audio());
+
+            // Only modules that truly carry audio (produce or consume audio)
+            // draw a radial line to the master and therefore should be
+            // clickable here. Global controllers and MIDI/control-only
+            // modules are excluded.
+            if (isGlobalController || !isAudioModule) {
+                continue;
+            }
+
+            // Generators feeding another module through an active connection
+            // hide their direct visual line to the master; that line should
+            // not be clickable either.
+            if (isGenerator && hasActiveOutgoingConnection) {
+                continue;
+            }
+
+            const auto centrePos = MainComponent::objectTableToScreen(object, bounds);
+            const auto cx = centrePos.x;
+            const auto cy = centrePos.y;
+
+            if (isPointNearSegment(click, centre, {cx, cy}, maxDistanceSq)) {
+                // Calculate normalized position along the line (0=center, 1=object).
+                const juce::Point<float> p1 = centre;
+                const juce::Point<float> p2{cx, cy};
+                const auto ab = p2 - p1;
+                const auto ap = click - p1;
+                const auto abLenSq = ab.x * ab.x + ab.y * ab.y;
+                float splitPoint = 0.5F; // Default to mid-point.
+                if (abLenSq > 0.0F) {
+                    splitPoint = (ap.x * ab.x + ap.y * ab.y) / abLenSq;
+                    splitPoint = juce::jlimit(0.0F, 1.0F, splitPoint);
+                }
+                
+                // Store hold state and apply temporary mute. Also
+                // record whether the implicit modulemaster
+                // connection is currently muted so that releasing a
+                // hold on an already-muted radial clears that mute.
+                bool isRadialMuted = false;
+                for (const auto& conn : owner_.scene_.connections()) {
+                    if (conn.from_module_id != object.logical_id() ||
+                        conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                        continue;
+                    }
+
+                    const std::string key = makeConnectionKey(conn);
+                    if (owner_.mutedConnections_.find(key) !=
+                        owner_.mutedConnections_.end()) {
+                        isRadialMuted = true;
+                        break;
+                    }
+                }
+
+                owner_.activeConnectionHold_ = MainComponent::ConnectionHoldState{
+                    "",  // No connection key for object-to-center lines.
+                    id,
+                    true,
+                    splitPoint,
+                    isRadialMuted
+                };
+
+                owner_.repaintWithRateLimit();
+                return;
+            }
+        }
+    }
+
+    // If we reach this point without having started a drag, dock
+    // scroll, side control adjustment or hold-mute on a line, and the
+    // pointer is inside the musical area (but not in the dock), treat
+    // this gesture as a "cut" gesture. This enables the red cursor +
+    // trail and line-cut logic during mouseDrag.
+    if (!owner_.touchStartedInDock_ &&
+        owner_.draggedObjectId_ == 0 &&
+        owner_.sideControlObjectId_ == 0 &&
+        owner_.sideControlKind_ == MainComponent::SideControlKind::kNone &&
+        !owner_.isDraggingDockScroll_ &&
+        !owner_.activeConnectionHold_.has_value()) {
+        const auto localBounds = owner_.getLocalBounds().toFloat();
+        const auto centre = localBounds.getCentre();
+        const float tableRadius =
+            0.45F * std::min(localBounds.getWidth(),
+                              localBounds.getHeight());
+
+        const float dx = static_cast<float>(position.x) - centre.x;
+        const float dy = static_cast<float>(position.y) - centre.y;
+        const float distSq = dx * dx + dy * dy;
+
+        if (distSq <= tableRadius * tableRadius) {
+            owner_.isCutModeActive_ = true;
+        }
+    }
+}
+
+void InteractionSystem::handlePointerDrag(const PointerEvent& event)
+{
+    const auto bounds = owner_.getLocalBounds().toFloat();
+
+    const juce::Point<float> position = event.position;
+    const juce::ModifierKeys mods = buildModifierKeys(event);
+
+    // Update touch state during drag.
+    owner_.isTouchHeld_ = true;
+    owner_.currentTouchPosition_ = position;
+    owner_.lastPointerPosition_ = position;
+
+    // Add point to trail only if touch started in window area (not dock).
+    if (!owner_.touchStartedInDock_) {
+        const double currentTime =
+            juce::Time::getMillisecondCounterHiRes() / 1000.0;
+        owner_.touchTrail_.push_back({position, currentTime});
+
+        // Remove old points that have fully faded out and limit trail size.
+        if (MainComponent::kEnableTrailFade) {
+            owner_.touchTrail_.erase(
+                std::remove_if(
+                    owner_.touchTrail_.begin(), owner_.touchTrail_.end(),
+                    [currentTime](const MainComponent::TrailPoint& point) {
+                        return (currentTime - point.timestamp) >=
+                               MainComponent::kTrailFadeDurationSeconds;
+                    }),
+                owner_.touchTrail_.end());
+        }
+
+        // Hard limit trail size to prevent memory growth.
+        if (owner_.touchTrail_.size() >
+            static_cast<size_t>(MainComponent::kMaxTrailPoints)) {
+            owner_.touchTrail_.erase(owner_.touchTrail_.begin());
+        }
+
+        // Before line cutting, allow scrolling inside an open
+        // TextScroll-based module panel (LoopFiles, Tempo presets)
+        // by dragging over its TextScrollList, but only when a drag
+        // actually started inside that panel's content area.
+        if (owner_.activePanelDrag_.has_value() &&
+            owner_.activePanelDrag_->kind ==
+                MainComponent::PanelDragKind::kLoopFilesScroll) {
+            const auto activeModuleId =
+                owner_.activePanelDrag_->moduleId;
+
+            const auto& modules = owner_.scene_.modules();
+            const auto& objects = owner_.scene_.objects();
+            for (const auto& [moduleId, panelState] : owner_.modulePanels_) {
+                if (!panelState.visible ||
+                    moduleId != activeModuleId) {
+                    continue;
+                }
+
+                // Locate the object that owns this panel by matching
+                // logical_id with the module id stored in the panel
+                // state.
+                const rectai::ObjectInstance* objectPtr = nullptr;
+                for (const auto& [objId, obj] : objects) {
+                    juce::ignoreUnused(objId);
+                    if (obj.logical_id() == moduleId) {
+                        objectPtr = &obj;
+                        break;
+                    }
+                }
+
+                if (objectPtr == nullptr) {
+                    continue;
+                }
+
+                const auto& object = *objectPtr;
+                const auto modIt = modules.find(object.logical_id());
+                if (modIt == modules.end() ||
+                    modIt->second == nullptr) {
+                    continue;
+                }
+
+                const auto* moduleForPanel = modIt->second.get();
+
+                rectai::ui::TextScrollList* list = nullptr;
+
+                if (panelState.activeTab ==
+                    MainComponent::ModulePanelState::Tab::kLoopFiles) {
+                    auto* loopModule =
+                        dynamic_cast<rectai::LoopModule*>(
+                            const_cast<rectai::AudioModule*>(
+                                moduleForPanel));
+                    if (loopModule == nullptr) {
+                        continue;
+                    }
+
+                    owner_.ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                            loopModule);
+                    owner_.rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                                         loopModule);
+
+                    list = owner_.getOrCreateLoopFileList(panelState.moduleId);
+                } else if (panelState.activeTab ==
+                           MainComponent::ModulePanelState::Tab::kSettings) {
+                    auto* tempoModule =
+                        dynamic_cast<rectai::TempoModule*>(
+                            const_cast<rectai::AudioModule*>(
+                                moduleForPanel));
+                    if (tempoModule == nullptr) {
+                        continue;
+                    }
+
+                    list = owner_.getOrCreateTempoPresetList(panelState.moduleId);
+                }
+
+                if (list == nullptr) {
+                    continue;
+                }
+
+                const auto centrePos =
+                    MainComponent::objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                // Match the same rotation logic used for panel
+                // hit-tests in handlePointerDown so that the
+                // LoopFiles content area stays aligned with the
+                // rotated module.
+                const auto tableCentre = bounds.getCentre();
+                const float dx = cx - tableCentre.x;
+                const float dy = cy - tableCentre.y;
+                float rotationAngle = 0.0F;
+                if (owner_.isInsideMusicArea(object)) {
+                    rotationAngle =
+                        std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+                }
+
+                juce::Point<float> localPos = position;
+                if (rotationAngle != 0.0F) {
+                    localPos = localPos.transformedBy(
+                        juce::AffineTransform::rotation(
+                            -rotationAngle, cx, cy));
+                }
+
+                auto panelBounds =
+                    owner_.getModulePanelBounds(object, bounds);
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                // Even when the pointer is dragged outside the
+                // visual content area, keep updating the scroll
+                // based on its vertical displacement.
+                const float localY =
+                    localPos.y - contentBounds.getY();
+                list->dragPointerTo(localY);
+                owner_.repaintWithRateLimit();
+                return;
+            }
+        }
+
+        // Line cutting: detect when the touch trail crosses audio lines
+        // (connections or object-to-center lines) and toggle them for
+        // mute when the touch is released.
+        // This is only enabled in explicit cut mode (red cursor) and is
+        // skipped while dragging modules, adjusting side controls or
+        // holding a line for temporary mute.
+        if (owner_.isCutModeActive_ &&
+            owner_.touchTrail_.size() >= 2 &&
+            owner_.draggedObjectId_ == 0 &&
+            owner_.sideControlKind_ == MainComponent::SideControlKind::kNone &&
+            !owner_.activeConnectionHold_.has_value()) {
+            const auto centre = bounds.getCentre();
+            const auto& objects = owner_.scene_.objects();
+            const auto& modules = owner_.scene_.modules();
+
+            // Use only the most recent segment with increased threshold
+            // for better detection at varying speeds.
+            const auto& prevPoint = owner_.touchTrail_[owner_.touchTrail_.size() - 2];
+            const auto& currPoint = owner_.touchTrail_[owner_.touchTrail_.size() - 1];
+            const float detectionThreshold = 15.0F;
+
+            // Check intersections con las líneas objeto-centro. Debe
+            // corresponderse con los módulos que realmente dibujan una
+            // radial hacia el master en paint(): sólo módulos que
+            // producen/consumen audio, excluyendo controladores globales
+            // y módulos sólo MIDI/control como el Sequencer.
+            for (const auto& [id, object] : objects) {
+                if (object.logical_id() == rectai::MASTER_OUTPUT_ID || object.docked() ||
+                    !owner_.isInsideMusicArea(object)) {
+                    continue;
+                }
+
+                const auto modIt = modules.find(object.logical_id());
+                const rectai::AudioModule* moduleForLine = nullptr;
+                if (modIt != modules.end() && modIt->second != nullptr) {
+                    moduleForLine = modIt->second.get();
+                }
+
+                const bool isGlobalController =
+                    moduleForLine != nullptr &&
+                    moduleForLine->is_global_controller();
+                const bool isAudioModule =
+                    moduleForLine != nullptr &&
+                    (moduleForLine->produces_audio() ||
+                     moduleForLine->consumes_audio());
+
+                // Only modules that truly carry audio (produce or consume
+                // audio) have a radial line that can be clicked or cut.
+                if (isGlobalController || !isAudioModule) {
+                    continue;
+                }
+
+                // Skip generator-like modules that are feeding another
+                // module. Cualquier módulo no "settings" que tenga una
+                // conexión saliente activa oculta su radial directa al
+                // master y, por tanto, no debe poder cortarse.
+                const bool isGeneratorLike =
+                    moduleForLine != nullptr &&
+                    moduleForLine->type() !=
+                        rectai::ModuleType::kSettings;
+                
+                bool hasActiveOutgoingConnection = false;
+                for (const auto& conn : owner_.scene_.connections()) {
+                    // Skip auto-wired connections from generators to the
+                    // invisible Output/master module so that only real
+                    // module-to-module chains influence centre-line cuts.
+                    if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                        continue;
+                    }
+
+                    if (conn.from_module_id == object.logical_id()) {
+                        const auto toIdIt = std::find_if(
+                            objects.begin(), objects.end(),
+                            [&conn](const auto& pair) {
+                                return pair.second.logical_id() ==
+                                       conn.to_module_id;
+                            });
+                        if (toIdIt != objects.end()) {
+                            const auto& toObj = toIdIt->second;
+                            if (owner_.isInsideMusicArea(toObj) &&
+                                (conn.is_hardlink ||
+                                 isConnectionGeometricallyActive(
+                                     object, toObj))) {
+                                hasActiveOutgoingConnection = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (isGeneratorLike && hasActiveOutgoingConnection) {
+                    continue;
+                }
+
+                const auto centrePos = MainComponent::objectTableToScreen(object, bounds);
+                const auto cx = centrePos.x;
+                const auto cy = centrePos.y;
+
+                // Check intersection with the latest segment.
+                const bool intersects = lineSegmentsIntersect(
+                    prevPoint.position, currPoint.position, {cx, cy},
+                    centre, detectionThreshold);
+
+                const bool wasIntersecting =
+                    owner_.touchCurrentlyIntersectingObjects_.find(id) !=
+                    owner_.touchCurrentlyIntersectingObjects_.end();
+
+                if (intersects && !wasIntersecting) {
+                    // Just entered intersection zone: toggle.
+                    owner_.touchCurrentlyIntersectingObjects_.insert(id);
+                    
+                    if (owner_.touchCutObjects_.find(id) !=
+                        owner_.touchCutObjects_.end()) {
+                        owner_.touchCutObjects_.erase(id);
+                    } else {
+                        owner_.touchCutObjects_.insert(id);
+                    }
+                } else if (!intersects && wasIntersecting) {
+                    // Just exited intersection zone: update state.
+                    owner_.touchCurrentlyIntersectingObjects_.erase(id);
+                }
+            }
+
+            // Check intersections with module-to-module connections.
+            for (const auto& conn : owner_.scene_.connections()) {
+                // Skip explicit connections that target the
+                // invisible Output/master (id MASTER_OUTPUT_ID).
+                // Cutting the objectcentre radial already toggles
+                // the implicit modulemaster route; including these
+                // edges here would cause a double toggle (radial
+                // + connection) for the same underlying path,
+                // effectively cancelling the mute.
+                if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                    continue;
+                }
+
+                const auto fromIt = std::find_if(
+                    objects.begin(), objects.end(),
+                    [&conn](const auto& pair) {
+                        return pair.second.logical_id() ==
+                               conn.from_module_id;
+                    });
+                const auto toIt = std::find_if(
+                    objects.begin(), objects.end(),
+                    [&conn](const auto& pair) {
+                        return pair.second.logical_id() ==
+                               conn.to_module_id;
+                    });
+                if (fromIt == objects.end() || toIt == objects.end()) {
+                    continue;
+                }
+
+                const auto& fromObj = fromIt->second;
+                const auto& toObj = toIt->second;
+
+                if (!owner_.isInsideMusicArea(fromObj) ||
+                    !owner_.isInsideMusicArea(toObj) ||
+                    (!conn.is_hardlink &&
+                     !isConnectionGeometricallyActive(fromObj, toObj))) {
+                    continue;
+                }
+
+                const auto fromPos =
+                    MainComponent::objectTableToScreen(fromObj, bounds);
+                const auto toPos =
+                    MainComponent::objectTableToScreen(toObj, bounds);
+                const auto fx = fromPos.x;
+                const auto fy = fromPos.y;
+                const auto tx = toPos.x;
+                const auto ty = toPos.y;
+
+                const std::string key = makeConnectionKey(conn);
+
+                // Check intersection with the latest segment.
+                const bool intersects = lineSegmentsIntersect(
+                    prevPoint.position, currPoint.position, {fx, fy},
+                    {tx, ty}, detectionThreshold);
+
+                const bool wasIntersecting =
+                    owner_.touchCurrentlyIntersectingConnections_.find(key) !=
+                    owner_.touchCurrentlyIntersectingConnections_.end();
+
+                if (intersects && !wasIntersecting) {
+                    // Just entered intersection zone: toggle.
+                    owner_.touchCurrentlyIntersectingConnections_.insert(key);
+                    
+                    if (owner_.touchCutConnections_.find(key) !=
+                        owner_.touchCutConnections_.end()) {
+                        owner_.touchCutConnections_.erase(key);
+                    } else {
+                        owner_.touchCutConnections_.insert(key);
+                    }
+                } else if (!intersects && wasIntersecting) {
+                    // Just exited intersection zone: update state.
+                    owner_.touchCurrentlyIntersectingConnections_.erase(key);
+                }
+            }
+        }
+    }
+
+    // Continuous ADSR envelope adjustment while dragging on a bar in
+    // the per-module Envelope view. This takes precedence over cut
+    // gestures and other drags.
+    if (owner_.activePanelDrag_.has_value() &&
+        owner_.activePanelDrag_->kind == MainComponent::PanelDragKind::kEnvelopeBar) {
+        const MainComponent::ActivePanelDrag dragState = *owner_.activePanelDrag_;
+        if (!dragState.moduleId.empty() && dragState.index >= 0 &&
+            dragState.index < 4) {
+            const auto& objects = owner_.scene_.objects();
+            const auto& modules = owner_.scene_.modules();
+
+            const auto modIt = modules.find(dragState.moduleId);
+            if (modIt != modules.end() && modIt->second != nullptr) {
+                auto* modulePtr = modIt->second.get();
+                auto* envModule =
+                    dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                        modulePtr);
+                if (envModule != nullptr) {
+                    const rectai::ObjectInstance* panelObject = nullptr;
+                    for (const auto& [id, obj] : objects) {
+                        juce::ignoreUnused(id);
+                        if (obj.logical_id() == dragState.moduleId &&
+                            !obj.docked() && owner_.isInsideMusicArea(obj)) {
+                            panelObject = &obj;
+                            break;
+                        }
+                    }
+
+                    if (panelObject != nullptr) {
+                        const auto centrePos =
+                            MainComponent::objectTableToScreen(*panelObject, bounds);
+                        const float cx = centrePos.x;
+                        const float cy = centrePos.y;
+
+                        const auto boundsF = bounds.toFloat();
+                        const auto tableCentre = boundsF.getCentre();
+                        const float dx = cx - tableCentre.x;
+                        const float dy = cy - tableCentre.y;
+                        float rotationAngle = 0.0F;
+                        if (owner_.isInsideMusicArea(*panelObject)) {
+                            rotationAngle =
+                                std::atan2(dy, dx) -
+                                juce::MathConstants<float>::halfPi;
+                        }
+
+                        juce::Point<float> localPos = position;
+                        if (rotationAngle != 0.0F) {
+                            localPos = localPos.transformedBy(
+                                juce::AffineTransform::rotation(
+                                    -rotationAngle, cx, cy));
+                        }
+
+                        const auto panelBounds =
+                            owner_.getModulePanelBounds(*panelObject, bounds);
+                        const auto geom = computeModuleEnvelopeGeometry(
+                            panelBounds);
+
+                        const float valueRangeTop = geom.barsArea.getY();
+                        const float valueRangeBottom =
+                            geom.barsArea.getBottom();
+                        const float clampedY = juce::jlimit(
+                            valueRangeTop, valueRangeBottom, localPos.y);
+                        const float value01Visual = juce::jmap(
+                            clampedY, valueRangeBottom, valueRangeTop,
+                            0.0F, 1.0F);
+
+                        if (dragState.index == 2) {
+                            // Sustain bar: edit sustain level linearly via
+                            // the third control point in points_y.
+                            auto& env = envModule->mutable_envelope();
+                            const float sustain01 = juce::jlimit(
+                                0.0F, 1.0F, value01Visual);
+
+                            if (env.points_y.size() > 2) {
+                                env.points_y[2] = sustain01;
+                                if (env.points_y.size() > 3) {
+                                    env.points_y[3] = sustain01;
+                                }
+                            }
+
+                            owner_.updateOscillatorSustainFromEnvelope(
+                                dragState.moduleId);
+                        } else {
+                            auto clampMs = [](float value, float maxMs) {
+                                if (!std::isfinite(value) || value < 0.0F) {
+                                    return 0.0F;
+                                }
+                                if (value > maxMs) {
+                                    return maxMs;
+                                }
+                                return value;
+                            };
+
+                            const float maxMs =
+                                (dragState.index == 0)
+                                    ? kModuleEnvelopeMaxAttackMs
+                                    : (dragState.index == 1)
+                                          ? kModuleEnvelopeMaxDecayMs
+                                          : kModuleEnvelopeMaxReleaseMs;
+
+                            const float visual01 = juce::jlimit(
+                                0.0F, 1.0F, value01Visual);
+                            const float normalised01 =
+                                moduleEnvelopeNormalisedFromVisual(visual01);
+                            const float scaled = clampMs(
+                                normalised01 * maxMs, maxMs);
+
+                            if (dragState.index == 0) {
+                                envModule->set_envelope_attack(scaled);
+                            } else if (dragState.index == 1) {
+                                envModule->set_envelope_decay(scaled);
+                            } else {
+                                envModule->set_envelope_release(scaled);
+                            }
+                        }
+
+                        owner_.repaintWithRateLimit();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // Continuous XY pad adjustment while dragging inside the
+    // per-module XYControl view. This behaves similarly to LoopFiles
+    // scroll in that it owns the gesture while active.
+    if (owner_.activePanelDrag_.has_value() &&
+        owner_.activePanelDrag_->kind == MainComponent::PanelDragKind::kXYControl) {
+        const MainComponent::ActivePanelDrag dragState = *owner_.activePanelDrag_;
+        if (!dragState.moduleId.empty()) {
+            const auto& objectsLocal = owner_.scene_.objects();
+            const auto& modulesLocal = owner_.scene_.modules();
+
+            const auto modIt = modulesLocal.find(dragState.moduleId);
+            if (modIt != modulesLocal.end() &&
+                modIt->second != nullptr) {
+                const auto* modulePtr = modIt->second.get();
+
+                const rectai::ObjectInstance* panelObject = nullptr;
+                for (const auto& [id, obj] : objectsLocal) {
+                    juce::ignoreUnused(id);
+                    if (obj.logical_id() == dragState.moduleId &&
+                        !obj.docked() && owner_.isInsideMusicArea(obj)) {
+                        panelObject = &obj;
+                        break;
+                    }
+                }
+
+                if (panelObject != nullptr) {
+                    const auto centrePos =
+                        MainComponent::objectTableToScreen(*panelObject, bounds);
+                    const float cx = centrePos.x;
+                    const float cy = centrePos.y;
+
+                    const auto boundsF = bounds.toFloat();
+                    const auto tableCentre = boundsF.getCentre();
+                    const float dx = cx - tableCentre.x;
+                    const float dy = cy - tableCentre.y;
+                    float rotationAngle = 0.0F;
+                    if (owner_.isInsideMusicArea(*panelObject)) {
+                        rotationAngle =
+                            std::atan2(dy, dx) -
+                            juce::MathConstants<float>::halfPi;
+                    }
+
+                    juce::Point<float> localPos = position;
+                    if (rotationAngle != 0.0F) {
+                        localPos = localPos.transformedBy(
+                            juce::AffineTransform::rotation(
+                                -rotationAngle, cx, cy));
+                    }
+
+                    auto panelBounds =
+                        owner_.getModulePanelBounds(*panelObject, bounds);
+                    juce::Rectangle<float> contentBounds = panelBounds;
+                    contentBounds.reduce(6.0F, 6.0F);
+
+                    auto* xy =
+                        owner_.getOrCreateXYControl(dragState.moduleId);
+                    if (xy != nullptr) {
+                        const float localX =
+                            localPos.x - contentBounds.getX();
+                        const float localY =
+                            localPos.y - contentBounds.getY();
+                        xy->dragPointerTo(localX, localY);
+                        owner_.repaintWithRateLimit();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // Adjustment mode drag: when the gesture started on the bottom
+    // mode button for a given module, interpret horizontal movement in
+    // module-local space. Dragging towards the module's local left
+    // axis reveals the radial menu of supported modes around the
+    // node once the drag distance reaches the module's radius. While
+    // dragging, the alpha of the bottom icon interpolates towards
+    // 60% based on the drag distance.
+    if (owner_.modeControlObjectId_ != 0) {
+        const auto& objects = owner_.scene_.objects();
+        const auto itObj = objects.find(owner_.modeControlObjectId_);
+        if (itObj == objects.end()) {
+            return;
+        }
+
+        const auto& object = itObj->second;
+        const auto boundsLocal = owner_.getLocalBounds().toFloat();
+        const auto centre = boundsLocal.getCentre();
+        const float tableRadius =
+            0.45F *
+            std::min(boundsLocal.getWidth(), boundsLocal.getHeight());
+        const float cx = centre.x + object.x() * tableRadius;
+        const float cy = centre.y + object.y() * tableRadius;
+
+        const bool insideMusic = owner_.isInsideMusicArea(object);
+        float rotationAngle = 0.0F;
+        if (insideMusic) {
+            const float dx = cx - boundsLocal.getCentreX();
+            const float dy = cy - boundsLocal.getCentreY();
+            rotationAngle =
+                std::atan2(dy, dx) -
+                juce::MathConstants<float>::halfPi;
+        }
+
+        juce::Point<float> mousePos = position;
+        if (insideMusic) {
+            mousePos = mousePos.transformedBy(
+                juce::AffineTransform::rotation(-rotationAngle, cx,
+                                                cy));
+        }
+
+        const float dxLocal = mousePos.x - owner_.modeDragStartLocal_.x;
+        const float nodeRadius = 26.0F;
+        // Left/right drag progress in module-local space. Negative
+        // dxLocal corresponds to a drag towards the module's local
+        // left (radial mode menu), positive towards its local right
+        // (detail panel).
+        const float leftProgress =
+            juce::jlimit(0.0F, 1.0F, (-dxLocal) / nodeRadius);
+        const float rightProgress =
+            juce::jlimit(0.0F, 1.0F, dxLocal / nodeRadius);
+
+        // Preserve the existing behaviour for the bottom icon alpha:
+        // only leftward drags fade the icon as the adjustment mode
+        // radial menu is revealed.
+        owner_.modeDragProgress_ = leftProgress;
+
+        // Dragging from the bottom mode button towards the module's
+        // local right opens the per-module detail panel anchored near
+        // the node. This gesture is mutually exclusive with the
+        // radial mode menu: once the panel opens, we cancel the
+        // mode-drag state.
+        if (rightProgress >= 1.0F) {
+            const auto& modulesLocal = owner_.scene_.modules();
+            const auto modIt = modulesLocal.find(object.logical_id());
+
+            MainComponent::ModulePanelState panel{};
+            panel.moduleId = object.logical_id();
+            panel.visible = true;
+            panel.activeTab = MainComponent::ModulePanelState::Tab::kSettings;
+
+            if (modIt != modulesLocal.end() &&
+                modIt->second != nullptr) {
+                auto* modulePtr = modIt->second.get();
+                if (dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                        modulePtr) != nullptr) {
+                    panel.activeTab = MainComponent::ModulePanelState::Tab::kEnvelope;
+                }
+            }
+
+            owner_.modulePanels_[panel.moduleId] = panel;
+
+            // Cancel any pending radial adjustment menu.
+            owner_.modeSelection_ = MainComponent::ModeSelectionState{};
+            owner_.modeDragActive_ = false;
+            owner_.modeControlObjectId_ = 0;
+            owner_.modeDragProgress_ = 0.0F;
+
+            owner_.repaintWithRateLimit();
+            return;
+        }
+
+        // Leftward drags continue to control the adjustment mode
+        // radial menu as before.
+        if (leftProgress >= 1.0F) {
+            owner_.modeDragActive_ = true;
+            owner_.modeSelection_.moduleId = object.logical_id();
+            owner_.modeSelection_.menuVisible = true;
+        }
+
+        // Mode-drag gestures are exclusive: do not treat them as
+        // cut gestures or regular drags.
+        owner_.repaintWithRateLimit();
+        return;
+    }
+
+    // Dragging the dock scroll area (vertical scroll / pagination).
+    if (owner_.isDraggingDockScroll_) {
+        auto dockBounds = bounds;
+        const float dockWidth = owner_.calculateDockWidth(dockBounds.getWidth());
+        juce::Rectangle<float> dockArea =
+            dockBounds.removeFromRight(dockWidth);
+
+        const float titleHeight = 24.0F;
+        juce::Rectangle<float> titleArea =
+            dockArea.removeFromTop(titleHeight);
+        juce::ignoreUnused(titleArea);
+
+        const auto& objects = owner_.scene_.objects();
+        std::size_t dockCount = 0;
+        for (const auto& [id, obj] : objects) {
+            juce::ignoreUnused(id);
+            if (obj.docked()) {
+                ++dockCount;
+            }
+        }
+
+        if (dockCount == 0) {
+            return;
+        }
+
+        const float availableHeight = dockArea.getHeight();
+        const float nodeRadiusDock = 18.0F;
+        const float verticalPadding = 12.0F;
+        const float slotHeight =
+            nodeRadiusDock * 2.0F + verticalPadding;
+        const float contentHeight =
+            slotHeight * static_cast<float>(dockCount);
+        const float minOffset =
+            (contentHeight > availableHeight)
+                ? (availableHeight - contentHeight)
+                : 0.0F;
+
+        const float currentY = static_cast<float>(position.y);
+        const float dy = currentY - owner_.dockLastDragY_;
+        owner_.dockLastDragY_ = currentY;
+
+        owner_.dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
+                                         owner_.dockScrollOffset_ + dy);
+        owner_.repaint();
+        return;
+    }
+
+    // Dragging per-instrument side controls (Freq / Gain).
+    if (owner_.sideControlKind_ != MainComponent::SideControlKind::kNone &&
+        owner_.sideControlObjectId_ != 0) {
+        auto objects = owner_.scene_.objects();
+        const auto itObj = objects.find(owner_.sideControlObjectId_);
+        if (itObj == objects.end()) {
+            return;
+        }
+
+        const auto& object = itObj->second;
+
+        const auto centre = bounds.getCentre();
+        const float tableRadius =
+            0.45F * std::min(bounds.getWidth(), bounds.getHeight());
+        const float cx = centre.x + object.x() * tableRadius;
+        const float cy = centre.y + object.y() * tableRadius;
+
+        const bool insideMusic = owner_.isInsideMusicArea(object);
+        float rotationAngle = 0.0F;
+        if (insideMusic) {
+            const float dx = cx - bounds.getCentreX();
+            const float dy = cy - bounds.getCentreY();
+            rotationAngle =
+                std::atan2(dy, dx) -
+                juce::MathConstants<float>::halfPi;
+        }
+
+        juce::Point<float> mousePos = position;
+        if (insideMusic) {
+            mousePos = mousePos.transformedBy(
+                juce::AffineTransform::rotation(-rotationAngle, cx, cy));
+        }
+
+        const float nodeRadius = 26.0F;
+        const float ringRadius = nodeRadius + 10.0F;
+        const float sliderMargin = 6.0F;
+        const float sliderTop = cy - ringRadius + sliderMargin;
+        const float sliderBottom = cy + ringRadius - sliderMargin;
+
+        const float mouseY = mousePos.y;
+        const float clampedY = juce::jlimit(sliderTop, sliderBottom, mouseY);
+        const float value = juce::jmap(clampedY, sliderBottom, sliderTop,
+                                       0.0F, 1.0F);
+
+        if (owner_.sideControlKind_ == MainComponent::SideControlKind::kFreq) {
+            const auto& modulesForFreq = owner_.scene_.modules();
+            const auto modItFreq =
+                modulesForFreq.find(object.logical_id());
+            rectai::AudioModule* moduleForFreq =
+                (modItFreq != modulesForFreq.end() &&
+                 modItFreq->second != nullptr)
+                    ? modItFreq->second.get()
+                    : nullptr;
+
+            const bool isTempoModule =
+                (moduleForFreq != nullptr &&
+                 moduleForFreq->is<rectai::TempoModule>());
+
+            if (isTempoModule) {
+                const float newBpm =
+                    rectai::TempoModule::BpmFromNormalised(value);
+                const float clampedBpm =
+                    rectai::TempoModule::ClampBpm(newBpm);
+
+                if (clampedBpm == owner_.bpm_) {
+                    return;
+                }
+
+                owner_.bpm_ = clampedBpm;
+                owner_.bpmLastChangeSeconds_ =
+                    juce::Time::getMillisecondCounterHiRes() /
+                    1000.0;
+
+                owner_.scene_.SetModuleParameter(object.logical_id(), "tempo",
+                                          owner_.bpm_);
+                owner_.repaintWithRateLimit();
+                return;
+            }
+
+            if (moduleForFreq != nullptr &&
+                moduleForFreq->uses_pitch_control()) {
+                // Dragging on a pitch-controlled module updates the
+                // `midifreq` parameter within the same musical
+                // window used by the visual segments (roughly
+                // C2–C8), keeping the Oscillator's `freq` parameter
+                // in sync so that the audible pitch and the UI
+                // always match.
+                constexpr float kMinMidi = 24.0F;
+                constexpr float kMaxMidi = 108.0F;
+
+                const float previousMidi =
+                    moduleForFreq->GetParameterOrDefault(
+                        "midifreq", 57.0F);
+
+                const float clamped = juce::jlimit(0.0F, 1.0F, value);
+                float newMidi = juce::jmap(clamped,
+                                           0.0F, 1.0F,
+                                           kMinMidi,
+                                           kMaxMidi);
+
+                auto* oscModule =
+                    dynamic_cast<rectai::OscillatorModule*>(
+                        moduleForFreq);
+                float effectivePrevMidi = previousMidi;
+                float effectiveNewMidi = newMidi;
+                if (oscModule != nullptr) {
+                    if (oscModule->play_midi_note_from_rotation()) {
+                        // Quantise only the *effective* MIDI
+                        // note used for audio, while keeping the
+                        // stored `midifreq` parameter continuous
+                        // so the UI (triangle marker) can follow
+                        // rotation smoothly between segments.
+                        effectivePrevMidi = std::round(previousMidi);
+                        effectiveNewMidi = std::round(newMidi);
+                        effectivePrevMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                         effectivePrevMidi);
+                        effectiveNewMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                         effectiveNewMidi);
+                    }
+
+                    const double targetHz = 440.0 *
+                                            std::pow(
+                                                2.0,
+                                                (static_cast<double>(
+                                                     effectiveNewMidi) -
+                                                 69.0) /
+                                                    12.0);
+
+                    const double baseHz =
+                        oscModule->base_frequency_hz();
+                    const double rangeHz =
+                        oscModule->frequency_range_hz();
+                    if (rangeHz > 0.0) {
+                        const double norm =
+                            (targetHz - baseHz) / rangeHz;
+                        const float freqParam = juce::jlimit(
+                            0.0F, 1.0F,
+                            static_cast<float>(norm));
+                        owner_.scene_.SetModuleParameter(
+                            object.logical_id(), "freq",
+                            freqParam);
+                    }
+                }
+                // Always update the raw MIDI parameter so the
+                // radial UI (segments + triangle) follows
+                // rotation or clicks smoothly.
+                owner_.scene_.SetModuleParameter(object.logical_id(),
+                                          "midifreq", newMidi);
+
+                // Only retrigger the Oscillator envelope when
+                // the *effective* musical note changes. In
+                // MIDI-from-rotation mode this corresponds to a
+                // semitone change; otherwise it behaves like a
+                // continuous pitch change.
+                if (oscModule != nullptr) {
+                    const float comparePrev =
+                        oscModule->play_midi_note_from_rotation()
+                            ? effectivePrevMidi
+                            : previousMidi;
+                    const float compareNew =
+                        oscModule->play_midi_note_from_rotation()
+                            ? effectiveNewMidi
+                            : newMidi;
+
+                    if (std::abs(compareNew - comparePrev) >
+                        1.0e-4F) {
+                        owner_.maybeRetriggerOscillatorOnFreqChange(
+                            object.logical_id(), moduleForFreq);
+                    }
+                }
+
+                owner_.repaintWithRateLimit();
+                return;
+            }
+
+            if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
+                    moduleForFreq)) {
+                // Map drag position to one of four discrete
+                // sample slots and update the "sample"
+                // parameter. Also mark the loop label as
+                // recently active so the filename overlay
+                // appears.
+                // The bottom segment (near sliderBottom) is
+                // index 0 and the top segment is index 3,
+                // consistent with the drawing order in
+                // MainComponent_Paint.
+                const float clamped = juce::jlimit(0.0F, 1.0F, value);
+                int segIndex = static_cast<int>(clamped * 4.0F);
+                if (segIndex < 0) {
+                    segIndex = 0;
+                } else if (segIndex > 3) {
+                    segIndex = 3;
+                }
+                const float sampleValue =
+                    (static_cast<float>(segIndex) + 0.5F) / 4.0F;
+                owner_.scene_.SetModuleParameter(object.logical_id(),
+                                          "sample", sampleValue);
+                owner_.markLoopSampleLabelActive(loopModule->id());
+                owner_.repaintWithRateLimit();
+                return;
+            }
+
+            float previousFreq = 0.0F;
+            if (moduleForFreq != nullptr) {
+                previousFreq = moduleForFreq->GetParameterOrDefault(
+                    "freq",
+                    moduleForFreq->default_parameter_value("freq"));
+            }
+
+            if (std::abs(value - previousFreq) <= 1.0e-4F) {
+                return;
+            }
+
+            owner_.scene_.SetModuleParameter(object.logical_id(), "freq",
+                                      value);
+
+            owner_.maybeRetriggerOscillatorOnFreqChange(
+                object.logical_id(), moduleForFreq);
+            owner_.repaintWithRateLimit();
+            return;
+        }
+
+        if (owner_.sideControlKind_ == MainComponent::SideControlKind::kGain) {
+            const auto& modulesForGain = owner_.scene_.modules();
+            const auto modItGain = modulesForGain.find(object.logical_id());
+            if (modItGain != modulesForGain.end() &&
+                modItGain->second != nullptr) {
+                auto* module = modItGain->second.get();
+                if (module->type() == rectai::ModuleType::kFilter) {
+                    owner_.scene_.SetModuleParameter(object.logical_id(), "q",
+                                              value);
+                } else if (dynamic_cast<rectai::VolumeModule*>(module) !=
+                           nullptr) {
+                    owner_.scene_.SetModuleParameter(object.logical_id(),
+                                              "volume", value);
+                } else if (dynamic_cast<rectai::LoopModule*>(module) !=
+                           nullptr ||
+                           dynamic_cast<rectai::SampleplayModule*>(
+                               module) != nullptr) {
+                    // Loop and Sampleplay expose their main level as
+                    // "amp" instead of "gain".
+                    owner_.scene_.SetModuleParameter(object.logical_id(),
+                                              "amp", value);
+                } else {
+                    owner_.scene_.SetModuleParameter(object.logical_id(),
+                                              "gain", value);
+                }
+            } else {
+                owner_.scene_.SetModuleParameter(object.logical_id(), "gain",
+                                          value);
+            }
+
+            owner_.repaintWithRateLimit();
+            return;
+        }
+    }
+
+    // Dragging modules on the table or from the dock into the table.
+    if (owner_.draggedObjectId_ != 0) {
+        auto objects = owner_.scene_.objects();
+        const auto itObj = objects.find(owner_.draggedObjectId_);
+        if (itObj == objects.end()) {
+            return;
+        }
+
+        auto updated = itObj->second;
+        const bool wasDocked = updated.docked();
+        const bool wasInsideMusic = owner_.isInsideMusicArea(updated);
+
+        const auto boundsLocal = owner_.getLocalBounds().toFloat();
+        const auto centre = boundsLocal.getCentre();
+        const float tableRadius =
+            0.45F * std::min(boundsLocal.getWidth(),
+                              boundsLocal.getHeight());
+
+        const float dx = static_cast<float>(position.x) - centre.x;
+        const float dy = static_cast<float>(position.y) - centre.y;
+        const float tableX = juce::jlimit(-1.0F, 1.0F, dx / tableRadius);
+        const float tableY = juce::jlimit(-1.0F, 1.0F, dy / tableRadius);
+
+        if (updated.docked()) {
+            // While the pointer is inside the dock area, keep the module
+            // docked so it remains visible in the dock list. Only when the
+            // drag leaves the dock area do we convert it into a regular
+            // object on the table.
+            auto dockBounds = boundsLocal;
+            const float dockWidth =
+                owner_.calculateDockWidth(dockBounds.getWidth());
+            juce::Rectangle<float> dockArea =
+                dockBounds.removeFromRight(dockWidth);
+
+            if (dockArea.contains(position)) {
+                // Still inside the dock: do not change Scene; the icon in the
+                // dock is the visual feedback while the user aims the drag.
+                return;
+            }
+
+            // Pointer has left the dock area: instantiate the object on the
+            // table at the dragged position, marking it as undocked.
+            updated = rectai::ObjectInstance(
+                updated.tracking_id(), updated.logical_id(), tableX, tableY,
+                updated.angle_radians(), false);
+        } else {
+            updated.set_position(tableX, tableY);
+        }
+
+        // Recompute and cache the inside-music-area flag for the
+        // updated object at its new position before writing it back
+        // into the Scene.
+        const bool isNowInsideMusic = owner_.computeInsideMusicArea(updated);
+        updated.set_inside_music_area(isNowInsideMusic);
+        owner_.scene_.UpsertObject(updated);
+
+        // When a module becomes active on the musical surface (either by
+        // leaving the dock or by entering the circle from outside), normalise
+        // its frequency control parameter by explicitly writing its
+        // current value back into the Scene. This mirrors the effect of
+        // clicking on the freq side control once, ensuring that modules
+        // like Filter have their cutoff parameter initialised in the
+        // same way even before the user interacts with the slider.
+        if ((wasDocked || !wasInsideMusic) && isNowInsideMusic) {
+            const auto& modulesForObject = owner_.scene_.modules();
+            const auto modIt =
+                modulesForObject.find(updated.logical_id());
+            if (modIt != modulesForObject.end() &&
+                modIt->second != nullptr) {
+                auto* module = modIt->second.get();
+
+                if (module->uses_frequency_control()) {
+                    const float currentFreq =
+                        module->GetParameterOrDefault(
+                            "freq",
+                            module->default_parameter_value("freq"));
+                    owner_.scene_.SetModuleParameter(module->id(), "freq",
+                                              currentFreq);
+                }
+
+                // When a Sampleplay module enters the musical area, also
+                // (re)start the visibility timer for its instrument label
+                // so that the text is fully visible for a few seconds and
+                // then fades out.
+                if (auto* sampleModule =
+                        dynamic_cast<rectai::SampleplayModule*>(module)) {
+                    owner_.markSampleplayInstrumentLabelActive(
+                        sampleModule->id());
+                }
+            }
+        }
+
+        // If CONTROL is held while dragging a module inside the musical
+        // area, apply a safety mute by setting its volume to 0 as soon as
+        // it is on the table.
+        owner_.applyControlDropMuteIfNeeded(mods);
+
+        owner_.repaint();
+        return;
+    }
+
+    // NOTE: Used for drag cursor and cut cursor trail (red).
+    // Use the shared repaint rate-limit helper so that input-driven
+    // repaints respect the same 60 fps cap as timer-driven ones.
+    owner_.repaintWithRateLimit();
+}
+
+void InteractionSystem::handlePointerUp(const PointerEvent& event)
+{
+    juce::ignoreUnused(event);
+
+    const auto bounds = owner_.getLocalBounds().toFloat();
+    const auto& objects = owner_.scene_.objects();
+    const auto& connections = owner_.scene_.connections();
+    const auto& modules = owner_.scene_.modules();
+
+    // Before applying cut-gesture semantics, propagate pointer-up to
+    // the active panel drag (if any). For TextScroll-based panels
+    // (LoopFiles, Tempo presets), this allows the TextScrollList to
+    // commit a click-to-select when releasing over the same item.
+    if (owner_.activePanelDrag_.has_value()) {
+        const MainComponent::ActivePanelDrag dragState = *owner_.activePanelDrag_;
+
+        if (dragState.kind == MainComponent::PanelDragKind::kLoopFilesScroll &&
+            !dragState.moduleId.empty()) {
+            const auto activeModuleId = dragState.moduleId;
+
+            for (const auto& [moduleId, panelState] : owner_.modulePanels_) {
+                if (!panelState.visible ||
+                    moduleId != activeModuleId) {
+                    continue;
+                }
+
+                // Locate the object that owns this panel by matching
+                // logical_id with the module id stored in the panel
+                // state.
+                const rectai::ObjectInstance* objectPtr = nullptr;
+                for (const auto& [objId, obj] : objects) {
+                    juce::ignoreUnused(objId);
+                    if (obj.logical_id() == moduleId) {
+                        objectPtr = &obj;
+                        break;
+                    }
+                }
+
+                if (objectPtr == nullptr) {
+                    continue;
+                }
+
+                const auto& object = *objectPtr;
+                const auto modIt = modules.find(object.logical_id());
+                if (modIt == modules.end() ||
+                    modIt->second == nullptr) {
+                    continue;
+                }
+
+                const auto* moduleForPanel = modIt->second.get();
+
+                rectai::ui::TextScrollList* list = nullptr;
+
+                if (panelState.activeTab ==
+                    MainComponent::ModulePanelState::Tab::kLoopFiles) {
+                    auto* loopModule =
+                        dynamic_cast<rectai::LoopModule*>(
+                            const_cast<rectai::AudioModule*>(
+                                moduleForPanel));
+                    if (loopModule == nullptr) {
+                        continue;
+                    }
+
+                    owner_.ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                    loopModule);
+                    owner_.rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                                  loopModule);
+
+                    list = owner_.getOrCreateLoopFileList(panelState.moduleId);
+                } else if (panelState.activeTab ==
+                           MainComponent::ModulePanelState::Tab::kSettings) {
+                    auto* tempoModule =
+                        dynamic_cast<rectai::TempoModule*>(
+                            const_cast<rectai::AudioModule*>(
+                                moduleForPanel));
+                    if (tempoModule == nullptr) {
+                        continue;
+                    }
+
+                    list = owner_.getOrCreateTempoPresetList(panelState.moduleId);
+                }
+
+                if (list == nullptr) {
+                    continue;
+                }
+
+                const auto centrePos =
+                    MainComponent::objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                // Match the same rotation logic used for panel hit-tests
+                // in handlePointerDown so that the LoopFiles content
+                // area stays aligned with the rotated module.
+                const auto tableCentre = bounds.getCentre();
+                const float dx = cx - tableCentre.x;
+                const float dy = cy - tableCentre.y;
+                float rotationAngle = 0.0F;
+                if (owner_.isInsideMusicArea(object)) {
+                    rotationAngle =
+                        std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+                }
+
+                juce::Point<float> localPos = owner_.lastPointerPosition_;
+                if (rotationAngle != 0.0F) {
+                    localPos = localPos.transformedBy(
+                        juce::AffineTransform::rotation(
+                            -rotationAngle, cx, cy));
+                }
+
+                auto panelBounds =
+                    owner_.getModulePanelBounds(object, bounds);
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                const float localY =
+                    localPos.y - contentBounds.getY();
+                list->endPointerAt(localY);
+                owner_.repaintWithRateLimit();
+                // Do not early-return: cut gestures and other state
+                // updates should still be processed.
+            }
+        }
+
+        if (dragState.kind == MainComponent::PanelDragKind::kXYControl &&
+            !dragState.moduleId.empty()) {
+            const auto activeModuleId = dragState.moduleId;
+
+            for (const auto& [moduleId, panelState] : owner_.modulePanels_) {
+                if (!panelState.visible ||
+                    moduleId != activeModuleId) {
+                    continue;
+                }
+
+                const rectai::ObjectInstance* objectPtr = nullptr;
+                for (const auto& [objId, obj] : objects) {
+                    juce::ignoreUnused(objId);
+                    if (obj.logical_id() == moduleId) {
+                        objectPtr = &obj;
+                        break;
+                    }
+                }
+
+                if (objectPtr == nullptr) {
+                    continue;
+                }
+
+                const auto& object = *objectPtr;
+                const auto modIt = modules.find(object.logical_id());
+                if (modIt == modules.end() ||
+                    modIt->second == nullptr) {
+                    continue;
+                }
+
+                if (panelState.activeTab !=
+                    MainComponent::ModulePanelState::Tab::kXYControl) {
+                    continue;
+                }
+
+                const auto centrePos =
+                    MainComponent::objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                const auto tableCentre = bounds.getCentre();
+                const float dx = cx - tableCentre.x;
+                const float dy = cy - tableCentre.y;
+                float rotationAngle = 0.0F;
+                if (owner_.isInsideMusicArea(object)) {
+                    rotationAngle =
+                        std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+                }
+
+                juce::Point<float> localPos = owner_.lastPointerPosition_;
+                if (rotationAngle != 0.0F) {
+                    localPos = localPos.transformedBy(
+                        juce::AffineTransform::rotation(
+                            -rotationAngle, cx, cy));
+                }
+
+                auto panelBounds =
+                    owner_.getModulePanelBounds(object, bounds);
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(6.0F, 6.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                auto* xy = owner_.getOrCreateXYControl(panelState.moduleId);
+                if (xy == nullptr) {
+                    continue;
+                }
+
+                const float localX =
+                    localPos.x - contentBounds.getX();
+                const float localY =
+                    localPos.y - contentBounds.getY();
+                xy->endPointerAt(localX, localY);
+                owner_.repaintWithRateLimit();
+                // Do not early-return: cut gestures and other state
+                // updates should still be processed.
+            }
+        }
+
+        // Clear any active panel drag state after handling pointer-up.
+        owner_.activePanelDrag_.reset();
+    }
+
+    // Handle click-and-hold mute release.
+    // Always clear hold state when releasing. If the hold started on
+    // an already-muted line and requested unmute-on-release, clear
+    // that mute now (without requiring a cut gesture).
+    if (owner_.activeConnectionHold_.has_value()) {
+        const MainComponent::ConnectionHoldState hold = *owner_.activeConnectionHold_;
+
+        if (hold.unmute_on_release) {
+            if (hold.is_object_line && hold.object_id != 0) {
+                const auto objIt = objects.find(hold.object_id);
+                if (objIt != objects.end()) {
+                    const auto& obj = objIt->second;
+                    const std::string moduleId = obj.logical_id();
+
+                    bool justUnmutedMaster = false;
+                    for (const auto& conn : connections) {
+                        if (conn.from_module_id != moduleId ||
+                            conn.to_module_id !=
+                                rectai::MASTER_OUTPUT_ID) {
+                            continue;
+                        }
+
+                        const std::string key =
+                            makeConnectionKey(conn);
+                        const auto it = owner_.mutedConnections_.find(key);
+                        if (it != owner_.mutedConnections_.end()) {
+                            owner_.mutedConnections_.erase(it);
+                            justUnmutedMaster = true;
+                        }
+                    }
+
+                    if (justUnmutedMaster) {
+                        const std::string prefix = moduleId + ":";
+                        std::vector<std::string> keysToErase;
+                        keysToErase.reserve(
+                            owner_.mutedConnections_.size());
+
+                        for (const auto& key : owner_.mutedConnections_) {
+                            if (key.rfind(prefix, 0) == 0U) {
+                                keysToErase.push_back(key);
+                            }
+                        }
+
+                        for (const auto& key : keysToErase) {
+                            owner_.mutedConnections_.erase(key);
+                        }
+                    }
+                }
+            } else if (!hold.is_object_line &&
+                       !hold.connection_key.empty()) {
+                const auto it =
+                    owner_.mutedConnections_.find(hold.connection_key);
+                if (it != owner_.mutedConnections_.end()) {
+                    owner_.mutedConnections_.erase(it);
+                }
+            }
+        }
+
+        owner_.activeConnectionHold_.reset();
+    }
+
+    // Apply mute toggle to lines that were cut during touch drag.
+
+    // Precompute mapping from module id to object id using the shared
+    // geometry cache so that hit-testing and mute propagation logic are
+    // consistent across audio, paint and input paths.
+    const auto geometry = owner_.buildGeometryCache();
+    const auto& moduleToObjectId = geometry.moduleToObjectId;
+
+    // Object-to-centre lines: cutting this line is equivalent to
+    // toggling the implicit connection from the module to the master
+    // Output (-1). No per-object or per-module mute state is kept; all
+    // mute is expressed as connection-level state.
+    for (const auto& objectId : owner_.touchCutObjects_) {
+        const auto objIt = objects.find(objectId);
+        if (objIt == objects.end()) {
+            continue;
+        }
+
+        const auto& obj = objIt->second;
+        const std::string moduleId = obj.logical_id();
+
+        bool justUnmutedMaster = false;
+
+        // Find the implicit connection module -> Output (-1) and
+        // toggle its mute state.
+        for (const auto& conn : connections) {
+            if (conn.from_module_id != moduleId ||
+                conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                continue;
+            }
+
+            const std::string key = makeConnectionKey(conn);
+            const auto it = owner_.mutedConnections_.find(key);
+            if (it != owner_.mutedConnections_.end()) {
+                // Master route was muted; unmute it.
+                owner_.mutedConnections_.erase(it);
+                justUnmutedMaster = true;
+            } else {
+                // Master route was unmuted; mute it.
+                owner_.mutedConnections_.insert(key);
+            }
+        }
+
+        // If we have just unmuted the master route for this module,
+        // clear any stored per-connection mute state for all edges
+        // originating from it, incluyendo conexiones que ya no estén
+        // presentes en la Scene pero cuyo estado mute persista en
+        // mutedConnections_. Esto modela un "reset global de mute"
+        // para el generador: una vez que el usuario des-silencia la
+        // radial, todas las rutas salientes (existentes o futuras)
+        // parten sin mute heredado.
+        if (justUnmutedMaster) {
+            const std::string prefix = moduleId + ":";
+            std::vector<std::string> keysToErase;
+            keysToErase.reserve(owner_.mutedConnections_.size());
+
+            for (const auto& key : owner_.mutedConnections_) {
+                if (key.rfind(prefix, 0) == 0U) {
+                    keysToErase.push_back(key);
+                }
+            }
+
+            for (const auto& key : keysToErase) {
+                owner_.mutedConnections_.erase(key);
+            }
+        }
+    }
+
+    // For module-to-module connections, cutting a line toggles mute for
+    // that specific connection key. Additionally, when this is the only
+    // active outgoing connection from the source module (ignoring the
+    // implicit module→master auto-wire), we mirror the mute state onto
+    // the module→Output(MASTER_OUTPUT_ID) connection so that the mute
+    // persists when
+    // the topology changes between module→module and module→master.
+    for (const auto& connKey : owner_.touchCutConnections_) {
+        const bool wasMuted =
+            owner_.mutedConnections_.find(connKey) != owner_.mutedConnections_.end();
+
+        const rectai::Connection* matchedConn = nullptr;
+        for (const auto& conn : connections) {
+            if (makeConnectionKey(conn) == connKey) {
+                matchedConn = &conn;
+                break;
+            }
+        }
+        std::string srcModuleId;
+        bool hasSingleActiveConnection = false;
+
+        if (matchedConn != nullptr) {
+            srcModuleId = matchedConn->from_module_id;
+
+            const auto fromObjIt =
+                moduleToObjectId.find(srcModuleId);
+            const rectai::ObjectInstance* fromObj = nullptr;
+            if (fromObjIt != moduleToObjectId.end()) {
+                const auto objIt = objects.find(fromObjIt->second);
+                if (objIt != objects.end()) {
+                    fromObj = &objIt->second;
+                }
+            }
+
+            if (fromObj != nullptr && owner_.isInsideMusicArea(*fromObj)) {
+                std::size_t activeOutgoingCount = 0;
+                for (const auto& conn : connections) {
+                    if (conn.from_module_id != srcModuleId) {
+                        continue;
+                    }
+
+                    // Ignore auto-wired connections to the invisible
+                    // Output/master module so they do not influence the
+                    // "only one connection" rule from the user's
+                    // perspective.
+                    if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                        continue;
+                    }
+
+                    const auto toObjIt =
+                        moduleToObjectId.find(conn.to_module_id);
+                    if (toObjIt == moduleToObjectId.end()) {
+                        continue;
+                    }
+
+                    const auto objIt = objects.find(toObjIt->second);
+                    if (objIt == objects.end()) {
+                        continue;
+                    }
+
+                    const auto& toObj = objIt->second;
+                    if (!owner_.isInsideMusicArea(toObj)) {
+                        continue;
+                    }
+
+                    if (!conn.is_hardlink &&
+                        !isConnectionGeometricallyActive(*fromObj,
+                                                         toObj)) {
+                        continue;
+                    }
+
+                    ++activeOutgoingCount;
+                }
+
+                hasSingleActiveConnection =
+                    (activeOutgoingCount == 1U);
+            }
+        }
+
+        // Toggle per-connection mute state.
+        if (wasMuted) {
+            owner_.mutedConnections_.erase(connKey);
+        } else {
+            owner_.mutedConnections_.insert(connKey);
+        }
+
+        // When muting (not unmuting) the only active outgoing
+        // connection from a module, mirror that mute state onto its
+        // implicit module→Output(MASTER_OUTPUT_ID) connection so that
+        // the module
+        // stays muted even if the downstream module is later
+        // disconnected and the path reverts to module→master.
+        if (matchedConn != nullptr && hasSingleActiveConnection) {
+            for (const auto& conn : connections) {
+                if (conn.from_module_id != srcModuleId ||
+                    conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                    continue;
+                }
+
+                const std::string masterKey = makeConnectionKey(conn);
+                if (!wasMuted) {
+                    // We are muting the only active connection:
+                    // also mute the master route.
+                    owner_.mutedConnections_.insert(masterKey);
+                } else {
+                    // We are unmuting that connection: unmute the
+                    // master route as well.
+                    owner_.mutedConnections_.erase(masterKey);
+                }
+            }
+        }
+    }
+
+    // Mode selection via radial menu: if a gesture started on the
+    // bottom adjustment button and the radial menu is visible for a
+    // module that exposes supported modes, treat releasing the
+    // pointer over one of the icons as choosing that mode. The
+    // geometry mirrors the paint code so that hit-testing matches
+    // the visual layout.
+    if (owner_.modeSelection_.menuVisible &&
+        !owner_.modeSelection_.moduleId.empty()) {
+        const auto& modulesLocal = owner_.scene_.modules();
+        const auto modIt = modulesLocal.find(owner_.modeSelection_.moduleId);
+        if (modIt != modulesLocal.end() && modIt->second != nullptr) {
+            auto* module = modIt->second.get();
+            const auto& modes = module->supported_modes();
+            const int modeCount = static_cast<int>(modes.size());
+
+            if (modeCount > 0) {
+                const auto objIdIt =
+                    moduleToObjectId.find(owner_.modeSelection_.moduleId);
+                if (objIdIt != moduleToObjectId.end()) {
+                    const auto objIt = objects.find(objIdIt->second);
+                    if (objIt != objects.end()) {
+                        const auto& object = objIt->second;
+
+                        const auto boundsLocal =
+                            owner_.getLocalBounds().toFloat();
+                        const auto centrePos =
+                            MainComponent::objectTableToScreen(object, boundsLocal);
+                        const float cx = centrePos.x;
+                        const float cy = centrePos.y;
+
+                        const bool insideMusic =
+                            owner_.isInsideMusicArea(object);
+                        float rotationAngle = 0.0F;
+                        if (insideMusic) {
+                            const auto tableCentre =
+                                boundsLocal.getCentre();
+                            const float dx = cx - tableCentre.x;
+                            const float dy = cy - tableCentre.y;
+                            rotationAngle =
+                                std::atan2(dy, dx) -
+                                juce::MathConstants<float>::halfPi;
+                        }
+
+                        juce::Point<float> localPos =
+                            owner_.lastPointerPosition_;
+                        if (insideMusic) {
+                            localPos = localPos.transformedBy(
+                                juce::AffineTransform::rotation(
+                                    -rotationAngle, cx, cy));
+                        }
+
+                        const float nodeRadius = 26.0F;
+                        const float ringRadius = nodeRadius + 10.0F;
+                        const int baseIconSize = 16;
+
+                        // Mirror the geometry used in paint(): five
+                        // virtual slots distributed along the left
+                        // Freq arc between sliderBottom (t=0) y
+                        // sliderTop (t=1), using the same 3 px
+                        // margins.
+                        const float sliderMargin = 3.0F;
+                        const float sliderTop =
+                            cy - ringRadius + sliderMargin;
+                        const float sliderBottom =
+                            cy + ringRadius - sliderMargin;
+
+                        const float dyTop = sliderTop - cy;
+                        const float dyBottom = sliderBottom - cy;
+                        const float sinTop = juce::jlimit(
+                            -1.0F, 1.0F, dyTop / ringRadius);
+                        const float sinBottom = juce::jlimit(
+                            -1.0F, 1.0F,
+                            dyBottom / ringRadius);
+                        float angleTop = std::asin(sinTop);
+                        const float angleBottom =
+                            std::asin(sinBottom);
+
+                        // Usar la misma compresión del arco que en
+                        // paint(), de forma que los iconos no se
+                        // salgan por la parte superior de la barra
+                        // de Freq.
+                        {
+                            const float angleRange = angleTop - angleBottom;
+                            const float compression = 0.85F;
+                            angleTop = angleBottom + angleRange * compression;
+                        }
+
+                        const int maxSlots = 4;
+                        const float extraLeft = 7.0F;
+
+                        // Choose the icon radius so that the
+                        // bottom-most slot lies on the same
+                        // horizontal line as the adjustment button,
+                        // while keeping all icons on a circular arc
+                        // that broadly follows the Freq bar.
+                        const float buttonCenterY =
+                            cy + nodeRadius + 8.0F;
+                        float radiusIcons = ringRadius + 6.0F;
+                        if (std::abs(sinBottom) > 1e-3F) {
+                            const float candidateRadius =
+                                (buttonCenterY - cy) / sinBottom;
+                            if (candidateRadius > 0.0F) {
+                                radiusIcons = candidateRadius;
+                            }
+                        }
+
+                        const int currentIndex =
+                            module->current_mode_index();
+
+                        int selectedIndex = -1;
+                        for (int i = 0; i < modeCount; ++i) {
+                            const int slotIndex =
+                                std::min(i, maxSlots - 1);
+                            const float t =
+                                static_cast<float>(slotIndex) /
+                                static_cast<float>(maxSlots - 1);
+                            const float angle = juce::jmap(
+                                t, 0.0F, 1.0F, angleBottom,
+                                angleTop);
+
+                            const float cosA = std::cos(angle);
+                            const float sinA = std::sin(angle);
+
+                            const float iconCx =
+                                cx - radiusIcons * cosA - extraLeft;
+                            const float iconCy =
+                                cy + radiusIcons * sinA;
+
+                            const bool isActive =
+                                (i == currentIndex);
+                            const float scale =
+                                isActive ? 1.25F : 1.0F;
+                            const float iconSize =
+                                static_cast<float>(baseIconSize) *
+                                scale;
+
+                            // Generous hitbox: circular area around
+                            // each icon centre, extended a bit beyond
+                            // the drawn size so taps y drags ligeros
+                            // sigan registrándose como selección.
+                            const float hitRadius =
+                                iconSize * 0.6F + 6.0F;
+
+                            const float dx =
+                                localPos.x - iconCx;
+                            const float dy =
+                                localPos.y - iconCy;
+                            const float distSq = dx * dx + dy * dy;
+
+                            if (distSq <=
+                                hitRadius * hitRadius) {
+                                selectedIndex = i;
+                                break;
+                            }
+                        }
+
+                        if (selectedIndex >= 0) {
+                            module->set_mode(
+                                selectedIndex);
+                            // Close the menu after a successful
+                            // selection and reset drag progress so
+                            // the bottom icon returns to its
+                            // default alpha.
+                            owner_.modeSelection_ = MainComponent::ModeSelectionState{};
+                            owner_.modeDragProgress_ = 0.0F;
+                            owner_.repaintWithRateLimit();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Clear touch state.
+    owner_.isTouchActive_ = false;
+    owner_.isTouchHeld_ = false;
+    owner_.touchStartedInDock_ = false;
+    owner_.touchTrail_.clear();
+    owner_.touchCutConnections_.clear();
+    owner_.touchCutObjects_.clear();
+    owner_.touchCurrentlyIntersectingConnections_.clear();
+    owner_.touchCurrentlyIntersectingObjects_.clear();
+
+    // Leaving any gesture ends cut mode; the next cut gesture must
+    // start explicitly on empty musical space.
+    owner_.isCutModeActive_ = false;
+
+    owner_.repaint();
+
+    owner_.draggedObjectId_ = 0;
+    owner_.sideControlObjectId_ = 0;
+    owner_.sideControlKind_ = MainComponent::SideControlKind::kNone;
+    owner_.isDraggingDockScroll_ = false;
+    owner_.modeControlObjectId_ = 0;
+    owner_.modeDragActive_ = false;
+    owner_.modeDragProgress_ = 0.0F;
+}
+
+void InteractionSystem::handleWheel(const WheelEvent& event)
+{
+    const auto bounds = owner_.getLocalBounds().toFloat();
+
+    const float wheelDelta = static_cast<float>(event.deltaY);
+    if (wheelDelta == 0.0F) {
+        return;
+    }
+
+    // -----
+    // 1) Check if we are interacting with the Dock (right area).
+
+    // Limit mouse wheel scrolling to the dock area only.
+    auto dockBounds = bounds;
+    const float dockWidth = owner_.calculateDockWidth(dockBounds.getWidth());
+    juce::Rectangle<float> dockArea =
+        dockBounds.removeFromRight(dockWidth);
+
+    if (!dockArea.contains(event.position)) {
+        // Allow default JUCE behaviour to run first.
+        // The concrete MainComponent::mouseWheelMove implementation
+        // calls juce::Component::mouseWheelMove before delegating into
+        // this InteractionSystem, so there is nothing else to do here.
+    }
+
+    if (dockArea.contains(event.position)) {
+        const auto& objects = owner_.scene_.objects();
+        std::size_t dockCount = 0;
+        for (const auto& [id, obj] : objects) {
+            juce::ignoreUnused(id);
+            if (obj.docked()) {
+                ++dockCount;
+            }
+        }
+
+        if (dockCount == 0) {
+            return;
+        }
+
+        // Replicate the same boundary logic used when dragging the dock.
+        const float titleHeight = 24.0F;
+        juce::Rectangle<float> titleArea =
+            dockArea.removeFromTop(titleHeight);
+        juce::ignoreUnused(titleArea);
+
+        const float availableHeight = dockArea.getHeight();
+        const float nodeRadiusDock = 18.0F;
+        const float verticalPadding = 12.0F;
+        const float slotHeight =
+            nodeRadiusDock * 2.0F + verticalPadding;
+        const float contentHeight =
+            slotHeight * static_cast<float>(dockCount);
+        const float minOffset =
+            (contentHeight > availableHeight)
+                ? (availableHeight - contentHeight)
+                : 0.0F;
+
+        // deltaY > 0 means wheel up; scroll content in steps proportional
+        // to the height of a single dock slot so that each wheel notch
+        // advances approximately one module.
+        const float scrollStepPixels = slotHeight;
+        const float delta = static_cast<float>(wheelDelta) *
+                            scrollStepPixels;
+
+        const float previousOffset = owner_.dockScrollOffset_;
+        owner_.dockScrollOffset_ = juce::jlimit(minOffset, 0.0F,
+                                               owner_.dockScrollOffset_ + delta);
+
+        // Only repaint when the effective dock offset actually changes;
+        // if we are already at a boundary, wheel events should not
+        // trigger extra frames.
+        if (owner_.dockScrollOffset_ != previousOffset) {
+            owner_.repaint();
+        }
+        return;
+    }
+
+    // -----
+    // 2) LoopFiles panel: scroll TextScrollList with mouse wheel.
+    {
+        const auto& modules = owner_.scene_.modules();
+        const auto& objects = owner_.scene_.objects();
+
+        for (const auto& [moduleId, panelState] : owner_.modulePanels_) {
+            if (!panelState.visible ||
+                panelState.activeTab !=
+                    MainComponent::ModulePanelState::Tab::kLoopFiles) {
+                continue;
+            }
+
+            // Locate the object that owns this panel.
+            const rectai::ObjectInstance* objectPtr = nullptr;
+            for (const auto& [objId, obj] : objects) {
+                juce::ignoreUnused(objId);
+                if (obj.logical_id() == moduleId) {
+                    objectPtr = &obj;
+                    break;
+                }
+            }
+
+            if (objectPtr == nullptr) {
+                continue;
+            }
+
+            const auto& object = *objectPtr;
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt == modules.end() ||
+                modIt->second == nullptr) {
+                continue;
+            }
+
+            const auto* moduleForPanel = modIt->second.get();
+            auto* loopModule =
+                dynamic_cast<rectai::LoopModule*>(
+                    const_cast<rectai::AudioModule*>(
+                        moduleForPanel));
+            if (loopModule != nullptr) {
+                owner_.ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                                       loopModule);
+                owner_.rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                                     loopModule);
+
+                auto* list =
+                    owner_.getOrCreateLoopFileList(panelState.moduleId);
+                if (list == nullptr) {
+                    continue;
+                }
+
+                const auto centrePos =
+                    MainComponent::objectTableToScreen(object, bounds);
+                const float cx = centrePos.x;
+                const float cy = centrePos.y;
+
+                const auto tableCentre = bounds.getCentre();
+                const float dx = cx - tableCentre.x;
+                const float dy = cy - tableCentre.y;
+                float rotationAngle = 0.0F;
+                if (owner_.isInsideMusicArea(object)) {
+                    rotationAngle =
+                        std::atan2(dy, dx) -
+                        juce::MathConstants<float>::halfPi;
+                }
+
+                juce::Point<float> localPos = event.position;
+                if (rotationAngle != 0.0F) {
+                    localPos = localPos.transformedBy(
+                        juce::AffineTransform::rotation(-rotationAngle,
+                                                        cx, cy));
+                }
+
+                auto panelBounds =
+                    owner_.getModulePanelBounds(object, bounds);
+
+                juce::Rectangle<float> contentBounds = panelBounds;
+                contentBounds.reduce(4.0F, 4.0F);
+
+                if (!contentBounds.contains(localPos)) {
+                    continue;
+                }
+
+                list->handleWheelDelta(wheelDelta);
+                owner_.repaintWithRateLimit();
+                return;
+            }
+        }
+    }
+
+    // -----
+    // 3) Tempo settings panel: scroll BPM preset TextScrollList with
+    // mouse wheel.
+    {
+        const auto& modules = owner_.scene_.modules();
+        const auto& objects = owner_.scene_.objects();
+
+        for (const auto& [moduleId, panelState] : owner_.modulePanels_) {
+            if (!panelState.visible ||
+                panelState.activeTab !=
+                    MainComponent::ModulePanelState::Tab::kSettings) {
+                continue;
+            }
+
+            // Locate the object that owns this panel.
+            const rectai::ObjectInstance* objectPtr = nullptr;
+            for (const auto& [objId, obj] : objects) {
+                juce::ignoreUnused(objId);
+                if (obj.logical_id() == moduleId) {
+                    objectPtr = &obj;
+                    break;
+                }
+            }
+
+            if (objectPtr == nullptr) {
+                continue;
+            }
+
+            const auto& object = *objectPtr;
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt == modules.end() ||
+                modIt->second == nullptr) {
+                continue;
+            }
+
+            const auto* moduleForPanel = modIt->second.get();
+            auto* tempoModule =
+                dynamic_cast<rectai::TempoModule*>(
+                    const_cast<rectai::AudioModule*>(
+                        moduleForPanel));
+            if (tempoModule == nullptr) {
+                continue;
+            }
+
+            auto* list =
+                owner_.getOrCreateTempoPresetList(panelState.moduleId);
+            if (list == nullptr) {
+                continue;
+            }
+
+            const auto centrePos =
+                MainComponent::objectTableToScreen(object, bounds);
+            const float cx = centrePos.x;
+            const float cy = centrePos.y;
+
+            const auto tableCentre = bounds.getCentre();
+            const float dx = cx - tableCentre.x;
+            const float dy = cy - tableCentre.y;
+            float rotationAngle = 0.0F;
+            if (owner_.isInsideMusicArea(object)) {
+                rotationAngle =
+                    std::atan2(dy, dx) -
+                    juce::MathConstants<float>::halfPi;
+            }
+
+            juce::Point<float> localPos = event.position;
+            if (rotationAngle != 0.0F) {
+                localPos = localPos.transformedBy(
+                    juce::AffineTransform::rotation(-rotationAngle,
+                                                    cx, cy));
+            }
+
+            auto panelBounds =
+                owner_.getModulePanelBounds(object, bounds);
+
+            juce::Rectangle<float> contentBounds = panelBounds;
+            contentBounds.reduce(4.0F, 4.0F);
+
+            if (!contentBounds.contains(localPos)) {
+                continue;
+            }
+
+            list->handleWheelDelta(wheelDelta);
+            owner_.repaintWithRateLimit();
+            return;
+        }
+    }
+
+    // -----
+    // 3) Interaction with Modules on the table surface.
+
+    // When the cursor is over specific modules on the table surface,
+    // repurpose the mouse wheel for direct parameter tweaks instead
+    // of scrolling the dock: Tempo adjusts BPM, Loop cycles samples.
+    {
+        const auto& objects = owner_.scene_.objects();
+        const auto& modules = owner_.scene_.modules();
+
+        const float interactionRadius = 30.0F;
+        bool toRepaint = false;
+
+        for (const auto& [id, object] : objects) {
+            juce::ignoreUnused(id);
+
+            const auto modIt = modules.find(object.logical_id());
+            if (modIt == modules.end() || modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* module = modIt->second.get();
+
+            if (object.docked()) {
+                // Wheel gestures are only active when the tangible
+                // is on the table surface.
+                continue;
+            }
+
+            const auto centrePos = MainComponent::objectTableToScreen(object, bounds);
+            const float cx = centrePos.x;
+            const float cy = centrePos.y;
+
+            const float dx = static_cast<float>(event.position.x) - cx;
+            const float dy = static_cast<float>(event.position.y) - cy;
+            const float distSq = dx * dx + dy * dy;
+            if (distSq > interactionRadius * interactionRadius) {
+                continue;
+            }
+
+            // TempoModule: fine-grained BPM nudging.
+            if (auto* tempoModule =
+                    dynamic_cast<rectai::TempoModule*>(module)) {
+                const float baseStep =
+                    event.isShiftDown ? 5.0F : 1.0F;
+                const float step =
+                    (wheelDelta > 0.0F) ? baseStep : -baseStep;
+                const float newBpm =
+                    rectai::TempoModule::ClampBpm(owner_.bpm_ + step);
+
+                if (newBpm == owner_.bpm_) {
+                    return;
+                }
+
+                owner_.bpm_ = newBpm;
+                owner_.bpmLastChangeSeconds_ =
+                    juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+                // Keep the logical Tempo module parameter in sync
+                // with the global BPM so that serialisation and
+                // other consumers observe the updated tempo value.
+                owner_.scene_.SetModuleParameter(tempoModule->id(), "tempo",
+                                                 owner_.bpm_);
+
+                toRepaint = true;
+            }
+
+            // LoopModule: cycle through the four discrete sample
+            // slots using the normalised "sample" parameter.
+            else if (auto* loopModule =
+                    dynamic_cast<rectai::LoopModule*>(module)) {
+                float sampleParam = loopModule->GetParameterOrDefault(
+                    "sample", 0.0F);
+                sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
+
+                // Iterate over 4 sample slots, if jumping to last/first
+                // then scroll infinite to wrap around.
+                int segIndex = static_cast<int>(sampleParam * 4.0F);
+                segIndex = std::clamp(segIndex, 0, 3);
+                segIndex = (segIndex + (wheelDelta > 0.0F ? 1 : -1) + 4) % 4;
+
+                // Position as decimal to place the Triangle
+                // in the middle of the segment.
+                const float newSampleValue =
+                    (static_cast<float>(segIndex) + 0.5F) / 4.0F;
+                owner_.scene_.SetModuleParameter(loopModule->id(), "sample",
+                                                 newSampleValue);
+                owner_.markLoopSampleLabelActive(loopModule->id());
+
+                toRepaint = true;
+            }
+
+            if (toRepaint) {
+                owner_.repaint();
+            }
+            return;
+        }
+    }
+}
+
+}  // namespace rectai::ui
