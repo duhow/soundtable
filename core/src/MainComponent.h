@@ -49,7 +49,38 @@ public:
     void rotationTrackingUpdate(std::unordered_map<std::int64_t, float>* rotationDeltaDegrees);
     void timerCallback() override;
 
+    void updateAudioRoutingAndVoices(
+        const std::unordered_map<std::int64_t, rectai::ObjectInstance>& objects,
+        const std::unordered_map<std::string, std::unique_ptr<rectai::AudioModule>>& modules,
+        const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+        const std::unordered_map<std::string, std::int64_t>& moduleToObjectId,
+        float globalVolumeGain);
+
+    void updateRotationDrivenControllers(
+        const std::unordered_map<std::int64_t, rectai::ObjectInstance>& objects,
+        const std::unordered_map<std::string, std::unique_ptr<rectai::AudioModule>>& modules,
+        const std::unordered_map<std::int64_t, float>& rotationDeltaDegrees);
+
+    void updateSequencerAndPulses(
+        const std::vector<rectai::AudioGraph::Edge>& graphEdges,
+        const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+        float globalVolumeGain,
+        double nowSeconds,
+        double dt);
+
+    void runSequencerStep(
+        int stepIndex,
+        const std::vector<rectai::AudioGraph::Edge>& graphEdges,
+        const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+        float globalVolumeGain);
+
 private:
+    struct GeometryCache {
+        std::unordered_map<std::string, std::int64_t> moduleToObjectId;
+    };
+
+    [[nodiscard]] GeometryCache buildGeometryCache() const;
+
     [[nodiscard]] bool isInsideMusicArea(
         const rectai::ObjectInstance& obj) const;
 

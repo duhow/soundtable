@@ -1520,10 +1520,8 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
         };
 
         // First, allow muting via connections between instruments.
-        std::unordered_map<std::string, std::int64_t> moduleToObjectId;
-        for (const auto& [id, object] : objectsLocal) {
-            moduleToObjectId.emplace(object.logical_id(), id);
-        }
+        const auto geometry = buildGeometryCache();
+        const auto& moduleToObjectId = geometry.moduleToObjectId;
 
         // Track which objects currently have an active outgoing connection
         // so that the hit-test for the centre  object line follows the
@@ -3251,12 +3249,11 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
 
     // Apply mute toggle to lines that were cut during touch drag.
 
-    // Precompute mapping from module id to object id.
-    std::unordered_map<std::string, std::int64_t> moduleToObjectId;
-    moduleToObjectId.reserve(objects.size());
-    for (const auto& [objId, obj] : objects) {
-        moduleToObjectId.emplace(obj.logical_id(), objId);
-    }
+    // Precompute mapping from module id to object id using the shared
+    // geometry cache so that hit-testing and mute propagation logic are
+    // consistent across audio, paint and input paths.
+    const auto geometry = buildGeometryCache();
+    const auto& moduleToObjectId = geometry.moduleToObjectId;
 
     // Object-to-centre lines: cutting this line is equivalent to
     // toggling the implicit connection from the module to the master

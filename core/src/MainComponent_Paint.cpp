@@ -110,103 +110,112 @@ void MainComponent::paint(juce::Graphics& g)
     // match the module or chain that is actually producing sound.
     constexpr int kWaveformPoints = 512;
     constexpr float kWaveformAmplitudeScale = 15.0F;
-    // Pre-filter (raw oscillator) and post-filter (processed) per-voice
-    // snapshots so that generator→module connections can show the
-    // original waveform while filters/FX and master visuals reflect
-    // the processed audio.
-    float voiceWaveformsPre[AudioEngine::kMaxVoices]
-                           [kWaveformPoints]{};
-    float voiceWaveformsPost[AudioEngine::kMaxVoices]
-                            [kWaveformPoints]{};
-    float voiceNormPre[AudioEngine::kMaxVoices]{};
-    float voiceNormPost[AudioEngine::kMaxVoices]{};
-    float voiceRmsPost[AudioEngine::kMaxVoices]{};
 
-    // For visual consistency (especially with saw waves), we estimate
-    // an approximate period for each voice in the snapshot so that the
-    // UI can repeat a single cycle of the waveform along long lines
-    // instead of traversing an arbitrary window of history.
-    auto estimateWaveformPeriod = [](const float* samples,
-                                     const int numSamples) {
-        if (samples == nullptr || numSamples <= 1) {
-            return numSamples;
-        }
-
-        // Ignore very small lags when estimating the period so that
-        // slowly varying or low-frequency content does not collapse to
-        // a 1–2 sample "period". Using such tiny lags would make the
-        // visualisation effectively sample a single point repeatedly,
-        // which appears as a straight line that jumps up and down
-        // instead of a stable sine/saw shape, especially for lower
-        // notes driven by the Sequencer.
-        const int minLag = 4;
-        const int maxLag = std::max(minLag, numSamples / 2);
-
-        float bestCorr = 0.0F;
-        int bestLag = numSamples;
-
-        for (int lag = minLag; lag <= maxLag; ++lag) {
-            float corr = 0.0F;
-            const int limit = numSamples - lag;
-            for (int i = 0; i < limit; ++i) {
-                corr += samples[i] * samples[i + lag];
-            }
-
-            if (corr > bestCorr) {
-                bestCorr = corr;
-                bestLag = lag;
-            }
-        }
-
-        if (bestLag < minLag || bestLag >= numSamples) {
-            return numSamples;
-        }
-
-        return bestLag;
+    struct AudioFrameState {
+        float voiceWaveformsPre[AudioEngine::kMaxVoices]
+                       [kWaveformPoints]{};
+        float voiceWaveformsPost[AudioEngine::kMaxVoices]
+                    [kWaveformPoints]{};
+        float voiceNormPre[AudioEngine::kMaxVoices]{};
+        float voiceNormPost[AudioEngine::kMaxVoices]{};
+        float voiceRmsPost[AudioEngine::kMaxVoices]{};
+        int voicePeriodSamples[AudioEngine::kMaxVoices]{};
+        const std::unordered_set<std::string>* modulesWithActiveAudio{nullptr};
+        const std::unordered_map<std::string, int>* moduleVoiceIndex{nullptr};
+        const std::unordered_map<std::string, ConnectionVisualSource>*
+            connectionVisualSources{nullptr};
     };
 
-    int voicePeriodSamples[AudioEngine::kMaxVoices]{};
-    for (int v = 0; v < AudioEngine::kMaxVoices; ++v) {
-        audioEngine_.getVoiceWaveformSnapshot(
-            v, voiceWaveformsPre[v], kWaveformPoints, 0.05);
-        audioEngine_.getVoiceFilteredWaveformSnapshot(
-            v, voiceWaveformsPost[v], kWaveformPoints, 0.05);
+    auto computeAudioFrameState = [](AudioEngine& audioEngine) {
+        AudioFrameState state;
 
-        float maxAbsPre = 0.0F;
-        float maxAbsPost = 0.0F;
-        float sumSquaresPost = 0.0F;
-        for (int i = 0; i < kWaveformPoints; ++i) {
-            const float sPre = voiceWaveformsPre[v][i];
-            const float sPost = voiceWaveformsPost[v][i];
-            maxAbsPre = std::max(maxAbsPre, std::abs(sPre));
-            maxAbsPost = std::max(maxAbsPost, std::abs(sPost));
-            sumSquaresPost += sPost * sPost;
+        auto estimateWaveformPeriod = [](const float* samples,
+                                         const int numSamples) {
+            if (samples == nullptr || numSamples <= 1) {
+                return numSamples;
+            }
+
+            // Ignore very small lags when estimating the period so that
+            // slowly varying or low-frequency content does not collapse to
+            // a 1–2 sample "period". Using such tiny lags would make the
+            // visualisation effectively sample a single point repeatedly,
+            // which appears as a straight line that jumps up and down
+            // instead of a stable sine/saw shape, especially for lower
+            // notes driven by the Sequencer.
+            const int minLag = 4;
+            const int maxLag = std::max(minLag, numSamples / 2);
+
+            float bestCorr = 0.0F;
+            int bestLag = numSamples;
+
+            for (int lag = minLag; lag <= maxLag; ++lag) {
+                float corr = 0.0F;
+                const int limit = numSamples - lag;
+                for (int i = 0; i < limit; ++i) {
+                    corr += samples[i] * samples[i + lag];
+                }
+
+                if (corr > bestCorr) {
+                    bestCorr = corr;
+                    bestLag = lag;
+                }
+            }
+
+            if (bestLag < minLag || bestLag >= numSamples) {
+                return numSamples;
+            }
+
+            return bestLag;
+        };
+
+        for (int v = 0; v < AudioEngine::kMaxVoices; ++v) {
+            audioEngine.getVoiceWaveformSnapshot(
+                v, state.voiceWaveformsPre[v], kWaveformPoints, 0.05);
+            audioEngine.getVoiceFilteredWaveformSnapshot(
+                v, state.voiceWaveformsPost[v], kWaveformPoints, 0.05);
+
+            float maxAbsPre = 0.0F;
+            float maxAbsPost = 0.0F;
+            float sumSquaresPost = 0.0F;
+            for (int i = 0; i < kWaveformPoints; ++i) {
+                const float sPre = state.voiceWaveformsPre[v][i];
+                const float sPost = state.voiceWaveformsPost[v][i];
+                maxAbsPre = std::max(maxAbsPre, std::abs(sPre));
+                maxAbsPost = std::max(maxAbsPost, std::abs(sPost));
+                sumSquaresPost += sPost * sPost;
+            }
+
+            state.voiceNormPre[v] =
+                maxAbsPre > 1.0e-4F ? 1.0F / maxAbsPre : 0.0F;
+            state.voiceNormPost[v] =
+                maxAbsPost > 1.0e-4F ? 1.0F / maxAbsPost : 0.0F;
+
+            if (kWaveformPoints > 0) {
+                const float meanSquarePost = sumSquaresPost /
+                                             static_cast<float>(
+                                                 kWaveformPoints);
+                state.voiceRmsPost[v] = meanSquarePost > 0.0F
+                                             ? std::sqrt(meanSquarePost)
+                                             : 0.0F;
+            } else {
+                state.voiceRmsPost[v] = 0.0F;
+            }
+
+            if (state.voiceNormPre[v] > 0.0F) {
+                state.voicePeriodSamples[v] = estimateWaveformPeriod(
+                    state.voiceWaveformsPre[v], kWaveformPoints);
+            } else {
+                state.voicePeriodSamples[v] = 0;
+            }
         }
 
-        voiceNormPre[v] =
-            maxAbsPre > 1.0e-4F ? 1.0F / maxAbsPre : 0.0F;
-        voiceNormPost[v] =
-            maxAbsPost > 1.0e-4F ? 1.0F / maxAbsPost : 0.0F;
+        return state;
+    };
 
-        if (kWaveformPoints > 0) {
-            const float meanSquarePost = sumSquaresPost /
-                                         static_cast<float>(
-                                             kWaveformPoints);
-            voiceRmsPost[v] = meanSquarePost > 0.0F
-                                  ? std::sqrt(meanSquarePost)
-                                  : 0.0F;
-        } else {
-            voiceRmsPost[v] = 0.0F;
-        }
-
-        if (voiceNormPre[v] > 0.0F) {
-            voicePeriodSamples[v] =
-                estimateWaveformPeriod(voiceWaveformsPre[v],
-                                       kWaveformPoints);
-        } else {
-            voicePeriodSamples[v] = 0;
-        }
-    }
+    AudioFrameState audioFrame = computeAudioFrameState(audioEngine_);
+    audioFrame.modulesWithActiveAudio = &modulesWithActiveAudio_;
+    audioFrame.moduleVoiceIndex = &moduleVoiceIndex_;
+    audioFrame.connectionVisualSources = &connectionVisualSources_;
 
     auto isAudioConnection = [&modules](const rectai::Connection& conn) {
         const auto fromModuleIt = modules.find(conn.from_module_id);
@@ -595,10 +604,12 @@ void MainComponent::paint(juce::Graphics& g)
                 // Sampleplay modules use the dedicated Sampleplay
                 // waveform buffers instead of per-voice history and
                 // do not rely on modulesWithActiveAudio_ to decide
-                // whether their radial line carries sound.
+                // whether su radial line carries sound.
                 isSampleplayModule ||
-                modulesWithActiveAudio_.find(object.logical_id()) !=
-                    modulesWithActiveAudio_.end();
+                (audioFrame.modulesWithActiveAudio != nullptr &&
+                 audioFrame.modulesWithActiveAudio->find(
+                     object.logical_id()) !=
+                     audioFrame.modulesWithActiveAudio->end());
 
             // Dim the line slightly when this instrument is feeding
             // another one, so the downstream instrument stands out.
@@ -739,22 +750,26 @@ void MainComponent::paint(juce::Graphics& g)
                         drewWaveformSegment = true;
                     }
                 } else {
+                    const auto* voiceMap = audioFrame.moduleVoiceIndex;
                     const auto voiceIt =
-                        moduleVoiceIndex_.find(object.logical_id());
+                        (voiceMap != nullptr)
+                            ? voiceMap->find(object.logical_id())
+                            : std::unordered_map<std::string, int>::const_iterator{};
                     const int voiceIndex =
-                        (voiceIt != moduleVoiceIndex_.end())
+                        (voiceMap != nullptr &&
+                         voiceIt != voiceMap->end())
                             ? voiceIt->second
                             : -1;
 
                     if (voiceIndex >= 0 &&
                         voiceIndex < AudioEngine::kMaxVoices &&
-                        voiceNormPost[voiceIndex] > 0.0F) {
+                        audioFrame.voiceNormPost[voiceIndex] > 0.0F) {
                         g.setColour(
                             juce::Colours::white.withAlpha(baseAlpha));
 
                         float amplitudeLevel = visualLevel;
                         if (!hasExplicitVolumeBar) {
-                            const float rms = voiceRmsPost[voiceIndex];
+                            const float rms = audioFrame.voiceRmsPost[voiceIndex];
                             if (rms > 0.0F) {
                                 amplitudeLevel = juce::jlimit(
                                     0.0F, 1.0F, rms / 0.7071F);
@@ -775,18 +790,18 @@ void MainComponent::paint(juce::Graphics& g)
                         const int segmentsForWaveformHold =
                             static_cast<int>(segmentLineLength / 5.0F);
                         const int periodSamples =
-                            voicePeriodSamples[voiceIndex] > 0
-                                ? voicePeriodSamples[voiceIndex]
+                            audioFrame.voicePeriodSamples[voiceIndex] > 0
+                                ? audioFrame.voicePeriodSamples[voiceIndex]
                                 : kWaveformPoints;
                         float normalisation =
-                            voiceNormPost[voiceIndex];
+                            audioFrame.voiceNormPost[voiceIndex];
                         if (!hasExplicitVolumeBar) {
                             normalisation = 1.0F;
                         }
                         drawWaveformOnLine(
                             {cx, cy}, splitPoint, waveformAmplitude,
                             waveformThickness,
-                            voiceWaveformsPost[voiceIndex],
+                            audioFrame.voiceWaveformsPost[voiceIndex],
                             periodSamples, normalisation,
                             juce::jmax(1, segmentsForWaveformHold),
                             /*tiled=*/true);
@@ -976,8 +991,10 @@ void MainComponent::paint(juce::Graphics& g)
                     // tap configurado en el motor; esto evita pedir
                     // snapshots para claves que no se están
                     // actualizando en audio.
-                    if (connectionVisualSources_.find(key) ==
-                        connectionVisualSources_.end()) {
+                    const auto* vsMap =
+                        audioFrame.connectionVisualSources;
+                    if (vsMap == nullptr ||
+                        vsMap->find(key) == vsMap->end()) {
                         continue;
                     }
 
@@ -1213,16 +1230,20 @@ void MainComponent::paint(juce::Graphics& g)
                 }
 
                 if (!drewRadial) {
+                    const auto* voiceMap = audioFrame.moduleVoiceIndex;
                     const auto voiceIt =
-                        moduleVoiceIndex_.find(object.logical_id());
+                        (voiceMap != nullptr)
+                            ? voiceMap->find(object.logical_id())
+                            : std::unordered_map<std::string, int>::const_iterator{};
                     const int voiceIndex =
-                        (voiceIt != moduleVoiceIndex_.end())
+                        (voiceMap != nullptr &&
+                         voiceIt != voiceMap->end())
                             ? voiceIt->second
                             : -1;
 
                     if (voiceIndex >= 0 &&
                         voiceIndex < AudioEngine::kMaxVoices &&
-                        voiceNormPost[voiceIndex] > 0.0F) {
+                        audioFrame.voiceNormPost[voiceIndex] > 0.0F) {
                         const auto baseColour = hasHardlinkToMaster
                                                     ? juce::Colours::red
                                                     : juce::Colours::white;
@@ -1240,7 +1261,7 @@ void MainComponent::paint(juce::Graphics& g)
                         // output level instead of a fixed height.
                         if (!hasExplicitVolumeBar) {
                             const float rms =
-                                voiceRmsPost[voiceIndex];
+                                audioFrame.voiceRmsPost[voiceIndex];
                             if (rms > 0.0F) {
                                 // Normalise against a full-scale sine
                                 // (~0.707 RMS) and clamp to [0,1].
@@ -1255,18 +1276,18 @@ void MainComponent::paint(juce::Graphics& g)
                             kWaveformAmplitudeScale * amplitudeLevel;
                         const float waveformThickness = 1.4F;
                         const int periodSamples =
-                            voicePeriodSamples[voiceIndex] > 0
-                                ? voicePeriodSamples[voiceIndex]
+                            audioFrame.voicePeriodSamples[voiceIndex] > 0
+                                ? audioFrame.voicePeriodSamples[voiceIndex]
                                 : kWaveformPoints;
                         float normalisation =
-                            voiceNormPost[voiceIndex];
+                            audioFrame.voiceNormPost[voiceIndex];
                         if (!hasExplicitVolumeBar) {
                             normalisation = 1.0F;
                         }
                         drawWaveformOnLine(
                             line.getEnd(), line.getStart(),
                             waveformAmplitude, waveformThickness,
-                            voiceWaveformsPost[voiceIndex],
+                            audioFrame.voiceWaveformsPost[voiceIndex],
                             periodSamples, normalisation,
                             segmentsForWaveform,
                             /*tiled=*/true);
@@ -1409,10 +1430,13 @@ void MainComponent::paint(juce::Graphics& g)
 
             const bool audioConnEndpointsActive =
                 isAudioConnection(conn) &&
-                (modulesWithActiveAudio_.find(conn.from_module_id) !=
-                     modulesWithActiveAudio_.end() ||
-                 modulesWithActiveAudio_.find(conn.to_module_id) !=
-                     modulesWithActiveAudio_.end());
+                audioFrame.modulesWithActiveAudio != nullptr &&
+                (audioFrame.modulesWithActiveAudio->find(
+                     conn.from_module_id) !=
+                     audioFrame.modulesWithActiveAudio->end() ||
+                 audioFrame.modulesWithActiveAudio->find(
+                     conn.to_module_id) !=
+                     audioFrame.modulesWithActiveAudio->end());
 
             // Check if either endpoint of this connection is a
             // Sampleplay module so we can use the dedicated
@@ -1562,8 +1586,10 @@ void MainComponent::paint(juce::Graphics& g)
                         continue;
                     }
 
-                    if (connectionVisualSources_.find(upstreamKey) ==
-                        connectionVisualSources_.end()) {
+                    const auto* vsMap =
+                        audioFrame.connectionVisualSources;
+                    if (vsMap == nullptr ||
+                        vsMap->find(upstreamKey) == vsMap->end()) {
                         continue;
                     }
 
