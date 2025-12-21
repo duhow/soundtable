@@ -114,6 +114,10 @@ class AudioModule {
     return uses_frequency_control_;
   }
 
+  [[nodiscard]] bool uses_pitch_control() const {
+    return uses_pitch_control_;
+  }
+
   [[nodiscard]] bool uses_gain_control() const { return uses_gain_control_; }
 
   // Simple synthesis defaults for UI-driven engines.
@@ -274,6 +278,7 @@ class AudioModule {
   {
     uses_frequency_control_ = enabled;
   }
+  void enable_pitch_control(bool enabled) { uses_pitch_control_ = enabled; }
   void enable_gain_control(bool enabled) { uses_gain_control_ = enabled; }
   void set_connection_targets(std::unordered_set<ModuleType> targets);
   void allow_any_connection_target();
@@ -296,6 +301,7 @@ class AudioModule {
   bool produces_audio_{false};
   bool consumes_audio_{false};
   bool uses_frequency_control_{false};
+  bool uses_pitch_control_{false};
   bool uses_gain_control_{false};
   double base_frequency_hz_{200.0};
   double frequency_range_hz_{800.0};

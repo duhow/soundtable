@@ -1046,6 +1046,7 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
 
             freqEnabled =
                 moduleForObject->uses_frequency_control() ||
+                moduleForObject->uses_pitch_control() ||
                 isTempoModule ||
                 moduleForObject->is<rectai::LoopModule>();
         }
@@ -1158,8 +1159,59 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                         ? modItFreq->second.get()
                         : nullptr;
 
-                if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
-                        moduleForFreq)) {
+                if (moduleForFreq != nullptr &&
+                    moduleForFreq->uses_pitch_control()) {
+                    // Map absolute click position on the pitch
+                    // control to a MIDI note within the same 8-octave
+                    // window used by the visual segments. This
+                    // updates the `midifreq` parameter and, for
+                    // Oscillator modules, also keeps the underlying
+                    // `freq` parameter in sync so that the audio
+                    // engine continues to derive Hz from the same
+                    // pitch.
+                    constexpr float kMinMidi = 24.0F;
+                    constexpr float kMaxMidi = 24.0F + 12.0F * 8.0F;
+
+                    const float clamped = juce::jlimit(0.0F, 1.0F, value);
+                    const float newMidi = juce::jmap(clamped,
+                                                     0.0F, 1.0F,
+                                                     kMinMidi,
+                                                     kMaxMidi);
+
+                    scene_.SetModuleParameter(object.logical_id(),
+                                              "midifreq", newMidi);
+
+                    if (auto* oscModule =
+                            dynamic_cast<rectai::OscillatorModule*>(
+                                moduleForFreq)) {
+                        const double targetHz = 440.0 *
+                                                std::pow(
+                                                    2.0,
+                                                    (static_cast<double>(
+                                                         newMidi) -
+                                                     69.0) /
+                                                        12.0);
+
+                        const double baseHz =
+                            oscModule->base_frequency_hz();
+                        const double rangeHz =
+                            oscModule->frequency_range_hz();
+                        if (rangeHz > 0.0) {
+                            const double norm =
+                                (targetHz - baseHz) / rangeHz;
+                            const float freqParam = juce::jlimit(
+                                0.0F, 1.0F,
+                                static_cast<float>(norm));
+                            scene_.SetModuleParameter(
+                                object.logical_id(), "freq",
+                                freqParam);
+
+                            maybeRetriggerOscillatorOnFreqChange(
+                                object.logical_id(), moduleForFreq);
+                        }
+                    }
+                } else if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
+                               moduleForFreq)) {
                     // Map click position to one of four discrete
                     // sample slots and update the "sample"
                     // parameter. Also mark the loop label as
@@ -2419,9 +2471,14 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
             const auto& modulesForFreq = scene_.modules();
             const auto modItFreq =
                 modulesForFreq.find(object.logical_id());
-            if (modItFreq != modulesForFreq.end() &&
-                modItFreq->second != nullptr &&
-                modItFreq->second->is<rectai::TempoModule>()) {
+            rectai::AudioModule* moduleForFreq =
+                (modItFreq != modulesForFreq.end() &&
+                 modItFreq->second != nullptr)
+                    ? modItFreq->second.get()
+                    : nullptr;
+
+            if (moduleForFreq != nullptr &&
+                moduleForFreq->is<rectai::TempoModule>()) {
                 const float newBpm =
                     rectai::TempoModule::BpmFromNormalised(value);
                 bpm_ = rectai::TempoModule::ClampBpm(newBpm);
@@ -2432,14 +2489,56 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
 
                 scene_.SetModuleParameter(object.logical_id(), "tempo",
                                           bpm_);
+            } else if (moduleForFreq != nullptr &&
+                       moduleForFreq->uses_pitch_control()) {
+                // Dragging on a pitch-controlled module updates the
+                // `midifreq` parameter within the same 8-octave
+                // window used by the visual segments, keeping the
+                // Oscillator's `freq` parameter in sync so that the
+                // audible pitch and the UI always match.
+                constexpr float kMinMidi = 24.0F;
+                constexpr float kMaxMidi = 24.0F + 12.0F * 8.0F;
+
+                const float clamped = juce::jlimit(0.0F, 1.0F, value);
+                const float newMidi = juce::jmap(clamped,
+                                                 0.0F, 1.0F,
+                                                 kMinMidi,
+                                                 kMaxMidi);
+
+                scene_.SetModuleParameter(object.logical_id(),
+                                          "midifreq", newMidi);
+
+                if (auto* oscModule =
+                        dynamic_cast<rectai::OscillatorModule*>(
+                            moduleForFreq)) {
+                    const double targetHz = 440.0 *
+                                            std::pow(
+                                                2.0,
+                                                (static_cast<double>(
+                                                     newMidi) -
+                                                 69.0) /
+                                                    12.0);
+
+                    const double baseHz =
+                        oscModule->base_frequency_hz();
+                    const double rangeHz =
+                        oscModule->frequency_range_hz();
+                    if (rangeHz > 0.0) {
+                        const double norm =
+                            (targetHz - baseHz) / rangeHz;
+                        const float freqParam = juce::jlimit(
+                            0.0F, 1.0F,
+                            static_cast<float>(norm));
+                        scene_.SetModuleParameter(
+                            object.logical_id(), "freq",
+                            freqParam);
+
+                        maybeRetriggerOscillatorOnFreqChange(
+                            object.logical_id(), moduleForFreq);
+                    }
+                }
             } else {
                 scene_.SetModuleParameter(object.logical_id(), "freq", value);
-
-                rectai::AudioModule* moduleForFreq =
-                    (modItFreq != modulesForFreq.end() &&
-                     modItFreq->second != nullptr)
-                        ? modItFreq->second.get()
-                        : nullptr;
 
                 maybeRetriggerOscillatorOnFreqChange(
                     object.logical_id(), moduleForFreq);

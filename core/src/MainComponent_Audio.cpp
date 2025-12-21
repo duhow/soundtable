@@ -581,7 +581,7 @@ void MainComponent::timerCallback()
         // For Loop modules, the same rotation scrolls over the four
         // discrete sample segments with wrap-around behaviour.
         if (auto* loopModule =
-                dynamic_cast<rectai::LoopModule*>(module)) {
+            dynamic_cast<rectai::LoopModule*>(module)) {
             if (!obj.docked()) {
                 // One full revolution (360º) scrolls across the four
                 // Loop segments, so every ~90º the selected slot
@@ -627,6 +627,65 @@ void MainComponent::timerCallback()
                     if (newIndex != previousIndex) {
                         markLoopSampleLabelActive(loopModule->id());
                     }
+                }
+            }
+        } else if (module->uses_pitch_control() && !obj.docked()) {
+            // Rotation → musical pitch (`midifreq` parameter) for
+            // modules that expose pitch control (Oscillator,
+            // Sampleplay). A full revolution (360º) moves one
+            // octave up or down, i.e. 12 semitones.
+            const float deltaSemitones =
+                -diff * (12.0F / 360.0F);  // approx [-6, 6]
+
+            if (std::fabs(deltaSemitones) <=
+                std::numeric_limits<float>::epsilon()) {
+                continue;
+            }
+
+            constexpr float kMinMidi = 24.0F;
+            constexpr float kMaxMidi = 24.0F + 12.0F * 8.0F;
+
+            const float currentMidi = module->GetParameterOrDefault(
+                "midifreq", 57.0F);
+            const float clampedCurrent = juce::jlimit(
+                kMinMidi, kMaxMidi, currentMidi);
+            float updatedMidi = clampedCurrent + deltaSemitones;
+            updatedMidi = juce::jlimit(kMinMidi, kMaxMidi, updatedMidi);
+
+            scene_.SetModuleParameter(obj.logical_id(), "midifreq",
+                                      updatedMidi);
+
+            // For Oscillator modules, also keep the normalised
+            // `freq` parameter in sync so that the audio engine
+            // continues to derive Hz from the same pitch.
+            if (auto* oscModule =
+                    dynamic_cast<rectai::OscillatorModule*>(module)) {
+                const double targetHz = 440.0 *
+                                        std::pow(
+                                            2.0,
+                                            (static_cast<double>(
+                                                 updatedMidi) -
+                                             69.0) /
+                                                12.0);
+
+                const double baseHz = oscModule->base_frequency_hz();
+                const double rangeHz = oscModule->frequency_range_hz();
+                if (rangeHz > 0.0) {
+                    const double norm = (targetHz - baseHz) / rangeHz;
+                    const float freqParam = juce::jlimit(
+                        0.0F, 1.0F,
+                        static_cast<float>(norm));
+                    scene_.SetModuleParameter(obj.logical_id(), "freq",
+                                              freqParam);
+
+                    // For Oscillator modules that use a one-shot
+                    // style envelope (no sustain plateau), a
+                    // rotation-driven pitch change should also
+                    // restart the envelope so that the updated
+                    // note is audible after the previous tail has
+                    // faded out.
+                    maybeRetriggerOscillatorOnFreqChange(obj.logical_id(),
+                                                         module);
                 }
             }
         } else if (module->uses_frequency_control() && !obj.docked()) {

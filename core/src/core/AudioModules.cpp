@@ -34,12 +34,11 @@ OscillatorModule::OscillatorModule(const std::string& id,
       "Tone generator feeding the master bus or downstream modules.");
   // Initialise the mode system to the default (sine waveform),
   set_mode("sine");
-  enable_frequency_control(true);
+  enable_pitch_control(true);
   enable_gain_control(true);
   // Expand frequency range so that the normalised `freq` parameter
-  // can cover the full MIDI note range [0,127]. MIDI note 0 is
-  // ≈8.18 Hz and note 127 is ≈12.54 kHz.
-  set_frequency_mapping(8.0, 12536.0);  // ≈8 Hz – 12.5 kHz
+  // can cover the full MIDI note range [0,127].
+  set_frequency_mapping(20.0, 3918.0);  // ≈56 Hz – 3.9 kHz
   set_level_mapping(0.02F, 0.18F);
   set_connection_targets({ModuleType::kAudio, ModuleType::kFilter});
 
@@ -725,6 +724,7 @@ SampleplayModule::SampleplayModule(const std::string& id)
   // than the default so that SoundFont-based instruments have a
   // comfortable loudness range in combination with the global
   // volume curve.
+  enable_pitch_control(true);
   enable_gain_control(true);
   set_level_mapping(0.05F, 0.95F);
 

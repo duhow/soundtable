@@ -1931,7 +1931,7 @@ void MainComponent::paint(juce::Graphics& g)
                 // "sample" parameter.
                 freqValue = moduleForObject->GetParameterOrDefault(
                     "sample", 0.0F);
-            } else {
+            } else if (!moduleForObject->uses_pitch_control()) {
                 freqValue = moduleForObject->GetParameterOrDefault(
                     "freq",
                     moduleForObject->default_parameter_value("freq"));
@@ -1962,6 +1962,7 @@ void MainComponent::paint(juce::Graphics& g)
 
             showFreqControl =
                 moduleForObject->uses_frequency_control() ||
+                moduleForObject->uses_pitch_control() ||
                 isTempoModule ||
                 moduleForObject->is<rectai::LoopModule>();
             showGainControl = moduleForObject->uses_gain_control();
@@ -1978,32 +1979,15 @@ void MainComponent::paint(juce::Graphics& g)
         const float sliderTop = cy - ringRadius + sliderMargin;
         const float sliderBottom = cy + ringRadius - sliderMargin;
 
-        // Left control (Freq): curved bar following the left semi-circle.
+        // Left control (Freq / Pitch): curved bar following the left
+        // semi-circle. For modules that expose pitch control (e.g.
+        // Oscillator, Sampleplay) this area is repurposed into a
+        // discrete pitch selector composed of inner octave segments and
+        // outer note segments.
         if (showFreqControl) {
             const bool modeMenuVisibleForThisModule =
                 (modeSelection_.menuVisible &&
                  modeSelection_.moduleId == object.logical_id());
-            juce::Path freqArc;
-            const int segments = 40;
-            for (int i = 0; i <= segments; ++i) {
-                const float t = static_cast<float>(i) /
-                                static_cast<float>(segments);
-                const float y = juce::jmap(t, 0.0F, 1.0F,
-                                           sliderTop, sliderBottom);
-                const float dy = y - cy;
-                const float inside = ringRadius * ringRadius - dy * dy;
-                if (inside < 0.0F) {
-                    continue;
-                }
-                const float dx = std::sqrt(inside);
-                const float x = cx - dx;
-                if (i == 0) {
-                    freqArc.startNewSubPath(x, y);
-                } else {
-                    freqArc.lineTo(x, y);
-                }
-            }
-
             // When the adjustment mode menu is open for this module,
             // render the Freq bar with higher transparency so that it
             // visually recedes behind the mode icons without requiring
@@ -2015,6 +1999,185 @@ void MainComponent::paint(juce::Graphics& g)
                 juce::Colours::white.withAlpha(1.0F * modeMenuAlpha);
 
             if (moduleForObject != nullptr &&
+                moduleForObject->uses_pitch_control()) {
+                // Pitch control: draw a compact radial UI composed of
+                // 8 inner octave segments and 12 outer note segments.
+                // The current pitch is derived from the `midifreq`
+                // parameter when present and mapped into a fixed
+                // 8-octave window.
+
+                const float midiNote = moduleForObject->GetParameterOrDefault(
+                    "midifreq", 57.0F);
+
+                // Map MIDI notes into the [C2, C10) range covered by
+                // the 8 octave segments. Values outside this window
+                // are clamped.
+                constexpr float kMinMidi = 24.0F;   // C2
+                constexpr float kMaxMidi = 24.0F + 12.0F * 8.0F;  // C10
+
+                float clampedMidi = juce::jlimit(kMinMidi, kMaxMidi, midiNote);
+                int relative = static_cast<int>(std::floor(static_cast<double>(clampedMidi - kMinMidi)));
+                if (relative < 0) {
+                    relative = 0;
+                }
+                const int octaveIndex = relative / 12;
+                const int noteIndex = relative % 12;
+
+                // Shared angular window for the visible semi-arc.
+                const float dyTop = sliderTop - cy;
+                const float dyBottom = sliderBottom - cy;
+                const float sinTop = juce::jlimit(-1.0F, 1.0F,
+                                                  dyTop / ringRadius);
+                const float sinBottom = juce::jlimit(-1.0F, 1.0F,
+                                                     dyBottom / ringRadius);
+                const float angleTop = std::asin(sinTop);
+                const float angleBottom = std::asin(sinBottom);
+
+                // Inner ring: 8 small octave segments close to the
+                // module body.
+                const int kOctaveSegments = 8;
+                const float innerRadius = ringRadius - 5.0F;
+                const float octaveGap = 1.0F;
+
+                for (int i = 0; i < kOctaveSegments; ++i) {
+                    const float segStartT = 1.0F -
+                        (static_cast<float>(i + 1) /
+                         static_cast<float>(kOctaveSegments));
+                    const float segEndT = 1.0F -
+                        (static_cast<float>(i) /
+                         static_cast<float>(kOctaveSegments));
+
+                    const float segAngle0 = juce::jmap(
+                        segStartT, 0.0F, 1.0F, angleTop, angleBottom);
+                    const float segAngle1 = juce::jmap(
+                        segEndT, 0.0F, 1.0F, angleTop, angleBottom);
+
+                    const float shrink = octaveGap / innerRadius;
+                    const float a0 = segAngle0 + shrink;
+                    const float a1 = segAngle1 - shrink;
+                    if (a1 <= a0) {
+                        continue;
+                    }
+
+                    juce::Path segPath;
+                    const int segSteps = 16;
+                    for (int s = 0; s <= segSteps; ++s) {
+                        const float tt = static_cast<float>(s) /
+                                         static_cast<float>(segSteps);
+                        const float a = juce::jmap(tt, 0.0F, 1.0F,
+                                                   a0, a1);
+                        const float x = cx - innerRadius * std::cos(a);
+                        const float y = cy + innerRadius * std::sin(a);
+                        if (s == 0) {
+                            segPath.startNewSubPath(x, y);
+                        } else {
+                            segPath.lineTo(x, y);
+                        }
+                    }
+
+                    g.setColour(freqBackgroundColour);
+                    g.strokePath(segPath, juce::PathStrokeType(3.0F));
+
+                    if (i == octaveIndex) {
+                        g.setColour(freqForegroundColour);
+                        g.strokePath(segPath, juce::PathStrokeType(3.0F));
+                    }
+                }
+
+                // Outer ring: 12 note segments slightly further away
+                // from the module, with a triangle marker indicating
+                // the active pitch.
+                const int kNoteSegments = 12;
+                const float outerRadius = ringRadius + 4.0F;
+                const float noteGap = 1.0F;
+
+                float noteCenterAngle = angleTop;
+
+                for (int i = 0; i < kNoteSegments; ++i) {
+                    const float segStartT = 1.0F -
+                        (static_cast<float>(i + 1) /
+                         static_cast<float>(kNoteSegments));
+                    const float segEndT = 1.0F -
+                        (static_cast<float>(i) /
+                         static_cast<float>(kNoteSegments));
+
+                    const float segAngle0 = juce::jmap(
+                        segStartT, 0.0F, 1.0F, angleTop, angleBottom);
+                    const float segAngle1 = juce::jmap(
+                        segEndT, 0.0F, 1.0F, angleTop, angleBottom);
+
+                    const float shrink = noteGap / outerRadius;
+                    const float a0 = segAngle0 + shrink;
+                    const float a1 = segAngle1 - shrink;
+                    if (a1 <= a0) {
+                        continue;
+                    }
+
+                    const float centerAngle = 0.5F * (a0 + a1);
+                    if (i == noteIndex) {
+                        noteCenterAngle = centerAngle;
+                    }
+
+                    juce::Path segPath;
+                    const int segSteps = 16;
+                    for (int s = 0; s <= segSteps; ++s) {
+                        const float tt = static_cast<float>(s) /
+                                         static_cast<float>(segSteps);
+                        const float a = juce::jmap(tt, 0.0F, 1.0F,
+                                                   a0, a1);
+                        const float x = cx - outerRadius * std::cos(a);
+                        const float y = cy + outerRadius * std::sin(a);
+                        if (s == 0) {
+                            segPath.startNewSubPath(x, y);
+                        } else {
+                            segPath.lineTo(x, y);
+                        }
+                    }
+
+                    g.setColour(freqBackgroundColour);
+                    g.strokePath(segPath, juce::PathStrokeType(4.0F));
+
+                    if (i == noteIndex) {
+                        g.setColour(freqForegroundColour);
+                        g.strokePath(segPath, juce::PathStrokeType(4.0F));
+                    }
+                }
+
+                // Triangle marker placed outside the active note
+                // segment, aligned with its centre angle.
+                const float tipX = cx - outerRadius * std::cos(noteCenterAngle);
+                const float tipY = cy + outerRadius * std::sin(noteCenterAngle);
+
+                const float ux = (tipX - cx) / outerRadius;
+                const float uy = (tipY - cy) / outerRadius;
+
+                const float triHeight = 7.0F;
+                const float halfWidth = 4.5F;
+
+                const juce::Point<float> tip(tipX, tipY);
+                const juce::Point<float> baseCenter(
+                    tip.x + ux * triHeight,
+                    tip.y + uy * triHeight);
+
+                const float tx = -uy;
+                const float ty = ux;
+
+                const juce::Point<float> base1(
+                    baseCenter.x + tx * halfWidth,
+                    baseCenter.y + ty * halfWidth);
+                const juce::Point<float> base2(
+                    baseCenter.x - tx * halfWidth,
+                    baseCenter.y - ty * halfWidth);
+
+                juce::Path tri;
+                tri.startNewSubPath(tip);
+                tri.lineTo(base1);
+                tri.lineTo(base2);
+                tri.closeSubPath();
+
+                g.setColour(freqForegroundColour);
+                g.fillPath(tri);
+            } else if (moduleForObject != nullptr &&
                 moduleForObject->is<rectai::LoopModule>()) {
                 // For Loop modules, render the left bar as four
                 // discrete segments with a small transparent gap and
@@ -2125,8 +2288,6 @@ void MainComponent::paint(juce::Graphics& g)
                 const float insideTri =
                     ringRadius * ringRadius - dyTri * dyTri;
                 if (insideTri > 0.0F) {
-                    const float dxTri = std::sqrt(insideTri);
-
                     // Radial direction from the module centre to the
                     // active segment centre.
                     const float ux = (barX - cx) / ringRadius;
@@ -2166,6 +2327,28 @@ void MainComponent::paint(juce::Graphics& g)
                     g.fillPath(tri);
                 }
             } else {
+                juce::Path freqArc;
+                const int arcSegments = 40;
+                for (int i = 0; i <= arcSegments; ++i) {
+                    const float t = static_cast<float>(i) /
+                                    static_cast<float>(arcSegments);
+                    const float y = juce::jmap(t, 0.0F, 1.0F,
+                                               sliderTop, sliderBottom);
+                    const float dy = y - cy;
+                    const float inside =
+                        ringRadius * ringRadius - dy * dy;
+                    if (inside < 0.0F) {
+                        continue;
+                    }
+                    const float dx = std::sqrt(inside);
+                    const float x = cx - dx;
+                    if (i == 0) {
+                        freqArc.startNewSubPath(x, y);
+                    } else {
+                        freqArc.lineTo(x, y);
+                    }
+                }
+
                 const bool freqIsFull = (freqValue >= 0.999F);
                 const bool freqIsEmpty = (freqValue <= 0.001F);
 
