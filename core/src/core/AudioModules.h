@@ -190,10 +190,27 @@ class OscillatorModule : public AudioModuleWithEnvelope {
          // UI-level waveform modes (sine / saw / square / noise).
          [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 
+         // When enabled, rotation-driven pitch changes for this
+         // Oscillator are quantised to exact MIDI notes using the
+         // same semitone grid as the pitch UI, rather than mapping
+         // rotation directly to continuous Hz. The default is
+         // disabled so that rotation produces a smooth frequency
+         // sweep.
+         [[nodiscard]] bool play_midi_note_from_rotation() const
+         {
+                 return play_midi_note_from_rotation_;
+         }
+
+         void set_play_midi_note_from_rotation(const bool enabled)
+         {
+                 play_midi_note_from_rotation_ = enabled;
+         }
+
  protected:
          void on_mode_changed(int newIndex, const AudioModuleMode& mode) override;
 
  private:
+         bool play_midi_note_from_rotation_{true};
 };
 
 // Output / Master module.

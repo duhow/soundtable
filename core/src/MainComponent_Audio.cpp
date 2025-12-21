@@ -653,27 +653,44 @@ void MainComponent::timerCallback()
             float updatedMidi = clampedCurrent + deltaSemitones;
             updatedMidi = juce::jlimit(kMinMidi, kMaxMidi, updatedMidi);
 
-            // Skip updates when rotation would keep the pitch at the
-            // same MIDI note (for example when already at the
-            // minimum or maximum allowed note), to avoid
-            // retriggering identical notes.
-            if (std::abs(updatedMidi - clampedCurrent) <= 1.0e-4F) {
-                continue;
+            auto* oscModule =
+                dynamic_cast<rectai::OscillatorModule*>(module);
+            float effectivePrevMidi = clampedCurrent;
+            float effectiveNewMidi = updatedMidi;
+            if (oscModule != nullptr &&
+                oscModule->play_midi_note_from_rotation()) {
+                // Optional MIDI-note mode: quantise the effective
+                // MIDI pitch used for audio and note-change
+                // detection, while keeping the stored `midifreq`
+                // parameter continuous so that the radial UI marker
+                // can follow rotation smoothly between segments.
+                effectivePrevMidi = std::round(clampedCurrent);
+                effectiveNewMidi = std::round(updatedMidi);
+                effectivePrevMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                 effectivePrevMidi);
+                effectiveNewMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                 effectiveNewMidi);
             }
 
+            // Always store the raw (continuous) MIDI value so the UI
+            // can reflect sub-semitone positions even when the audio
+            // path uses a quantised note.
             scene_.SetModuleParameter(obj.logical_id(), "midifreq",
                                       updatedMidi);
 
             // For Oscillator modules, also keep the normalised
             // `freq` parameter in sync so that the audio engine
-            // continues to derive Hz from the same pitch.
-            if (auto* oscModule =
-                    dynamic_cast<rectai::OscillatorModule*>(module)) {
+            // continues to derive Hz from the same (effective)
+            // pitch.
+            if (oscModule != nullptr) {
                 const double targetHz = 440.0 *
                                         std::pow(
                                             2.0,
                                             (static_cast<double>(
-                                                 updatedMidi) -
+                                                 (oscModule->
+                                                      play_midi_note_from_rotation()
+                                                       ? effectiveNewMidi
+                                                       : updatedMidi)) -
                                              69.0) /
                                                 12.0);
 
@@ -687,14 +704,24 @@ void MainComponent::timerCallback()
                     scene_.SetModuleParameter(obj.logical_id(), "freq",
                                               freqParam);
 
-                    // For Oscillator modules that use a one-shot
-                    // style envelope (no sustain plateau), a
-                    // rotation-driven pitch change should also
-                    // restart the envelope so that the updated
-                    // note is audible after the previous tail has
-                    // faded out.
-                    maybeRetriggerOscillatorOnFreqChange(obj.logical_id(),
-                                                         module);
+                    // For Oscillators, only retrigger the envelope
+                    // when the effective musical note changes. In
+                    // MIDI-from-rotation mode this corresponds to
+                    // semitone steps driven by the tracker.
+                    const float comparePrev =
+                        oscModule->play_midi_note_from_rotation()
+                            ? effectivePrevMidi
+                            : clampedCurrent;
+                    const float compareNew =
+                        oscModule->play_midi_note_from_rotation()
+                            ? effectiveNewMidi
+                            : updatedMidi;
+
+                    if (std::abs(compareNew - comparePrev) >
+                        1.0e-4F) {
+                        maybeRetriggerOscillatorOnFreqChange(
+                            obj.logical_id(), module);
+                    }
                 }
             }
         } else if (module->uses_frequency_control() && !obj.docked()) {

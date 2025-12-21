@@ -1178,29 +1178,36 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                             "midifreq", 57.0F);
 
                     const float clamped = juce::jlimit(0.0F, 1.0F, value);
-                    const float newMidi = juce::jmap(clamped,
-                                                     0.0F, 1.0F,
-                                                     kMinMidi,
-                                                     kMaxMidi);
+                    float newMidi = juce::jmap(clamped,
+                                               0.0F, 1.0F,
+                                               kMinMidi,
+                                               kMaxMidi);
 
-                    // Do not retrigger or repaint if the effective
-                    // MIDI note did not change (for example when
-                    // dragging while already at the pitch limits).
-                    if (std::abs(newMidi - previousMidi) <= 1.0e-4F) {
-                        return;
-                    }
+                    auto* oscModule =
+                        dynamic_cast<rectai::OscillatorModule*>(
+                            moduleForFreq);
+                    float effectivePrevMidi = previousMidi;
+                    float effectiveNewMidi = newMidi;
+                    if (oscModule != nullptr) {
+                        if (oscModule->play_midi_note_from_rotation()) {
+                            // Quantise only the *effective* MIDI
+                            // note used for audio, while keeping the
+                            // stored `midifreq` parameter continuous
+                            // so the UI (triangle marker) can follow
+                            // rotation smoothly between segments.
+                            effectivePrevMidi = std::round(previousMidi);
+                            effectiveNewMidi = std::round(newMidi);
+                            effectivePrevMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                             effectivePrevMidi);
+                            effectiveNewMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                             effectiveNewMidi);
+                        }
 
-                    scene_.SetModuleParameter(object.logical_id(),
-                                              "midifreq", newMidi);
-
-                    if (auto* oscModule =
-                            dynamic_cast<rectai::OscillatorModule*>(
-                                moduleForFreq)) {
                         const double targetHz = 440.0 *
                                                 std::pow(
                                                     2.0,
                                                     (static_cast<double>(
-                                                         newMidi) -
+                                                         effectiveNewMidi) -
                                                      69.0) /
                                                         12.0);
 
@@ -1217,7 +1224,31 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                             scene_.SetModuleParameter(
                                 object.logical_id(), "freq",
                                 freqParam);
+                        }
+                    }
+                    // Always update the raw MIDI parameter so the
+                    // radial UI (segments + triangle) follows
+                    // rotation or clicks smoothly.
+                    scene_.SetModuleParameter(object.logical_id(),
+                                              "midifreq", newMidi);
 
+                    // Only retrigger the Oscillator envelope when
+                    // the *effective* musical note changes. In
+                    // MIDI-from-rotation mode this corresponds to a
+                    // semitone change; otherwise it behaves like a
+                    // continuous pitch change.
+                    if (oscModule != nullptr) {
+                        const float comparePrev =
+                            oscModule->play_midi_note_from_rotation()
+                                ? effectivePrevMidi
+                                : previousMidi;
+                        const float compareNew =
+                            oscModule->play_midi_note_from_rotation()
+                                ? effectiveNewMidi
+                                : newMidi;
+
+                        if (std::abs(compareNew - comparePrev) >
+                            1.0e-4F) {
                             maybeRetriggerOscillatorOnFreqChange(
                                 object.logical_id(), moduleForFreq);
                         }
@@ -2523,28 +2554,36 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                         "midifreq", 57.0F);
 
                 const float clamped = juce::jlimit(0.0F, 1.0F, value);
-                const float newMidi = juce::jmap(clamped,
-                                                 0.0F, 1.0F,
-                                                 kMinMidi,
-                                                 kMaxMidi);
+                float newMidi = juce::jmap(clamped,
+                                           0.0F, 1.0F,
+                                           kMinMidi,
+                                           kMaxMidi);
 
-                // Avoid retriggering the same note when dragging at
-                // the pitch extremes or within the same segment.
-                if (std::abs(newMidi - previousMidi) <= 1.0e-4F) {
-                    return;
-                }
+                auto* oscModule =
+                    dynamic_cast<rectai::OscillatorModule*>(
+                        moduleForFreq);
+                float effectivePrevMidi = previousMidi;
+                float effectiveNewMidi = newMidi;
+                if (oscModule != nullptr) {
+                    if (oscModule->play_midi_note_from_rotation()) {
+                        // Quantise only the effective MIDI note
+                        // used for audio and comparison; keep the
+                        // stored `midifreq` parameter continuous so
+                        // the radial UI marker can follow rotation
+                        // smoothly.
+                        effectivePrevMidi = std::round(previousMidi);
+                        effectiveNewMidi = std::round(newMidi);
+                        effectivePrevMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                         effectivePrevMidi);
+                        effectiveNewMidi = juce::jlimit(kMinMidi, kMaxMidi,
+                                                         effectiveNewMidi);
+                    }
 
-                scene_.SetModuleParameter(object.logical_id(),
-                                          "midifreq", newMidi);
-
-                if (auto* oscModule =
-                        dynamic_cast<rectai::OscillatorModule*>(
-                            moduleForFreq)) {
                     const double targetHz = 440.0 *
                                             std::pow(
                                                 2.0,
                                                 (static_cast<double>(
-                                                     newMidi) -
+                                                     effectiveNewMidi) -
                                                  69.0) /
                                                     12.0);
 
@@ -2561,7 +2600,29 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                         scene_.SetModuleParameter(
                             object.logical_id(), "freq",
                             freqParam);
+                    }
+                }
 
+                // Always update the raw MIDI parameter so the pitch
+                // UI follows the drag continuously.
+                scene_.SetModuleParameter(object.logical_id(),
+                                          "midifreq", newMidi);
+
+                // For Oscillators, only retrigger when the effective
+                // musical note changes (semitone step in
+                // MIDI-from-rotation mode).
+                if (oscModule != nullptr) {
+                    const float comparePrev =
+                        oscModule->play_midi_note_from_rotation()
+                            ? effectivePrevMidi
+                            : previousMidi;
+                    const float compareNew =
+                        oscModule->play_midi_note_from_rotation()
+                            ? effectiveNewMidi
+                            : newMidi;
+
+                    if (std::abs(compareNew - comparePrev) >
+                        1.0e-4F) {
                         maybeRetriggerOscillatorOnFreqChange(
                             object.logical_id(), moduleForFreq);
                     }
@@ -2748,6 +2809,63 @@ void MainComponent::maybeRetriggerOscillatorOnFreqChange(
         return;
     }
 
+    auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(module);
+    if (oscModule == nullptr) {
+        return;
+    }
+
+    // For Oscillator modules that use a one-shot style envelope
+    // (no sustain plateau), pitch/frequency changes should restart
+    // the envelope so that the updated note is audible after the
+    // previous tail has faded out. For sustaining ADSR-style
+    // envelopes with a clear plateau, changes are treated as
+    // legato pitch bends and do not retrigger, avoiding audible
+    // clicks on every note change.
+    const auto& env = oscModule->envelope();
+
+    bool hasSustainPlateau = false;
+    const auto& xs = env.points_x;
+    const auto& ys = env.points_y;
+    const std::size_t n = ys.size();
+
+    if (n > 0 && xs.size() == n) {
+        constexpr float kMinPlateauWidth = 0.15F;
+
+        float bestLevel = 1.0F;
+        float bestWidth = 0.0F;
+
+        for (std::size_t i = 1; i + 1 < n;) {
+            const float y = ys[i];
+            if (y <= 0.0F) {
+                ++i;
+                continue;
+            }
+
+            std::size_t j = i + 1;
+            while (j + 1 < n && std::abs(ys[j] - y) < 1.0e-3F) {
+                ++j;
+            }
+
+            const float width =
+                static_cast<float>(xs[j - 1] - xs[i]);
+            if (width > bestWidth) {
+                bestWidth = width;
+                bestLevel = y;
+            }
+
+            i = j;
+        }
+
+        if (bestWidth >= kMinPlateauWidth && bestLevel > 0.0F) {
+            hasSustainPlateau = true;
+        }
+    }
+
+    const bool isOneShotEnvelope = !hasSustainPlateau && env.duration > 0.0F;
+    if (!isOneShotEnvelope) {
+        return;
+    }
+
     const auto it = moduleVoiceIndex_.find(moduleId);
     if (it == moduleVoiceIndex_.end()) {
         return;
@@ -2758,11 +2876,11 @@ void MainComponent::maybeRetriggerOscillatorOnFreqChange(
         return;
     }
 
-    // Treat any pitch/frequency change as a new note event for the
-    // assigned Oscillator voice so that the envelope restarts and
-    // the updated settings (attack/decay/sustain/release) are
-    // applied consistently, matching MIDI-style retrigger
-    // semantics.
+    // Treat any pitch/frequency change as a new note event for
+    // Oscillators that behave like one-shot generators so that the
+    // envelope restarts and the updated settings
+    // (attack/decay/sustain/release) are applied consistently,
+    // while sustaining ADSR-style envelopes keep changes legato.
     audioEngine_.triggerVoiceEnvelope(voiceIndex);
 }
 

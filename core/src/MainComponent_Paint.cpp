@@ -2146,10 +2146,16 @@ void MainComponent::paint(juce::Graphics& g)
                     }
                 }
 
-                // Triangle marker placed outside the active note
-                // segment, aligned with its centre angle.
-                const float tipX = cx - outerRadius * std::cos(noteCenterAngle);
-                const float tipY = cy + outerRadius * std::sin(noteCenterAngle);
+                // Triangle marker placed outside the bar. Its angle
+                // is aligned with the centre of the currently
+                // highlighted outer note segment so that both the
+                // visual marker and the coloured wedge always
+                // indicate the same pitch class.
+
+                const float triAngle = noteCenterAngle;
+
+                const float tipX = cx - outerRadius * std::cos(triAngle);
+                const float tipY = cy + outerRadius * std::sin(triAngle);
 
                 const float ux = (tipX - cx) / outerRadius;
                 const float uy = (tipY - cy) / outerRadius;
