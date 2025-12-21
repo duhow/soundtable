@@ -81,6 +81,30 @@ private:
 
     [[nodiscard]] GeometryCache buildGeometryCache() const;
 
+    void paintCentralPulses(juce::Graphics& g,
+                            const juce::Rectangle<float>& bounds,
+                            juce::Point<float> centre) const;
+
+    void paintObjectsAndPanels(juce::Graphics& g,
+                               const juce::Rectangle<float>& bounds,
+                               juce::Point<float> centre,
+                               double bpmLabelAlpha,
+                               double nowSeconds);
+
+    void paintSequencerOverlays(juce::Graphics& g,
+                                const juce::Rectangle<float>& bounds,
+                                juce::Point<float> centre) const;
+
+    void paintDockAndHud(juce::Graphics& g,
+                         const juce::Rectangle<float>& bounds,
+                         const juce::Rectangle<float>& dockAreaUi,
+                         double bpmLabelAlpha);
+
+    [[nodiscard]] std::unordered_set<std::int64_t>
+    computeObjectsWithOutgoingActiveConnection(
+        const std::unordered_map<std::string, std::int64_t>&
+            moduleToObjectId) const;
+
     [[nodiscard]] bool isInsideMusicArea(
         const rectai::ObjectInstance& obj) const;
 
