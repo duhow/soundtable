@@ -100,6 +100,10 @@ private:
                          const juce::Rectangle<float>& dockAreaUi,
                          double bpmLabelAlpha);
 
+    void paintModuleConnections(juce::Graphics& g,
+                                const juce::Rectangle<float>& bounds,
+                                juce::Point<float> centre) const;
+
     [[nodiscard]] std::unordered_set<std::int64_t>
     computeObjectsWithOutgoingActiveConnection(
         const std::unordered_map<std::string, std::int64_t>&
