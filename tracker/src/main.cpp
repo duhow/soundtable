@@ -4,6 +4,7 @@
 //   --mode=live:      delegate per-frame processing to TrackerEngine.
 
 #include <cmath>
+#include <cctype>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -34,6 +35,38 @@ struct Resolution {
 	int width{};
 	int height{};
 };
+
+enum class PixelFormat {
+	Any,
+	Mjpg,
+	Yuyv
+};
+
+std::optional<int> parseCameraIndexArg(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		constexpr std::string_view prefix{"--camera="};
+		if (arg.rfind(prefix.data(), 0) == 0) {
+			const std::string value = arg.substr(prefix.size());
+			try {
+				const int index = std::stoi(value);
+				if (index < 0) {
+					std::cerr << "[rectai-tracker] Invalid --camera index '" << value
+					          << "' (must be >= 0). Using default device 0." << std::endl;
+					return std::nullopt;
+				}
+				return index;
+			} catch (const std::exception&) {
+				std::cerr << "[rectai-tracker] Invalid --camera value '" << value
+				          << "'. Using default device 0." << std::endl;
+				return std::nullopt;
+			}
+		}
+	}
+
+	return std::nullopt;
+}
 
 RunMode parseMode(int argc, char** argv)
 {
@@ -114,6 +147,86 @@ std::optional<Resolution> parseResolutionArg(int argc, char** argv)
 	return std::nullopt;
 }
 
+std::optional<PixelFormat> parseCameraFormatArg(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		constexpr std::string_view prefix{"--camera-format="};
+		if (arg.rfind(prefix.data(), 0) == 0) {
+			std::string value = arg.substr(prefix.size());
+			for (char& ch : value) {
+				ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+			}
+
+			if (value == "mjpg" || value == "mjpeg") {
+				return PixelFormat::Mjpg;
+			}
+			if (value == "yuyv" || value == "yuy2") {
+				return PixelFormat::Yuyv;
+			}
+
+			std::cerr << "[rectai-tracker] Invalid --camera-format '" << value
+			          << "'. Supported values: mjpg, yuyv." << std::endl;
+			return std::nullopt;
+		}
+	}
+
+	return std::nullopt;
+}
+
+std::optional<int> parseFpsArg(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		constexpr std::string_view prefix{"--fps="};
+		if (arg.rfind(prefix.data(), 0) == 0) {
+			const std::string value = arg.substr(prefix.size());
+			try {
+				const int fps = std::stoi(value);
+				if (fps <= 0) {
+					std::cerr << "[rectai-tracker] Invalid --fps '" << value
+					          << "' (must be > 0). Using camera default fps." << std::endl;
+					return std::nullopt;
+				}
+				return fps;
+			} catch (const std::exception&) {
+				std::cerr << "[rectai-tracker] Invalid --fps value '" << value
+				          << "'. Using camera default fps." << std::endl;
+				return std::nullopt;
+			}
+		}
+	}
+
+	return std::nullopt;
+}
+
+bool hasHelpFlag(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		if (arg == "--help" || arg == "-h") {
+			return true;
+		}
+	}
+	return false;
+}
+
+void printHelp()
+{
+	std::cout << "rectai-tracker usage:\n"
+	          << "  rectai-tracker [options]\n\n"
+	          << "Options:\n"
+	          << "  --help, -h                Show this help message and exit.\n"
+	          << "  --mode=live|synthetic    Select run mode (live tracking or synthetic object).\n"
+	          << "  --camera=N               Select camera index (default: 0).\n"
+	          << "  --camera-format=mjpg|yuyv  Request camera pixel format (Linux V4L2 backends).\n"
+	          << "  --resolution=WxH         Request capture resolution, e.g. 1280x720.\n"
+	          << "  --fps=N                  Request capture framerate in FPS.\n"
+	          << "  --debug-view             Show debug thresholded view from TrackerEngine.\n"
+	          << "  --no-downscale           Disable internal downscaling in TrackerEngine.\n"
+	          << "  --osc                    Force legacy OSC output instead of TUIO 1.1.\n";
+}
+
 // Maps physical tracker marker IDs to logical module IDs used by the
 // JUCE core. Logical IDs must match the module ids created when loading
 // the default Reactable patch (see com.reactable/Resources/default.rtp
@@ -147,16 +260,53 @@ std::string mapLogicalId(int markerId)
 
 int main(int argc, char** argv)
 {
+	if (hasHelpFlag(argc, argv)) {
+		printHelp();
+		return 0;
+	}
+
 	const auto mode = parseMode(argc, argv);
 	const bool debugView = hasDebugViewFlag(argc, argv);
 	const bool noDownscale = hasNoDownscaleFlag(argc, argv);
 	const bool forceOsc = hasOscFlag(argc, argv);
 	const auto requestedResolution = parseResolutionArg(argc, argv);
+	const auto requestedCameraFormat = parseCameraFormatArg(argc, argv);
+	const auto requestedFps = parseFpsArg(argc, argv);
+	const auto requestedCameraIndex = parseCameraIndexArg(argc, argv);
+	const int cameraIndex = requestedCameraIndex.value_or(0);
 
-	cv::VideoCapture capture(0);
+	cv::VideoCapture capture(cameraIndex);
 	if (!capture.isOpened()) {
-		std::cerr << "[rectai-tracker] Failed to open default camera." << std::endl;
+		std::cerr << "[rectai-tracker] Failed to open camera index " << cameraIndex << "." << std::endl;
 		return 1;
+	}
+
+	if (requestedCameraFormat.has_value()) {
+		int fourcc = 0;
+		switch (*requestedCameraFormat) {
+		case PixelFormat::Mjpg:
+			fourcc = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
+			break;
+		case PixelFormat::Yuyv:
+			fourcc = cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V');
+			break;
+		case PixelFormat::Any:
+		default:
+			break;
+		}
+
+		if (fourcc != 0) {
+			(void)capture.set(cv::CAP_PROP_FOURCC, fourcc);
+		}
+	}
+
+	if (requestedResolution.has_value()) {
+		(void)capture.set(cv::CAP_PROP_FRAME_WIDTH, requestedResolution->width);
+		(void)capture.set(cv::CAP_PROP_FRAME_HEIGHT, requestedResolution->height);
+	}
+
+	if (requestedFps.has_value()) {
+		(void)capture.set(cv::CAP_PROP_FPS, static_cast<double>(*requestedFps));
 	}
 
 	std::cout << "[rectai-tracker] Camera opened. Press Ctrl+C to exit." << std::endl;
@@ -210,17 +360,18 @@ int main(int argc, char** argv)
 	if (mode == RunMode::Live) {
 		int width = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_WIDTH));
 		int height = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_HEIGHT));
-		if (requestedResolution.has_value()) {
-			width = requestedResolution->width;
-			height = requestedResolution->height;
-		}
-		if (!trackerEngine.initialise(0, width, height, initError, !noDownscale)) {
+		const double fps = capture.get(cv::CAP_PROP_FPS);
+		if (!trackerEngine.initialise(cameraIndex, width, height, initError, !noDownscale)) {
 			std::cerr << "[rectai-tracker] Failed to initialise TrackerEngine: "
 					  << initError << std::endl;
 			return 1;
 		}
 		std::cout << "[rectai-tracker] Starting engine with resolution="
-				  << width << "x" << height << std::endl;
+				  << width << "x" << height;
+		if (fps > 0.0) {
+			std::cout << " @ " << fps << " FPS";
+		}
+		std::cout << std::endl;
 	}
 
 	cv::Mat frame;
