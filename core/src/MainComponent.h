@@ -102,7 +102,8 @@ private:
 
     void paintModuleConnections(juce::Graphics& g,
                                 const juce::Rectangle<float>& bounds,
-                                juce::Point<float> centre) const;
+                                juce::Point<float> centre,
+                                const void* visualFrameState) const;
 
     [[nodiscard]] std::unordered_set<std::int64_t>
     computeObjectsWithOutgoingActiveConnection(

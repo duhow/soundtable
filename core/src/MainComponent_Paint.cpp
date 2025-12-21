@@ -121,6 +121,19 @@ AudioFrameState computeAudioFrameState(AudioEngine& audioEngine)
 
 struct VisualFrameState {
     std::unordered_set<std::int64_t> objectsWithOutgoingActiveConnection;
+    const std::unordered_map<std::string, std::int64_t>* moduleToObjectId{nullptr};
+
+    struct ConnectionDerived {
+        const rectai::Connection* connection{nullptr};
+        bool sourceMutedToMaster{false};
+        bool explicitlyMuted{false};
+        bool involvesSampleplay{false};
+        bool isMutedConnection{false};
+        bool audioConn{false};
+        bool isMarkedForCut{false};
+    };
+
+    std::vector<ConnectionDerived> connectionDerived;
 };
 
 }  // namespace
@@ -393,8 +406,138 @@ void MainComponent::paint(juce::Graphics& g)
     const auto& moduleToObjectId = geometry.moduleToObjectId;
 
     VisualFrameState visualFrame;
+    visualFrame.moduleToObjectId = &moduleToObjectId;
     visualFrame.objectsWithOutgoingActiveConnection =
         computeObjectsWithOutgoingActiveConnection(moduleToObjectId);
+
+    // Precompute the set of explicit module→module connections that
+    // are actually visible according to current geometry (inside the
+    // musical disc and, for dynamic connections, inside the source
+    // angular cone). For cada conexión visible se construye también
+    // un pequeño snapshot de estado derivado (muteos, Sampleplay,
+    // audio activo, cortes) consumido por paintModuleConnections,
+    // de forma que la función de pintado no tenga que volver a
+    // recalcular estas banderas por cada frame.
+    visualFrame.connectionDerived.clear();
+    visualFrame.connectionDerived.reserve(scene_.connections().size());
+    for (const auto& conn : scene_.connections()) {
+        if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+            continue;
+        }
+
+        const auto fromIt =
+            std::find_if(objects.begin(), objects.end(),
+                         [&conn](const auto& pair) {
+                             return pair.second.logical_id() ==
+                                    conn.from_module_id;
+                         });
+        const auto toIt =
+            std::find_if(objects.begin(), objects.end(),
+                         [&conn](const auto& pair) {
+                             return pair.second.logical_id() ==
+                                    conn.to_module_id;
+                         });
+        if (fromIt == objects.end() || toIt == objects.end()) {
+            continue;
+        }
+
+        const auto& fromObj = fromIt->second;
+        const auto& toObj = toIt->second;
+
+        if (!isInsideMusicArea(fromObj) ||
+            !isInsideMusicArea(toObj)) {
+            continue;
+        }
+
+        if (!conn.is_hardlink &&
+            !isConnectionGeometricallyActive(fromObj, toObj)) {
+            continue;
+        }
+
+        VisualFrameState::ConnectionDerived derived{};
+        derived.connection = &conn;
+
+        const std::string connKey = makeConnectionKey(conn);
+
+        bool sourceMutedToMaster = false;
+        {
+            bool hasMasterRoute = false;
+            bool masterRouteMuted = true;
+
+            for (const auto& mconn : scene_.connections()) {
+                if (mconn.from_module_id != conn.from_module_id ||
+                    mconn.to_module_id !=
+                        rectai::MASTER_OUTPUT_ID) {
+                    continue;
+                }
+
+                hasMasterRoute = true;
+                const std::string mkey = makeConnectionKey(mconn);
+                const bool connIsMuted =
+                    mutedConnections_.find(mkey) !=
+                    mutedConnections_.end();
+                if (!connIsMuted) {
+                    masterRouteMuted = false;
+                    break;
+                }
+            }
+
+            sourceMutedToMaster = hasMasterRoute && masterRouteMuted;
+        }
+
+        const bool explicitlyMuted =
+            mutedConnections_.find(connKey) !=
+            mutedConnections_.end();
+
+        const bool audioConnEndpointsActive =
+            isAudioConnection(conn) &&
+            audioFrame.modulesWithActiveAudio != nullptr &&
+            (audioFrame.modulesWithActiveAudio->find(
+                 conn.from_module_id) !=
+                 audioFrame.modulesWithActiveAudio->end() ||
+             audioFrame.modulesWithActiveAudio->find(
+                 conn.to_module_id) !=
+                 audioFrame.modulesWithActiveAudio->end());
+
+        const rectai::AudioModule* fromModulePtr = nullptr;
+        const rectai::AudioModule* toModulePtr = nullptr;
+        if (const auto it = modules.find(conn.from_module_id);
+            it != modules.end() && it->second != nullptr) {
+            fromModulePtr = it->second.get();
+        }
+        if (const auto it = modules.find(conn.to_module_id);
+            it != modules.end() && it->second != nullptr) {
+            toModulePtr = it->second.get();
+        }
+
+        const bool involvesSampleplay =
+            (fromModulePtr != nullptr &&
+             fromModulePtr->is<rectai::SampleplayModule>()) ||
+            (toModulePtr != nullptr &&
+             toModulePtr->is<rectai::SampleplayModule>());
+
+        const bool isMutedConnection =
+            explicitlyMuted ||
+            (!involvesSampleplay && sourceMutedToMaster);
+
+        const bool audioConn =
+            isAudioConnection(conn) &&
+            (!involvesSampleplay ? audioConnEndpointsActive
+                                 : !explicitlyMuted);
+
+        const bool isConnectionMarkedForCut =
+            touchCutConnections_.find(connKey) !=
+            touchCutConnections_.end();
+
+        derived.sourceMutedToMaster = sourceMutedToMaster;
+        derived.explicitlyMuted = explicitlyMuted;
+        derived.involvesSampleplay = involvesSampleplay;
+        derived.isMutedConnection = isMutedConnection;
+        derived.audioConn = audioConn;
+        derived.isMarkedForCut = isConnectionMarkedForCut;
+
+        visualFrame.connectionDerived.push_back(derived);
+    }
 
     {
         juce::Graphics::ScopedSaveState clipState(g);
@@ -1275,7 +1418,7 @@ void MainComponent::paint(juce::Graphics& g)
         // remain active regardless of that angular constraint and are drawn
         // in red instead of white.
         // -----------------------------------------------------------------
-        paintModuleConnections(g, bounds, centre);
+        paintModuleConnections(g, bounds, centre, &visualFrame);
     }
 
     // ---------------------------------------------------------------------
@@ -1692,17 +1835,22 @@ void MainComponent::paint(juce::Graphics& g)
 void MainComponent::paintModuleConnections(
     juce::Graphics& g,
     const juce::Rectangle<float>& bounds,
-    juce::Point<float> centre) const
+    juce::Point<float> centre,
+    const void* visualFrameState) const
 {
     juce::ignoreUnused(centre);
 
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();
 
-    // Geometry cache for module-to-object lookups when aggregating
-    // incoming audio connections.
-    const GeometryCache geometry = buildGeometryCache();
-    const auto& moduleToObjectId = geometry.moduleToObjectId;
+    const auto* visualFrame =
+        static_cast<const VisualFrameState*>(visualFrameState);
+    if (visualFrame == nullptr ||
+        visualFrame->moduleToObjectId == nullptr) {
+        return;
+    }
+
+    const auto& moduleToObjectId = *visualFrame->moduleToObjectId;
 
     // Local helpers copied from MainComponent::paint so that the
     // connection rendering logic remains behaviourally identical.
@@ -1863,12 +2011,12 @@ void MainComponent::paintModuleConnections(
     audioFrame.moduleVoiceIndex = &moduleVoiceIndex_;
     audioFrame.connectionVisualSources = &connectionVisualSources_;
 
-    int connectionIndex = 0;
-    for (const auto& conn : scene_.connections()) {
-        if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
-            ++connectionIndex;
+    for (const auto& derivedState : visualFrame->connectionDerived) {
+        if (derivedState.connection == nullptr) {
             continue;
         }
+
+        const auto& conn = *derivedState.connection;
 
         const auto fromIt =
             std::find_if(objects.begin(), objects.end(),
@@ -1889,14 +2037,6 @@ void MainComponent::paintModuleConnections(
         const auto& fromObj = fromIt->second;
         const auto& toObj = toIt->second;
 
-        if (!isInsideMusicArea(fromObj) ||
-            !isInsideMusicArea(toObj) ||
-            (!conn.is_hardlink &&
-             !isConnectionGeometricallyActive(fromObj, toObj))) {
-            ++connectionIndex;
-            continue;
-        }
-
         const auto fromPos = objectTableToScreen(fromObj, bounds);
         const auto toPos = objectTableToScreen(toObj, bounds);
 
@@ -1904,45 +2044,11 @@ void MainComponent::paintModuleConnections(
         const juce::Point<float> p2{toPos.x, toPos.y};
         const std::string connKey = makeConnectionKey(conn);
 
-        bool sourceMutedToMaster = false;
-        {
-            bool hasMasterRoute = false;
-            bool masterRouteMuted = true;
-
-            for (const auto& mconn : scene_.connections()) {
-                if (mconn.from_module_id != conn.from_module_id ||
-                    mconn.to_module_id !=
-                        rectai::MASTER_OUTPUT_ID) {
-                    continue;
-                }
-
-                hasMasterRoute = true;
-                const std::string mkey = makeConnectionKey(mconn);
-                const bool connIsMuted =
-                    mutedConnections_.find(mkey) !=
-                    mutedConnections_.end();
-                if (!connIsMuted) {
-                    masterRouteMuted = false;
-                    break;
-                }
-            }
-
-            sourceMutedToMaster = hasMasterRoute && masterRouteMuted;
-        }
-
-        const bool explicitlyMuted =
-            mutedConnections_.find(connKey) !=
-            mutedConnections_.end();
-
-        const bool audioConnEndpointsActive =
-            isAudioConnection(conn) &&
-            audioFrame.modulesWithActiveAudio != nullptr &&
-            (audioFrame.modulesWithActiveAudio->find(
-                 conn.from_module_id) !=
-                 audioFrame.modulesWithActiveAudio->end() ||
-             audioFrame.modulesWithActiveAudio->find(
-                 conn.to_module_id) !=
-                 audioFrame.modulesWithActiveAudio->end());
+        const bool isMutedConnection =
+            derivedState.isMutedConnection;
+        const bool audioConn = derivedState.audioConn;
+        const bool involvesSampleplay =
+            derivedState.involvesSampleplay;
 
         const rectai::AudioModule* fromModulePtr = nullptr;
         const rectai::AudioModule* toModulePtr = nullptr;
@@ -1955,29 +2061,13 @@ void MainComponent::paintModuleConnections(
             toModulePtr = it->second.get();
         }
 
-        const bool involvesSampleplay =
-            (fromModulePtr != nullptr &&
-             fromModulePtr->is<rectai::SampleplayModule>()) ||
-            (toModulePtr != nullptr &&
-             toModulePtr->is<rectai::SampleplayModule>());
-
-        const bool isMutedConnection =
-            explicitlyMuted ||
-            (!involvesSampleplay && sourceMutedToMaster);
-
-        const bool audioConn =
-            isAudioConnection(conn) &&
-            (!involvesSampleplay ? audioConnEndpointsActive
-                                 : !explicitlyMuted);
-
         const float fromLevel = getModuleVisualLevel(fromModulePtr);
         const float toLevel = getModuleVisualLevel(toModulePtr);
 
         juce::ignoreUnused(fromLevel, toLevel);
 
         const bool isConnectionMarkedForCut =
-            touchCutConnections_.find(connKey) !=
-            touchCutConnections_.end();
+            derivedState.isMarkedForCut;
 
         const juce::Colour activeColour =
             isConnectionMarkedForCut
@@ -2258,7 +2348,6 @@ void MainComponent::paintModuleConnections(
             }
         }
 
-        ++connectionIndex;
     }
 }
 
