@@ -633,7 +633,8 @@ void MainComponent::timerCallback()
             // Rotation → musical pitch (`midifreq` parameter) for
             // modules that expose pitch control (Oscillator,
             // Sampleplay). A full revolution (360º) moves one
-            // octave up or down, i.e. 12 semitones.
+            // octave up or down, i.e. 12 semitones, within a
+            // practical musical window (roughly C2–C8).
             const float deltaSemitones =
                 -diff * (12.0F / 360.0F);  // approx [-6, 6]
 
@@ -643,7 +644,7 @@ void MainComponent::timerCallback()
             }
 
             constexpr float kMinMidi = 24.0F;
-            constexpr float kMaxMidi = 24.0F + 12.0F * 8.0F;
+            constexpr float kMaxMidi = 108.0F;
 
             const float currentMidi = module->GetParameterOrDefault(
                 "midifreq", 57.0F);

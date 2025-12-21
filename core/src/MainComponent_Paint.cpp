@@ -2004,16 +2004,19 @@ void MainComponent::paint(juce::Graphics& g)
                 // 8 inner octave segments and 12 outer note segments.
                 // The current pitch is derived from the `midifreq`
                 // parameter when present and mapped into a fixed
-                // 8-octave window.
+                // musical window roughly spanning from C2 up to
+                // around C8.
 
                 const float midiNote = moduleForObject->GetParameterOrDefault(
                     "midifreq", 57.0F);
 
-                // Map MIDI notes into the [C2, C10) range covered by
-                // the 8 octave segments. Values outside this window
-                // are clamped.
+                // Map MIDI notes into the [C2, C8] range used by the
+                // pitch interaction (24–108). Values outside this
+                // window are clamped, while the top visual octave
+                // segment effectively represents the highest notes in
+                // that span.
                 constexpr float kMinMidi = 24.0F;   // C2
-                constexpr float kMaxMidi = 24.0F + 12.0F * 8.0F;  // C10
+                constexpr float kMaxMidi = 108.0F;  // ~C8
 
                 float clampedMidi = juce::jlimit(kMinMidi, kMaxMidi, midiNote);
                 int relative = static_cast<int>(std::floor(static_cast<double>(clampedMidi - kMinMidi)));

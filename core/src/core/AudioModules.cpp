@@ -30,15 +30,17 @@ OscillatorModule::OscillatorModule(const std::string& id,
 {
   set_colour(MakeColour(0x23, 0x66, 0xE1));
   set_label("Oscillator");
-  set_description(
+    set_description(
       "Tone generator feeding the master bus or downstream modules.");
   // Initialise the mode system to the default (sine waveform),
   set_mode("sine");
   enable_pitch_control(true);
   enable_gain_control(true);
-  // Expand frequency range so that the normalised `freq` parameter
-  // can cover the full MIDI note range [0,127].
-  set_frequency_mapping(20.0, 3918.0);  // ≈56 Hz – 3.9 kHz
+  // Choose a musical frequency range that roughly aligns with the
+  // MIDI note window driven by the pitch UI and Sequencer
+  // (approximately C2 up to around C8). Values outside this range
+  // are clamped by the normalised `freq` parameter.
+  set_frequency_mapping(20.0, 3918.0);  // ≈20 Hz – 3.9 kHz
   set_level_mapping(0.02F, 0.18F);
   set_connection_targets({ModuleType::kAudio, ModuleType::kFilter});
 

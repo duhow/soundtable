@@ -1162,15 +1162,16 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                 if (moduleForFreq != nullptr &&
                     moduleForFreq->uses_pitch_control()) {
                     // Map absolute click position on the pitch
-                    // control to a MIDI note within the same 8-octave
-                    // window used by the visual segments. This
-                    // updates the `midifreq` parameter and, for
+                    // control to a MIDI note within the same musical
+                    // window used by the visual segments (roughly
+                    // C2–C8). This updates the `midifreq` parameter
+                    // and, for
                     // Oscillator modules, also keeps the underlying
                     // `freq` parameter in sync so that the audio
                     // engine continues to derive Hz from the same
                     // pitch.
                     constexpr float kMinMidi = 24.0F;
-                    constexpr float kMaxMidi = 24.0F + 12.0F * 8.0F;
+                    constexpr float kMaxMidi = 108.0F;
 
                     const float clamped = juce::jlimit(0.0F, 1.0F, value);
                     const float newMidi = juce::jmap(clamped,
@@ -2492,12 +2493,13 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
             } else if (moduleForFreq != nullptr &&
                        moduleForFreq->uses_pitch_control()) {
                 // Dragging on a pitch-controlled module updates the
-                // `midifreq` parameter within the same 8-octave
-                // window used by the visual segments, keeping the
-                // Oscillator's `freq` parameter in sync so that the
-                // audible pitch and the UI always match.
+                // `midifreq` parameter within the same musical
+                // window used by the visual segments (roughly
+                // C2–C8), keeping the Oscillator's `freq` parameter
+                // in sync so that the audible pitch and the UI
+                // always match.
                 constexpr float kMinMidi = 24.0F;
-                constexpr float kMaxMidi = 24.0F + 12.0F * 8.0F;
+                constexpr float kMaxMidi = 108.0F;
 
                 const float clamped = juce::jlimit(0.0F, 1.0F, value);
                 const float newMidi = juce::jmap(clamped,
