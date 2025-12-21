@@ -2199,21 +2199,51 @@ void MainComponent::paint(juce::Graphics& g)
                     g.strokePath(freqArc,
                                  juce::PathStrokeType(5.0F));
 
-                    // Draw the filled portion by clipping the same arc from
-                    // the bottom of the bar up to the current value.
-                    juce::Graphics::ScopedSaveState clipGuard(g);
-                    const float clipPaddingX = 6.0F;
-                    juce::Rectangle<int> filledClip(
-                        static_cast<int>(cx - ringRadius - clipPaddingX),
-                        static_cast<int>(handleY),
-                        static_cast<int>(ringRadius * 2.0F +
-                                         clipPaddingX * 2.0F),
-                        static_cast<int>(sliderBottom - handleY + 4.0F));
-                    g.reduceClipRegion(filledClip);
+                    // Draw the filled portion as a separate path that
+                    // follows the same curved arc from the bottom of the
+                    // control up to the current value, instead of using a
+                    // rectangular clip.
+                    const float handleT = juce::jmap(handleY,
+                                                     sliderTop,
+                                                     sliderBottom,
+                                                     0.0F,
+                                                     1.0F);
 
-                    g.setColour(effectiveFreqForeground);
-                    g.strokePath(freqArc,
-                                 juce::PathStrokeType(5.0F));
+                    juce::Path filledArc;
+                    const int segments = 64;
+                    bool started = false;
+                    for (int i = 0; i <= segments; ++i) {
+                        const float t = static_cast<float>(i) /
+                                        static_cast<float>(segments);
+                        if (t < handleT) {
+                            continue;
+                        }
+
+                        const float y = juce::jmap(t, 0.0F, 1.0F,
+                                                   sliderTop,
+                                                   sliderBottom);
+                        const float dy = y - cy;
+                        const float inside =
+                            ringRadius * ringRadius - dy * dy;
+                        if (inside < 0.0F) {
+                            continue;
+                        }
+                        const float dx = std::sqrt(inside);
+                        const float x = cx - dx;
+
+                        if (!started) {
+                            filledArc.startNewSubPath(x, y);
+                            started = true;
+                        } else {
+                            filledArc.lineTo(x, y);
+                        }
+                    }
+
+                    if (!filledArc.isEmpty()) {
+                        g.setColour(effectiveFreqForeground);
+                        g.strokePath(filledArc,
+                                     juce::PathStrokeType(5.0F));
+                    }
                 }
             }
         }
