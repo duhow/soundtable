@@ -455,6 +455,73 @@ private:
                                                  int destWidth,
                                                  int destHeight);
 
+    void paintNodeBodyAndOutline(juce::Graphics& g,
+                                 float cx,
+                                 float cy,
+                                 float nodeRadius,
+                                 juce::Colour bodyColour);
+
+    void paintNodeSideControls(juce::Graphics& g,
+                               const rectai::ObjectInstance& object,
+                               const rectai::AudioModule* moduleForObject,
+                               float cx,
+                               float cy,
+                               float ringRadius,
+                               float sliderTop,
+                               float sliderBottom,
+                               float freqValue,
+                               float gainValue,
+                               bool showFreqControl,
+                               bool showGainControl);
+
+    void paintNodeIconAndModeButton(juce::Graphics& g,
+                                    const rectai::ObjectInstance& object,
+                                    const rectai::AudioModule* moduleForObject,
+                                    float cx,
+                                    float cy,
+                                    float nodeRadius,
+                                    juce::Colour bodyColour);
+
+    void paintNodeModeOverlayAndIcons(juce::Graphics& g,
+                                      const rectai::ObjectInstance& object,
+                                      const rectai::AudioModule* moduleForObject,
+                                      float cx,
+                                      float cy,
+                                      float ringRadius,
+                                      float sliderTop,
+                                      float sliderBottom,
+                                      float nodeRadius);
+
+    void paintNodeLabelsAndLoopTrail(juce::Graphics& g,
+                                     const rectai::AudioModule* moduleForObject,
+                                     float cx,
+                                     float cy,
+                                     float nodeRadius,
+                                     float ringRadius,
+                                     juce::Colour bodyColour,
+                                     double nowSeconds);
+
+    void paintNodeModulePanel(juce::Graphics& g,
+                              const juce::Rectangle<float>& bounds,
+                              const rectai::ObjectInstance& object,
+                              const rectai::AudioModule* moduleForObject,
+                              float cx,
+                              float cy,
+                              bool insideMusic);
+
+    void paintNodeDebugOverlay(juce::Graphics& g,
+                               const rectai::ObjectInstance& object,
+                               float cx,
+                               float cy,
+                               float nodeRadius) const;
+
+    void paintNodeTempoOverlay(juce::Graphics& g,
+                               const rectai::AudioModule* moduleForObject,
+                               float cx,
+                               float cy,
+                               float nodeRadius,
+                               double bpmLabelAlpha) const;
+
     // Per-module detail panel anchored near the node.
     struct ModulePanelState {
         enum class Tab {

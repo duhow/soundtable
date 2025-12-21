@@ -2296,25 +2296,7 @@ void MainComponent::paintObjectsAndPanels(
                                                            cx, cy));
         }
 
-        // Node body.
-        g.setColour(bodyColour);
-        g.fillEllipse(cx - nodeRadius, cy - nodeRadius, nodeRadius * 2.0F,
-                      nodeRadius * 2.0F);
-
-        // Explicit outline so the circular base is always visible,
-        // even when the fill colour is close to the background.
-        const float outlineThickness = 2.0F;
-        const float outlineInset = outlineThickness * 0.5F;
-        const juce::Colour outlineColour =
-            (bodyColour.getBrightness() > 0.6F
-                 ? juce::Colours::black.withAlpha(0.9F)
-                 : juce::Colours::white.withAlpha(0.9F));
-        g.setColour(outlineColour);
-        g.drawEllipse(cx - nodeRadius + outlineInset,
-                      cy - nodeRadius + outlineInset,
-                      nodeRadius * 2.0F - outlineThickness,
-                      nodeRadius * 2.0F - outlineThickness,
-                      outlineThickness);
+        paintNodeBodyAndOutline(g, cx, cy, nodeRadius, bodyColour);
 
         // Side controls: left = curved bar (semi-arc) for Freq,
         // right = curved bar (semi-arc) for Gain, both hugging the
@@ -2393,1590 +2375,56 @@ void MainComponent::paintObjectsAndPanels(
         const float sliderTop = cy - ringRadius + sliderMargin;
         const float sliderBottom = cy + ringRadius - sliderMargin;
 
-        // Left control (Freq / Pitch): curved bar following the left
-        // semi-circle. For modules that expose pitch control (e.g.
-        // Oscillator, Sampleplay) this area is repurposed into a
-        // discrete pitch selector composed of inner octave segments
-        // and outer note segments.
-        if (showFreqControl) {
-            const bool modeMenuVisibleForThisModule =
-                (modeSelection_.menuVisible &&
-                 modeSelection_.moduleId == object.logical_id());
-            // When the adjustment mode menu is open for this module,
-            // render the Freq bar with higher transparency so that it
-            // visually recedes behind the mode icons without requiring
-            // an additional overlay rectangle.
-            const float modeMenuAlpha =
-                modeMenuVisibleForThisModule ? 0.15F : 1.0F;
-            const juce::Colour freqBackgroundColour =
-                juce::Colours::white.withAlpha(0.35F * modeMenuAlpha);
-            const juce::Colour freqForegroundColour =
-                juce::Colours::white.withAlpha(1.0F * modeMenuAlpha);
-
-            if (moduleForObject != nullptr &&
-                moduleForObject->uses_pitch_control()) {
-                // Pitch control: draw a compact radial UI composed of
-                // 8 inner octave segments and 12 outer note segments.
-                // The current pitch is derived from the `midifreq`
-                // parameter when present and mapped into a fixed
-                // musical window roughly spanning from C2 up to around
-                // C8.
-
-                const float midiNote = moduleForObject
-                                            ->GetParameterOrDefault(
-                                                "midifreq", 57.0F);
-
-                // Map MIDI notes into the [C2, C8] range used by the
-                // pitch interaction (24–108). Values outside this
-                // window are clamped, while the top visual octave
-                // segment effectively represents the highest notes in
-                // that span.
-                constexpr float kMinMidi = 24.0F;   // C2
-                constexpr float kMaxMidi = 108.0F;  // ~C8
-
-                float clampedMidi = juce::jlimit(kMinMidi, kMaxMidi, midiNote);
-                int relative = static_cast<int>(std::floor(
-                    static_cast<double>(clampedMidi - kMinMidi)));
-                if (relative < 0) {
-                    relative = 0;
-                }
-                const int octaveIndex = relative / 12;
-                const int noteIndex = relative % 12;
-
-                // Shared angular window for the visible semi-arc.
-                const float dyTop = sliderTop - cy;
-                const float dyBottom = sliderBottom - cy;
-                const float sinTop = juce::jlimit(-1.0F, 1.0F,
-                                                  dyTop / ringRadius);
-                const float sinBottom = juce::jlimit(-1.0F, 1.0F,
-                                                     dyBottom / ringRadius);
-                const float angleTop = std::asin(sinTop);
-                const float angleBottom = std::asin(sinBottom);
-
-                // Inner ring: 8 small octave segments close to the
-                // module body.
-                const int kOctaveSegments = 8;
-                const float innerRadius = ringRadius - 5.0F;
-                const float octaveGap = 1.0F;
-
-                for (int i = 0; i < kOctaveSegments; ++i) {
-                    const float segStartT = 1.0F -
-                        (static_cast<float>(i + 1) /
-                         static_cast<float>(kOctaveSegments));
-                    const float segEndT = 1.0F -
-                        (static_cast<float>(i) /
-                         static_cast<float>(kOctaveSegments));
-
-                    const float segAngle0 = juce::jmap(
-                        segStartT, 0.0F, 1.0F, angleTop, angleBottom);
-                    const float segAngle1 = juce::jmap(
-                        segEndT, 0.0F, 1.0F, angleTop, angleBottom);
-
-                    const float shrink = octaveGap / innerRadius;
-                    const float a0 = segAngle0 + shrink;
-                    const float a1 = segAngle1 - shrink;
-                    if (a1 <= a0) {
-                        continue;
-                    }
-
-                    juce::Path segPath;
-                    const int segSteps = 16;
-                    for (int s = 0; s <= segSteps; ++s) {
-                        const float tt = static_cast<float>(s) /
-                                         static_cast<float>(segSteps);
-                        const float a = juce::jmap(tt, 0.0F, 1.0F,
-                                                   a0, a1);
-                        const float x = cx - innerRadius * std::cos(a);
-                        const float y = cy + innerRadius * std::sin(a);
-                        if (s == 0) {
-                            segPath.startNewSubPath(x, y);
-                        } else {
-                            segPath.lineTo(x, y);
-                        }
-                    }
-
-                    g.setColour(freqBackgroundColour);
-                    g.strokePath(segPath, juce::PathStrokeType(3.0F));
-
-                    if (i == octaveIndex) {
-                        g.setColour(freqForegroundColour);
-                        g.strokePath(segPath, juce::PathStrokeType(3.0F));
-                    }
-                }
-
-                // Outer ring: 12 note segments slightly further away
-                // from the module, with a triangle marker indicating
-                // the active pitch.
-                const int kNoteSegments = 12;
-                const float outerRadius = ringRadius + 4.0F;
-                const float noteGap = 1.0F;
-
-                float noteCenterAngle = angleTop;
-
-                for (int i = 0; i < kNoteSegments; ++i) {
-                    const float segStartT = 1.0F -
-                        (static_cast<float>(i + 1) /
-                         static_cast<float>(kNoteSegments));
-                    const float segEndT = 1.0F -
-                        (static_cast<float>(i) /
-                         static_cast<float>(kNoteSegments));
-
-                    const float segAngle0 = juce::jmap(
-                        segStartT, 0.0F, 1.0F, angleTop, angleBottom);
-                    const float segAngle1 = juce::jmap(
-                        segEndT, 0.0F, 1.0F, angleTop, angleBottom);
-
-                    const float shrink = noteGap / outerRadius;
-                    const float a0 = segAngle0 + shrink;
-                    const float a1 = segAngle1 - shrink;
-                    if (a1 <= a0) {
-                        continue;
-                    }
-
-                    const float centerAngle = 0.5F * (a0 + a1);
-                    if (i == noteIndex) {
-                        noteCenterAngle = centerAngle;
-                    }
-
-                    juce::Path segPath;
-                    const int segSteps = 16;
-                    for (int s = 0; s <= segSteps; ++s) {
-                        const float tt = static_cast<float>(s) /
-                                         static_cast<float>(segSteps);
-                        const float a = juce::jmap(tt, 0.0F, 1.0F,
-                                                   a0, a1);
-                        const float x = cx - outerRadius * std::cos(a);
-                        const float y = cy + outerRadius * std::sin(a);
-                        if (s == 0) {
-                            segPath.startNewSubPath(x, y);
-                        } else {
-                            segPath.lineTo(x, y);
-                        }
-                    }
-
-                    g.setColour(freqBackgroundColour);
-                    g.strokePath(segPath, juce::PathStrokeType(4.0F));
-
-                    if (i == noteIndex) {
-                        g.setColour(freqForegroundColour);
-                        g.strokePath(segPath, juce::PathStrokeType(4.0F));
-                    }
-                }
-
-                // Triangle marker placed outside the bar. Its angle is
-                // aligned with the centre of the currently highlighted
-                // outer note segment so that both the visual marker
-                // and the coloured wedge always indicate the same
-                // pitch class.
-
-                const float triAngle = noteCenterAngle;
-
-                const float tipX = cx - outerRadius * std::cos(triAngle);
-                const float tipY = cy + outerRadius * std::sin(triAngle);
-
-                const float ux = (tipX - cx) / outerRadius;
-                const float uy = (tipY - cy) / outerRadius;
-
-                const float triHeight = 7.0F;
-                const float halfWidth = 4.5F;
-
-                const juce::Point<float> tip(tipX, tipY);
-                const juce::Point<float> baseCenter(
-                    tip.x + ux * triHeight,
-                    tip.y + uy * triHeight);
-
-                const float tx = -uy;
-                const float ty = ux;
-
-                const juce::Point<float> base1(
-                    baseCenter.x + tx * halfWidth,
-                    baseCenter.y + ty * halfWidth);
-                const juce::Point<float> base2(
-                    baseCenter.x - tx * halfWidth,
-                    baseCenter.y - ty * halfWidth);
-
-                juce::Path tri;
-                tri.startNewSubPath(tip);
-                tri.lineTo(base1);
-                tri.lineTo(base2);
-                tri.closeSubPath();
-
-                g.setColour(freqForegroundColour);
-                g.fillPath(tri);
-            } else if (moduleForObject != nullptr &&
-                       moduleForObject->is<rectai::LoopModule>()) {
-                // For Loop modules, render the left bar as four
-                // discrete segments with a small transparent gap and a
-                // triangle marker indicating the active slot.
-                const int segmentsCount = 4;
-                const float gap = 1.0F;
-
-                // Active segment index derived from the normalised
-                // sample parameter. We keep the raw parameter value for
-                // the triangle so it can move smoothly with the
-                // fiducial rotation, while the highlighted segment is
-                // still quantised to four slots.
-                float sampleParam = juce::jlimit(0.0F, 1.0F, freqValue);
-                int activeIndex = static_cast<int>(sampleParam * 4.0F);
-                if (activeIndex < 0) {
-                    activeIndex = 0;
-                } else if (activeIndex > 3) {
-                    activeIndex = 3;
-                }
-
-                // Precompute the angle range covered by the visible
-                // arc so that each Loop segment spans the same angle
-                // and therefore has the same visual length.
-                const float dyTop = sliderTop - cy;
-                const float dyBottom = sliderBottom - cy;
-                const float sinTop = juce::jlimit(-1.0F, 1.0F,
-                                                  dyTop / ringRadius);
-                const float sinBottom = juce::jlimit(-1.0F, 1.0F,
-                                                     dyBottom / ringRadius);
-                const float angleTop = std::asin(sinTop);
-                const float angleBottom = std::asin(sinBottom);
-
-                for (int i = 0; i < segmentsCount; ++i) {
-                    // Draw segments from bottom (i = 0) to top (i =
-                    // segmentsCount - 1) so that index 0 corresponds
-                    // to the lower part of the bar and the last index
-                    // to the upper part, aligned with the triangle
-                    // movement.
-                    const float segStartT = 1.0F -
-                        (static_cast<float>(i + 1) /
-                         static_cast<float>(segmentsCount));
-                    const float segEndT = 1.0F -
-                        (static_cast<float>(i) /
-                         static_cast<float>(segmentsCount));
-
-                    const float segAngle0 = juce::jmap(
-                        segStartT, 0.0F, 1.0F, angleTop, angleBottom);
-                    const float segAngle1 = juce::jmap(
-                        segEndT, 0.0F, 1.0F, angleTop, angleBottom);
-
-                    // Apply a small angular shrink at both ends to
-                    // create a 1px-ish gap between segments.
-                    const float shrink = gap / ringRadius;
-                    const float a0 = segAngle0 + shrink;
-                    const float a1 = segAngle1 - shrink;
-                    if (a1 <= a0) {
-                        continue;
-                    }
-
-                    juce::Path segPath;
-                    const int segSteps = 16;
-                    for (int s = 0; s <= segSteps; ++s) {
-                        const float tt = static_cast<float>(s) /
-                                         static_cast<float>(segSteps);
-                        const float a = juce::jmap(tt, 0.0F, 1.0F,
-                                                   a0, a1);
-                        const float x = cx - ringRadius * std::cos(a);
-                        const float y = cy + ringRadius * std::sin(a);
-                        if (s == 0) {
-                            segPath.startNewSubPath(x, y);
-                        } else {
-                            segPath.lineTo(x, y);
-                        }
-                    }
-
-                    // Background bar segment.
-                    g.setColour(freqBackgroundColour);
-                    g.strokePath(segPath, juce::PathStrokeType(5.0F));
-
-                    if (i == activeIndex) {
-                        // Highlight the active segment with the
-                        // foreground colour on top of the background.
-                        g.setColour(freqForegroundColour);
-                        g.strokePath(segPath, juce::PathStrokeType(5.0F));
-                    }
-                }
-
-                // Triangle selector: triangle to the left of the bar,
-                // sliding vertically along the full Loop control. We
-                // keep the vertical position strictly proportional to
-                // the continuous `sample` parameter so that there is no
-                // visual jump when crossing segment boundaries.
-
-                // NOTE: the visible arc does not span a full
-                // semi-circle; we leave a `sliderMargin` gap at the top
-                // and bottom. To keep the triangle perfectly aligned
-                // with the four visual segments (which divide the
-                // visible arc uniformly in angle), we must apply the
-                // same angular mapping here instead of a purely linear
-                // Y interpolation.
-                const float triAngle = juce::jmap(
-                    sampleParam, 0.0F, 1.0F, angleBottom, angleTop);
-
-                const float barX = cx - ringRadius * std::cos(triAngle);
-                const float triY = cy + ringRadius * std::sin(triAngle);
-
-                const float dyTri = triY - cy;
-                const float insideTri =
-                    ringRadius * ringRadius - dyTri * dyTri;
-                if (insideTri > 0.0F) {
-                    // Radial direction from the module centre to the
-                    // active segment centre.
-                    const float ux = (barX - cx) / ringRadius;
-                    const float uy = (triY - cy) / ringRadius;
-
-                    // Tip of the triangle sits exactly on the active
-                    // segment, and the whole body extends *outside* the
-                    // bar along the radial direction so it "wraps" the
-                    // segment from the exterior.
-                    const float triHeight = 7.0F;
-                    const float halfWidth = 4.5F;
-
-                    const juce::Point<float> tip(barX, triY);
-                    const juce::Point<float> baseCenter(
-                        tip.x + ux * triHeight,
-                        tip.y + uy * triHeight);
-
-                    // Tangent to the arc at the active segment,
-                    // perpendicular to the radial.
-                    const float tx = -uy;
-                    const float ty = ux;
-
-                    const juce::Point<float> base1(
-                        baseCenter.x + tx * halfWidth,
-                        baseCenter.y + ty * halfWidth);
-                    const juce::Point<float> base2(
-                        baseCenter.x - tx * halfWidth,
-                        baseCenter.y - ty * halfWidth);
-
-                    juce::Path tri;
-                    tri.startNewSubPath(tip);
-                    tri.lineTo(base1);
-                    tri.lineTo(base2);
-                    tri.closeSubPath();
-
-                    g.setColour(freqForegroundColour);
-                    g.fillPath(tri);
-                }
-            } else {
-                juce::Path freqArc;
-                const int arcSegments = 40;
-                for (int i = 0; i <= arcSegments; ++i) {
-                    const float t = static_cast<float>(i) /
-                                    static_cast<float>(arcSegments);
-                    const float y = juce::jmap(t, 0.0F, 1.0F,
-                                               sliderTop, sliderBottom);
-                    const float dy = y - cy;
-                    const float inside =
-                        ringRadius * ringRadius - dy * dy;
-                    if (inside < 0.0F) {
-                        continue;
-                    }
-                    const float dx = std::sqrt(inside);
-                    const float x = cx - dx;
-                    if (i == 0) {
-                        freqArc.startNewSubPath(x, y);
-                    } else {
-                        freqArc.lineTo(x, y);
-                    }
-                }
-
-                const bool freqIsFull = (freqValue >= 0.999F);
-                const bool freqIsEmpty = (freqValue <= 0.001F);
-
-                // When the control is at 0%, draw only the background
-                // arc so the bar appears completely empty, avoiding any
-                // tiny filled segment caused by clipping and
-                // anti-aliasing.
-                if (freqIsEmpty) {
-                    g.setColour(freqBackgroundColour);
-                    g.strokePath(freqArc, juce::PathStrokeType(5.0F));
-                } else {
-                    const float handleY = juce::jmap(freqValue, 0.0F, 1.0F,
-                                                     sliderBottom,
-                                                     sliderTop);
-
-                    juce::Colour effectiveFreqBackground =
-                        freqBackgroundColour;
-                    juce::Colour effectiveFreqForeground =
-                        freqForegroundColour;
-
-                    // When the control is at 100%, render the entire
-                    // arc with the foreground colour so that any small
-                    // gap between the background and filled regions
-                    // becomes invisible.
-                    if (freqIsFull) {
-                        effectiveFreqBackground = freqForegroundColour;
-                    }
-
-                    // Draw the full bar path as a darker background.
-                    g.setColour(effectiveFreqBackground);
-                    g.strokePath(freqArc, juce::PathStrokeType(5.0F));
-
-                    // Draw the filled portion as a separate path that
-                    // follows the same curved arc from the bottom of the
-                    // control up to the current value, instead of using a
-                    // rectangular clip.
-                    const float handleT = juce::jmap(handleY,
-                                                     sliderTop,
-                                                     sliderBottom,
-                                                     0.0F,
-                                                     1.0F);
-
-                    juce::Path filledArc;
-                    const int segments = 64;
-                    bool started = false;
-                    for (int i = 0; i <= segments; ++i) {
-                        const float t = static_cast<float>(i) /
-                                        static_cast<float>(segments);
-                        if (t < handleT) {
-                            continue;
-                        }
-
-                        const float y = juce::jmap(t, 0.0F, 1.0F,
-                                                   sliderTop,
-                                                   sliderBottom);
-                        const float dy = y - cy;
-                        const float inside =
-                            ringRadius * ringRadius - dy * dy;
-                        if (inside < 0.0F) {
-                            continue;
-                        }
-                        const float dx = std::sqrt(inside);
-                        const float x = cx - dx;
-
-                        if (!started) {
-                            filledArc.startNewSubPath(x, y);
-                            started = true;
-                        } else {
-                            filledArc.lineTo(x, y);
-                        }
-                    }
-
-                    if (!filledArc.isEmpty()) {
-                        g.setColour(effectiveFreqForeground);
-                        g.strokePath(filledArc,
-                                     juce::PathStrokeType(5.0F));
-                    }
-                }
-            }
-        }
-
-        // Right control (Gain): curved bar following the right
-        // semi-circle.
-        if (showGainControl) {
-            juce::Path gainArc;
-            const int segments = 40;
-            for (int i = 0; i <= segments; ++i) {
-                const float t = static_cast<float>(i) /
-                                static_cast<float>(segments);
-                const float y = juce::jmap(t, 0.0F, 1.0F,
-                                           sliderTop, sliderBottom);
-                const float dy = y - cy;
-                const float inside = ringRadius * ringRadius - dy * dy;
-                if (inside < 0.0F) {
-                    continue;
-                }
-                const float dx = std::sqrt(inside);
-                const float x = cx + dx;
-                if (i == 0) {
-                    gainArc.startNewSubPath(x, y);
-                } else {
-                    gainArc.lineTo(x, y);
-                }
-            }
-            g.setColour(juce::Colours::white.withAlpha(0.5F));
-            g.strokePath(gainArc, juce::PathStrokeType(1.0F));
-
-            // White handle: user-controlled module gain.
-            const float handleY = juce::jmap(gainValue, 0.0F, 1.0F,
-                                             sliderBottom, sliderTop);
-            const float dy = handleY - cy;
-            const float inside = ringRadius * ringRadius - dy * dy;
-            float handleX = cx + ringRadius;
-            if (inside >= 0.0F) {
-                const float dx = std::sqrt(inside);
-                handleX = cx + dx;
-                g.setColour(juce::Colours::white);
-                g.fillEllipse(handleX - 4.0F, handleY - 4.0F, 8.0F, 8.0F);
-            }
-
-            // Grey handle: Sequencer-driven gain factor for Oscillator
-            // modules. It follows the MIDI-controlled volume but cannot
-            // rise above the white handle.
-            if (sequencerControlsVolume_ && moduleForObject != nullptr &&
-                moduleForObject->is<rectai::OscillatorModule>()) {
-                float seqGain = 1.0F;
-                const auto it = oscillatorSequencerGain_.find(
-                    moduleForObject->id());
-                if (it != oscillatorSequencerGain_.end()) {
-                    seqGain = juce::jlimit(0.0F, 1.0F, it->second);
-                }
-
-                // Only show the grey handle when the Sequencer is
-                // actually constraining the level (i.e. attempting to
-                // lower volume). The effective Sequencer value is
-                // clamped to the white handle so it never appears above
-                // it.
-                const float cappedSeq = std::min(gainValue, seqGain);
-                if (cappedSeq < gainValue - 0.001F) {
-                    const float greyY = juce::jmap(cappedSeq, 0.0F, 1.0F,
-                                                   sliderBottom,
-                                                   sliderTop);
-                    const float greyDy = greyY - cy;
-                    const float greyInside =
-                        ringRadius * ringRadius - greyDy * greyDy;
-                    if (greyInside >= 0.0F) {
-                        const float greyDx = std::sqrt(greyInside);
-                        const float greyX = cx + greyDx;
-                        g.setColour(
-                            juce::Colours::lightgrey.withAlpha(0.9F));
-                        g.fillEllipse(greyX - 4.0F, greyY - 4.0F,
-                                      8.0F, 8.0F);
-                    }
-                }
-            }
-        }
-
-        // Icon inside the node body depending on metadata. Prefer the
-        // original Reactable sprite atlas when available; fall back to
-        // the existing procedural icons otherwise. When a sprite exists,
-        // we no longer draw the textual label inside the node, so the
-        // icon becomes the primary visual identifier.
-        std::string iconId;
-        if (moduleForObject != nullptr) {
-            iconId = moduleForObject->icon_id();
-        }
-
-        const float iconSize = nodeRadius * 1.4F;
-        const juce::Rectangle<float> iconBounds(cx - iconSize * 0.5F,
-                                                cy - iconSize * 0.5F,
-                                                iconSize, iconSize);
-
-        bool drewAtlasIcon = false;
-        if (atlasLoaded_ && !iconId.empty()) {
-            const auto spriteIt = atlasSprites_.find(iconId);
-            if (spriteIt != atlasSprites_.end() && atlasImage_.isValid()) {
-                const auto& src = spriteIt->second.bounds;
-
-                // Dynamically tint the icon based on the background
-                // brightness. If the body is dark, use white; if bright,
-                // use a dark colour.
-                const float brightness = bodyColour.getBrightness();
-                const juce::Colour iconTint =
-                    brightness > 0.6F
-                        ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
-                        : juce::Colours::white;
-                g.setColour(iconTint.withAlpha(0.9F));
-
-                const int destX = juce::roundToInt(iconBounds.getX());
-                const int destY = juce::roundToInt(iconBounds.getY());
-                const int destW = juce::roundToInt(iconBounds.getWidth());
-                const int destH = juce::roundToInt(iconBounds.getHeight());
-
-                // For Tempo modules, rotate the metronome image with the
-                // tangible's own rotation so that visual feedback matches
-                // the physical gesture used to change BPM.
-                const bool isTempoIcon =
-                    (moduleForObject->is<rectai::TempoModule>());
-                if (isTempoIcon) {
-                    juce::Graphics::ScopedSaveState tempoIconState(g);
-                    // Invert the visual rotation so that the metronome
-                    // image follows the physical gesture direction
-                    // perceived on the table.
-                    g.addTransform(juce::AffineTransform::rotation(
-                        -object.angle_radians(), cx, cy));
-                    g.drawImage(atlasImage_, destX, destY, destW, destH,
-                                src.getX(), src.getY(), src.getWidth(),
-                                src.getHeight());
-                } else {
-                    g.drawImage(atlasImage_, destX, destY, destW, destH,
-                                src.getX(), src.getY(), src.getWidth(),
-                                src.getHeight());
-                }
-                drewAtlasIcon = true;
-            }
-        }
-
-        if (!drewAtlasIcon) {
-            const float iconRadius = nodeRadius * 0.6F;
-            const float left = cx - iconRadius;
-            const float right = cx + iconRadius;
-            const float top = cy - iconRadius * 0.5F;
-            const float midY = cy;
-            const float bottom = cy + iconRadius * 0.5F;
-
-            // Dynamically tint the procedural icon/text based on
-            // brightness.
-            const float proceduralBrightness = bodyColour.getBrightness();
-            const juce::Colour iconTint =
-                proceduralBrightness > 0.6F
-                    ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
-                    : juce::Colours::white;
-            g.setColour(iconTint.withAlpha(0.9F));
-
-            const bool isOscillatorIcon =
-                (iconId == "oscillator" ||
-                 iconId.rfind("oscillator_", 0) == 0);
-
-            if (isOscillatorIcon) {
-                juce::Path wave;
-                const int segments = 24;
-                for (int i = 0; i <= segments; ++i) {
-                    const float t = static_cast<float>(i) /
-                                    static_cast<float>(segments);
-                    const float x = juce::jmap(t, 0.0F, 1.0F, left, right);
-                    const float s =
-                        std::sin(t * juce::MathConstants<float>::twoPi);
-                    const float y = midY - s * iconRadius * 0.4F;
-                    if (i == 0) {
-                        wave.startNewSubPath(x, y);
-                    } else {
-                        wave.lineTo(x, y);
-                    }
-                }
-                g.strokePath(wave, juce::PathStrokeType(1.6F));
-            } else if (iconId == "filter") {
-                juce::Path curve;
-                curve.startNewSubPath(left, bottom);
-                curve.quadraticTo({cx, top}, {right, midY});
-                g.strokePath(curve, juce::PathStrokeType(1.6F));
-            } else if (iconId == "sampler") {
-                const float barWidth = (right - left) / 6.0F;
-                for (int i = 0; i < 6; ++i) {
-                    const float x = left +
-                                    (static_cast<float>(i) + 0.5F) *
-                                        barWidth;
-                    const float hFactor = 0.3F +
-                                           0.1F *
-                                               static_cast<float>(i);
-                    const float yTop = midY - iconRadius * hFactor;
-                    const float yBottom = midY + iconRadius * 0.3F;
-                    g.drawLine(x, yTop, x, yBottom, 1.5F);
-                }
-            } else if (iconId == "effect") {
-                const float r = iconRadius * 0.6F;
-                g.drawEllipse(cx - r, cy - r, r * 2.0F, r * 2.0F, 1.5F);
-                for (int i = 0; i < 3; ++i) {
-                    const float a = juce::MathConstants<float>::twoPi *
-                                    static_cast<float>(i) / 3.0F;
-                    const float ex = cx + r * std::cos(a);
-                    const float ey = cy + r * std::sin(a);
-                    g.fillEllipse(ex - 2.0F, ey - 2.0F, 4.0F, 4.0F);
-                }
-            } else if (iconId == "controller") {
-                const float innerR = iconRadius * 0.4F;
-                const float outerR = iconRadius * 0.8F;
-                g.drawEllipse(cx - innerR, cy - innerR, innerR * 2.0F,
-                              innerR * 2.0F, 1.2F);
-                g.drawEllipse(cx - outerR, cy - outerR, outerR * 2.0F,
-                              outerR * 2.0F, 1.2F);
-            } else {
-                // As a last resort, keep the textual label centred in
-                // the node so that modules without an icon remain
-                // legible.
-                juce::String fallbackLabel(object.logical_id());
-                if (moduleForObject != nullptr) {
-                    const auto& moduleLabel = moduleForObject->label();
-                    if (!moduleLabel.empty()) {
-                        fallbackLabel = moduleLabel + " (" +
-                                        object.logical_id() + ")";
-                    }
-                }
-                const float fallbackBrightness = bodyColour.getBrightness();
-                const juce::Colour textTint =
-                    fallbackBrightness > 0.6F ? juce::Colours::black
-                                              : juce::Colours::white;
-                g.setColour(textTint);
-                g.setFont(14.0F);
-                g.drawText(fallbackLabel,
-                           juce::Rectangle<float>(cx - nodeRadius,
-                                                  cy - nodeRadius,
-                                                  nodeRadius * 2.0F,
-                                                  nodeRadius * 2.0F),
-                           juce::Justification::centred, false);
-            }
-        }
-
-        // Bottom adjustment mode button: a small rounded rectangle
-        // centred below the node body, in the vertical gap between the
-        // left/right side controls. It always shows the module's primary
-        // icon and acts as the anchor for the radial mode menu when the
-        // user drags towards the module's local left axis.
-        const bool hasModeMenu =
-            (moduleForObject != nullptr &&
-             !moduleForObject->supported_modes().empty());
-        if (hasModeMenu) {
-            const float buttonWidth = nodeRadius * 1.4F;
-            const float buttonHeight = 12.0F;
-            const float buttonCenterY = cy + nodeRadius + 8.0F;
-
-            juce::Rectangle<float> buttonBounds(
-                cx - buttonWidth * 0.5F,
-                buttonCenterY - buttonHeight * 0.5F,
-                buttonWidth, buttonHeight);
-
-            const bool isMenuVisible =
-                (modeSelection_.menuVisible &&
-                 modeSelection_.moduleId == object.logical_id());
-
-            // Reuse the main icon id as the glyph for the mode button,
-            // scaled down to fit inside the rectangle.
-            std::string modeIconId;
-            if (moduleForObject != nullptr) {
-                modeIconId = moduleForObject->icon_id();
-            }
-
-            if (!modeIconId.empty() && atlasLoaded_ &&
-                atlasImage_.isValid()) {
-                const int destW =
-                    juce::jmin(static_cast<int>(buttonBounds.getWidth()) -
-                                   4,
-                               18);
-                const int destH = destW;
-                const int destX =
-                    juce::roundToInt(buttonBounds.getCentreX() -
-                                      static_cast<float>(destW) * 0.5F);
-                const int destY =
-                    juce::roundToInt(buttonBounds.getCentreY() -
-                                      static_cast<float>(destH) * 0.5F);
-
-                auto iconImage =
-                    getCachedAtlasIcon(modeIconId, destW, destH);
-                if (iconImage.isValid()) {
-                    // When the user drags from the bottom icon towards
-                    // the module's local left axis, fade the icon alpha
-                    // from ~95% to ~60%. Once the radial menu is fully
-                    // open, keep it at the target 60% regardless of
-                    // further drag.
-                    float dragProgress =
-                        isMenuVisible ? 1.0F : modeDragProgress_;
-                    dragProgress =
-                        juce::jlimit(0.0F, 1.0F, dragProgress);
-                    const float iconAlpha = 0.95F - 0.35F * dragProgress;
-                    g.setColour(juce::Colours::white.withAlpha(iconAlpha));
-                    g.drawImageAt(iconImage, destX, destY);
-                }
-            }
-        }
-
-        // Semi-transparent overlay over the side controls when the
-        // radial mode menu is visible, so that the user can focus on the
-        // mode icons while still perceiving the underlying
-        // frequency/gain bars.
-        const bool drawModeOverlay =
-            (modeSelection_.menuVisible &&
-             modeSelection_.moduleId == object.logical_id());
-
-        // Mode icons: when the menu is visible, render one small icon per
-        // supported mode aligned with five evenly spaced "virtual"
-        // segments along the left Freq arc, from bottom to top (similar
-        // to the Loop module's four visible segments). The rectangular
-        // segments are not drawn; they are only used as anchors for icon
-        // placement.
-        if (drawModeOverlay && moduleForObject != nullptr) {
-            const auto& modes = moduleForObject->supported_modes();
-            const int modeCount = static_cast<int>(modes.size());
-            if (modeCount > 0) {
-                const int maxSlots = 4;
-                const float extraLeft = 7.0F;
-                const int baseIconSize = 16;
-
-                // Reuse the same angular range that defines the visible
-                // portion of the left Freq arc.
-                const float dyTop = sliderTop - cy;
-                const float dyBottom = sliderBottom - cy;
-                const float sinTop = juce::jlimit(
-                    -1.0F, 1.0F, dyTop / ringRadius);
-                const float sinBottom = juce::jlimit(
-                    -1.0F, 1.0F, dyBottom / ringRadius);
-                float angleTop = std::asin(sinTop);
-                const float angleBottom = std::asin(sinBottom);
-
-                // Slightly compress the arc at the top so that the
-                // icons do not extend beyond the Freq bar curve and the
-                // upper part of the fan feels more closed.
-                {
-                    const float angleRange = angleTop - angleBottom;
-                    const float compression = 0.85F;
-                    angleTop = angleBottom + angleRange * compression;
-                }
-
-                // Choose the icon radius so that the bottom-most slot
-                // lies on the same horizontal line as the adjustment
-                // button, while keeping all icons on a circular arc that
-                // broadly follows the Freq bar.
-                const float buttonCenterY = cy + nodeRadius + 8.0F;
-                float radiusIcons = ringRadius + 6.0F;
-                if (std::abs(sinBottom) > 1.0e-3F) {
-                    const float candidateRadius =
-                        (buttonCenterY - cy) / sinBottom;
-                    if (candidateRadius > 0.0F) {
-                        radiusIcons = candidateRadius;
-                    }
-                }
-
-                const int slotsToUse = std::min(modeCount, maxSlots);
-                const int startSlot = 0;  // bottom-most slot index
-
-                const int currentIndex =
-                    moduleForObject->current_mode_index();
-
-                for (int i = 0; i < modeCount; ++i) {
-                    const int slotIndex =
-                        std::min(startSlot + i, maxSlots - 1);
-                    const float t = static_cast<float>(slotIndex) /
-                                    static_cast<float>(maxSlots - 1);
-                    // t = 0 -> bottom (angleBottom), t = 1 -> top
-                    // (angleTop).
-                    const float angle = juce::jmap(
-                        t, 0.0F, 1.0F, angleBottom, angleTop);
-
-                    const float cosA = std::cos(angle);
-                    const float sinA = std::sin(angle);
-
-                    // Place icons along the same circular arc as the
-                    // Freq bar, shifted slightly further left so they
-                    // clear the bar visually.
-                    const float iconCx =
-                        cx - radiusIcons * cosA - extraLeft;
-                    const float iconCy =
-                        cy + radiusIcons * sinA;
-
-                    const bool isActive = (i == currentIndex);
-                    const float scale = isActive ? 1.25F : 1.0F;
-                    const int iconSize = static_cast<int>(
-                        static_cast<float>(baseIconSize) * scale);
-                    const int destX = juce::roundToInt(
-                        iconCx - static_cast<float>(iconSize) * 0.5F);
-                    const int destY = juce::roundToInt(
-                        iconCy - static_cast<float>(iconSize) * 0.5F);
-
-                    if (!modes[static_cast<std::size_t>(i)].icon_id
-                             .empty() &&
-                        atlasLoaded_ && atlasImage_.isValid()) {
-                        auto iconImage = getCachedAtlasIcon(
-                            modes[static_cast<std::size_t>(i)].icon_id,
-                            iconSize, iconSize);
-                        if (iconImage.isValid()) {
-                            const float alpha =
-                                isActive ? 1.0F : 0.8F;
-                            g.setColour(juce::Colours::white.withAlpha(
-                                alpha));
-                            g.drawImageAt(iconImage, destX, destY);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sampleplay instrument title: when a Sampleplay module has one
-        // or more instruments declared, render the active instrument name
-        // to the right of the node body so that the currently selected
-        // sound is visible on the table. The text follows the same
-        // rotation as the module when inside the musical area, so
-        // "right" is interpreted in the module's local space.
-        if (const auto* sampleModule =
-                dynamic_cast<const rectai::SampleplayModule*>(
-                    moduleForObject)) {
-            const auto* activeInstrument =
-                sampleModule->active_instrument();
-            if (activeInstrument != nullptr &&
-                !activeInstrument->name.empty()) {
-                const juce::String instrumentName(
-                    activeInstrument->name);
-                const float labelMargin = 10.0F;
-                const float labelHeight = 18.0F;
-                const float labelWidth = 140.0F;
-                juce::Rectangle<float> labelBounds(
-                    cx + nodeRadius + labelMargin,
-                    cy - labelHeight * 0.5F,
-                    labelWidth,
-                    labelHeight);
-
-                // Sampleplay instrument label fade: keep the text fully
-                // visible for a short period after the module is placed
-                // in the musical area or its instrument is changed, then
-                // fade it out smoothly.
-                double labelAlpha = 0.0;
-                const auto itTime =
-                    sampleplayLabelLastChangeSeconds_.find(
-                        sampleModule->id());
-                if (itTime != sampleplayLabelLastChangeSeconds_.end()) {
-                    const double elapsed =
-                        nowSeconds - itTime->second;
-                    if (elapsed >= 0.0) {
-                        if (elapsed <= 3.0) {
-                            labelAlpha = 1.0;
-                        } else if (elapsed <= 3.5) {
-                            labelAlpha =
-                                1.0 - (elapsed - 3.0) / 0.5;
-                        }
-                    }
-                } else {
-                    // First-time render: start the timer so that the
-                    // label appears and will fade after a few seconds
-                    // even for modules that were already on the table
-                    // when the app started.
-                    labelAlpha = 1.0;
-                    const double firstNow = nowSeconds;
-                    sampleplayLabelLastChangeSeconds_.emplace(
-                        sampleModule->id(), firstNow);
-                }
-
-                if (labelAlpha > 0.0) {
-                    const float brightness = bodyColour.getBrightness();
-                    const juce::Colour textColour =
-                        brightness > 0.6F ? juce::Colours::white
-                                          : juce::Colours::white;
-                    const float alpha =
-                        static_cast<float>(labelAlpha);
-                    g.setColour(textColour.withAlpha(0.9F * alpha));
-                    g.setFont(13.0F);
-                    g.drawText(instrumentName, labelBounds,
-                               juce::Justification::centredLeft, false);
-                }
-            }
-        }
-
-        // Loop sample title: when a Loop module has one or more loops
-        // declared, render the currently selected filename (basename
-        // only) to the right of the node body. The label appears for a
-        // few seconds after the selected slot changes and then fades
-        // out.
-        if (const auto* loopModule =
-                dynamic_cast<const rectai::LoopModule*>(moduleForObject)) {
-            const auto& loops = loopModule->loops();
-            if (!loops.empty()) {
-                float sampleParam = loopModule->GetParameterOrDefault(
-                    "sample", 0.0F);
-                sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
-                int selectedIndex = static_cast<int>(sampleParam * 4.0F);
-                if (selectedIndex < 0) {
-                    selectedIndex = 0;
-                } else if (selectedIndex > 3) {
-                    selectedIndex = 3;
-                }
-
-                const rectai::LoopDefinition* chosen = nullptr;
-                // Loops are already ordered by the loader; clamp to
-                // available entries.
-                if (selectedIndex < static_cast<int>(loops.size())) {
-                    chosen = &loops[static_cast<std::size_t>(
-                        selectedIndex)];
-                } else {
-                    chosen = &loops.front();
-                }
-
-                if (chosen != nullptr && !chosen->filename.empty()) {
-                    juce::String name(chosen->filename);
-                    // Strip any directory components to keep the label
-                    // compact.
-                    const int lastSlash = name.lastIndexOfAnyOf("/\\");
-                    if (lastSlash >= 0 && lastSlash < name.length() - 1) {
-                        name = name.substring(lastSlash + 1);
-                    }
-
-                    const float labelMargin = 10.0F;
-                    const float labelHeight = 18.0F;
-                    const float labelWidth = 160.0F;
-                    juce::Rectangle<float> labelBounds(
-                        cx + nodeRadius + labelMargin,
-                        cy - labelHeight * 0.5F,
-                        labelWidth,
-                        labelHeight);
-
-                    double labelAlpha = 0.0;
-                    const auto itTime =
-                        loopLabelLastChangeSeconds_.find(
-                            loopModule->id());
-                    if (itTime != loopLabelLastChangeSeconds_.end()) {
-                        const double elapsed =
-                            nowSeconds - itTime->second;
-                        if (elapsed >= 0.0) {
-                            if (elapsed <= 5.0) {
-                                labelAlpha = 1.0;
-                            } else if (elapsed <= 5.5) {
-                                labelAlpha =
-                                    1.0 - (elapsed - 5.0) / 0.5;
-                            }
-                        }
-                    } else {
-                        // First-time render: bootstrap the timer so the
-                        // label appears and fades on existing modules.
-                        labelAlpha = 1.0;
-                        const double firstNow = nowSeconds;
-                        loopLabelLastChangeSeconds_.emplace(
-                            loopModule->id(), firstNow);
-                    }
-
-                    if (labelAlpha > 0.0) {
-                        const juce::Colour textColour =
-                            juce::Colours::white;
-                        const float alpha =
-                            static_cast<float>(labelAlpha);
-                        g.setColour(textColour.withAlpha(0.9F * alpha));
-                        g.setFont(13.0F);
-                        g.drawText(name, labelBounds,
-                                   juce::Justification::centredLeft,
-                                   false);
-                    }
-                }
-            }
-        }
-
-        // Loop playhead bar: for Loop modules with valid beat metadata,
-        // draw a thin red bar orbiting between the node body and the
-        // side control ring, plus a short white trail that fades over a
-        // few hundred milliseconds. The playhead position is derived
-        // from the same audio-driven global transport used by the
-        // Sequencer and Loop playback so that visuals remain locked to
-        // the actual audio phase.
-        if (const auto* loopModule =
-                dynamic_cast<const rectai::LoopModule*>(moduleForObject)) {
-            const auto& loops = loopModule->loops();
-            if (!loops.empty()) {
-                float sampleParam = loopModule->GetParameterOrDefault(
-                    "sample", 0.0F);
-                sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
-
-                int selectedIndex = static_cast<int>(sampleParam * 4.0F);
-                if (selectedIndex < 0) {
-                    selectedIndex = 0;
-                } else if (selectedIndex > 3) {
-                    selectedIndex = 3;
-                }
-
-                const rectai::LoopDefinition* chosen = nullptr;
-                if (selectedIndex < static_cast<int>(loops.size())) {
-                    chosen = &loops[static_cast<std::size_t>(
-                        selectedIndex)];
-                } else {
-                    chosen = &loops.front();
-                }
-
-                if (chosen != nullptr && chosen->beats > 0) {
-                    const int beatsPerLoop = chosen->beats;
-                    const double totalBeats =
-                        transportBeats_ + beatPhase_;
-                    const double beatsMod = std::fmod(
-                        totalBeats,
-                        static_cast<double>(beatsPerLoop));
-                    const double positiveBeatsMod =
-                        (beatsMod < 0.0)
-                            ? (beatsMod +
-                               static_cast<double>(beatsPerLoop))
-                            : beatsMod;
-                    const double phase01Double =
-                        (beatsPerLoop > 0)
-                            ? (positiveBeatsMod /
-                               static_cast<double>(beatsPerLoop))
-                            : 0.0;
-                    const float phase01 = static_cast<float>(
-                        juce::jlimit(0.0, 1.0, phase01Double));
-
-                    constexpr double kTrailFadeSeconds = 0.3;
-                    constexpr int kMaxTrailSegments = 15;
-
-                    auto& trail = loopPlayTrails_[loopModule->id()];
-                    trail.push_back(
-                        LoopPlayTrailSample{phase01, nowSeconds});
-
-                    // Discard samples outside the fade window or beyond
-                    // the maximum count, keeping the most recent
-                    // entries.
-                    const auto isExpired = [nowSeconds](
-                                                     const LoopPlayTrailSample& s) {
-                        return (nowSeconds - s.timestampSeconds) >
-                               kTrailFadeSeconds;
-                    };
-
-                    // Remove expired samples from the front.
-                    while (!trail.empty() &&
-                           isExpired(trail.front())) {
-                        trail.erase(trail.begin());
-                    }
-
-                    if (static_cast<int>(trail.size()) >
-                        kMaxTrailSegments) {
-                        const auto extra = static_cast<int>(
-                            trail.size()) - kMaxTrailSegments;
-                        trail.erase(trail.begin(),
-                                    trail.begin() + extra);
-                    }
-
-                    const float innerRadius = nodeRadius + 1.0F;
-                    const float outerRadius = ringRadius - 4.0F;
-                    const float barThickness = 2.0F;
-
-                    auto drawBarAtPhase = [&](float phase,
-                                              const juce::Colour& colour,
-                                              float alphaScale) {
-                        const float angle =
-                            juce::MathConstants<float>::twoPi * phase -
-                            juce::MathConstants<float>::halfPi;
-                        const float cosA = std::cos(angle);
-                        const float sinA = std::sin(angle);
-
-                        const juce::Point<float> p1(
-                            cx + innerRadius * cosA,
-                            cy + innerRadius * sinA);
-                        const juce::Point<float> p2(
-                            cx + outerRadius * cosA,
-                            cy + outerRadius * sinA);
-
-                        g.setColour(colour.withAlpha(
-                            colour.getFloatAlpha() * alphaScale));
-                        g.drawLine(juce::Line<float>(p1, p2),
-                                   barThickness);
-                    };
-
-                    // Draw trail segments from oldest to newest with
-                    // increasing opacity so that recent positions stand
-                    // out near the current playhead.
-                    for (const auto& sample : trail) {
-                        const double age =
-                            nowSeconds - sample.timestampSeconds;
-                        if (age < 0.0 ||
-                            age > kTrailFadeSeconds) {
-                            continue;
-                        }
-
-                        const float t = static_cast<float>(
-                            age / kTrailFadeSeconds);
-                        const float alpha =
-                            juce::jlimit(0.0F, 1.0F, 1.0F - t);
-                        if (alpha <= 0.0F) {
-                            continue;
-                        }
-
-                        drawBarAtPhase(sample.phase01,
-                                       juce::Colours::white,
-                                       alpha * 0.8F);
-                    }
-
-                    // Current playhead bar on top, fully opaque red.
-                    drawBarAtPhase(phase01, juce::Colours::red, 1.0F);
-                }
-            }
-        }
+        paintNodeSideControls(g,
+                              object,
+                              moduleForObject,
+                              cx,
+                              cy,
+                              ringRadius,
+                              sliderTop,
+                              sliderBottom,
+                              freqValue,
+                              gainValue,
+                              showFreqControl,
+                              showGainControl);
+
+        paintNodeIconAndModeButton(g, object, moduleForObject, cx, cy,
+                                   nodeRadius, bodyColour);
+
+        paintNodeModeOverlayAndIcons(g,
+                                     object,
+                                     moduleForObject,
+                                     cx,
+                                     cy,
+                                     ringRadius,
+                                     sliderTop,
+                                     sliderBottom,
+                                     nodeRadius);
+
+        paintNodeLabelsAndLoopTrail(g,
+                                    moduleForObject,
+                                    cx,
+                                    cy,
+                                    nodeRadius,
+                                    ringRadius,
+                                    bodyColour,
+                                    nowSeconds);
 
 #if !defined(NDEBUG)
-        // Debug overlay: show the object/module id to the right of the
-        // node so that we can quickly match dock entries and table
-        // objects with their underlying ids when inspecting colours or
-        // routing issues.
-        {
-            const juce::String debugId(object.logical_id());
-            const float debugMargin = 6.0F;
-            const float debugWidth = 60.0F;
-            const float debugHeight = 16.0F;
-            juce::Rectangle<float> debugBounds(
-                cx + nodeRadius + debugMargin,
-                cy - debugHeight * 0.5F,
-                debugWidth,
-                debugHeight);
-
-            g.setColour(juce::Colours::white.withAlpha(0.8F));
-            g.setFont(11.0F);
-            g.drawText(debugId, debugBounds,
-                       juce::Justification::centredLeft, false);
-        }
+        paintNodeDebugOverlay(g, object, cx, cy, nodeRadius);
 #endif
 
         // Per-module detail panel (envelope/settings and
         // module-specific tabs) when active.
-        if (!modulePanels_.empty() && insideMusic) {
-            const auto panelIt =
-                modulePanels_.find(object.logical_id());
-            if (panelIt != modulePanels_.end() &&
-                panelIt->second.visible) {
-                const auto& panelState = panelIt->second;
-                const auto panelBounds =
-                    getModulePanelBounds(object, bounds);
+        paintNodeModulePanel(g, bounds, object, moduleForObject, cx, cy,
+                             insideMusic);
 
-                // Panel body: rounded border and dark blue background
-                // slightly deeper than the base table colour.
-                constexpr float kPanelCornerRadius = 10.0F;
-                const juce::Colour panelBg =
-                    juce::Colour::fromRGB(0x00, 0x10, 0x50);
-                const juce::Colour panelBorder =
-                    juce::Colours::white.withAlpha(0.20F);
-
-                g.setColour(panelBg.withAlpha(0.96F));
-                g.fillRoundedRectangle(panelBounds, kPanelCornerRadius);
-
-                // Single thin outer border.
-                g.setColour(panelBorder);
-                g.drawRoundedRectangle(panelBounds, kPanelCornerRadius,
-                                       2.0F);
-
-                // Small triangle on the left side of the panel
-                // pointing towards the centre of the module.
-                {
-                    const float triWidth = 12.0F;
-                    const float triHalfHeight = 7.0F;
-                    const float leftX = panelBounds.getX();
-                    // Vertically aligned with the module centre,
-                    // not with the panel centre.
-                    const float centreY = cy;
-
-                    juce::Path tri;
-                    tri.startNewSubPath(leftX, centreY - triHalfHeight);
-                    tri.lineTo(leftX, centreY + triHalfHeight);
-                    tri.lineTo(leftX - triWidth, centreY);
-                    tri.closeSubPath();
-
-                    // Triangle with no explicit border, filled with
-                    // the same colour as the panel border.
-                    g.setColour(panelBorder);
-                    g.fillPath(tri);
-                }
-
-                // Bottom tab strip; tabs are drawn just below the
-                // panel window area, left-aligned.
-                constexpr float kTabStripHeight = 26.0F;
-                juce::Rectangle<float> tabStrip(
-                    panelBounds.getX(), panelBounds.getBottom(),
-                    panelBounds.getWidth(), kTabStripHeight);
-
-                // Query the module for its supported settings tabs in
-                // visual order. The close button is always appended as
-                // the last pseudo-tab on the right.
-                const rectai::AudioModule::SettingsTabs* settingsTabsPtr =
-                    nullptr;
-                if (moduleForObject != nullptr) {
-                    settingsTabsPtr =
-                        &moduleForObject->supported_settings_tabs();
-                }
-
-                const int settingsTabCount =
-                    (settingsTabsPtr != nullptr)
-                        ? static_cast<int>(settingsTabsPtr->size())
-                        : 0;
-                const int tabCount = settingsTabCount + 1;  // + close
-
-                juce::ignoreUnused(tabCount);
-
-                // Square tabs: side based on the strip height,
-                // left-aligned and packed together without stretching
-                // to the full width.
-                const float tabSide = tabStrip.getHeight();
-                const float tabSpacing = 0.0F;
-
-                auto drawTab = [&](int index, const juce::String& iconId,
-                                   bool isActive) {
-                    const float x = tabStrip.getX() +
-                                    (tabSide + tabSpacing) *
-                                        static_cast<float>(index);
-                    juce::Rectangle<float> tabBounds(
-                        x, tabStrip.getY(), tabSide,
-                        tabStrip.getHeight());
-
-                    const auto baseColour =
-                        isActive ? juce::Colours::white.withAlpha(0.14F)
-                                 : juce::Colours::white.withAlpha(0.04F);
-                    g.setColour(baseColour);
-                    g.fillRect(tabBounds);
-
-                    // Square icon filling the tab and touching the
-                    // outer edge.
-                    const int destSize = static_cast<int>(
-                        std::floor(tabBounds.getHeight()));
-                    if (destSize > 0 && atlasLoaded_) {
-                        auto iconImage = getCachedAtlasIcon(
-                            iconId.toStdString(), destSize, destSize);
-                        if (iconImage.isValid()) {
-                            const int destX = juce::roundToInt(
-                                tabBounds.getX());
-                            const int destY = juce::roundToInt(
-                                tabBounds.getY());
-                            g.setColour(juce::Colours::white.withAlpha(
-                                isActive ? 0.95F : 0.85F));
-                            g.drawImageAt(iconImage, destX, destY);
-                        }
-                    }
-                };
-
-                auto mapSettingsKindToPanelTab =
-                    [](rectai::AudioModule::SettingsTabKind kind) {
-                        using Kind = rectai::AudioModule::SettingsTabKind;
-                        switch (kind) {
-                        case Kind::kEnvelope:
-                            return ModulePanelState::Tab::kEnvelope;
-                        case Kind::kLoopFiles:
-                            return ModulePanelState::Tab::kLoopFiles;
-                        case Kind::kXYControl:
-                            return ModulePanelState::Tab::kXYControl;
-                        case Kind::kSettings:
-                        default:
-                            return ModulePanelState::Tab::kSettings;
-                        }
-                    };
-
-                // Draw settings tabs followed by the close pseudo-tab.
-                for (int i = 0; i < settingsTabCount; ++i) {
-                    const auto& desc =
-                        (*settingsTabsPtr)[static_cast<std::size_t>(i)];
-                    const ModulePanelState::Tab tabKind =
-                        mapSettingsKindToPanelTab(desc.kind);
-                    const bool isActive =
-                        (panelState.activeTab == tabKind);
-                    drawTab(i, juce::String(desc.icon_id), isActive);
-                }
-
-                // Close "tab" is always last.
-                drawTab(settingsTabCount, "close_button", false);
-
-                // Inner content area. The Envelope tab uses the full
-                // panel bounds (no extra padding) for its bars and
-                // bottom buttons; other tabs keep a small margin
-                // around their content for legibility.
-                juce::Rectangle<float> contentBounds = panelBounds;
-                juce::Rectangle<float> textBounds = contentBounds;
-                textBounds.reduce(8.0F, 8.0F);
-
-                g.setColour(juce::Colours::white.withAlpha(0.45F));
-                g.setFont(juce::Font(12.0F));
-
-                if (panelState.activeTab ==
-                    ModulePanelState::Tab::kEnvelope) {
-                    const auto* envModule =
-                        dynamic_cast<const rectai::AudioModuleWithEnvelope*>(
-                            moduleForObject);
-
-                    if (envModule != nullptr) {
-                        auto getIcon = [this](const std::string& iconId,
-                                              int width, int height) {
-                            return getCachedAtlasIcon(iconId, width,
-                                                      height);
-                        };
-
-                        paintModuleEnvelopeView(
-                            g, contentBounds, *envModule, atlasLoaded_,
-                            getIcon,
-                            kModuleEnvelopeMaxAttackMs,
-                            kModuleEnvelopeMaxDecayMs,
-                            kModuleEnvelopeMaxDurationMs,
-                            kModuleEnvelopeMaxReleaseMs);
-                    } else {
-                        g.drawFittedText("Envelope not available",
-                                          textBounds.toNearestInt(),
-                                          juce::Justification::centred, 2);
-                    }
-                } else if (panelState.activeTab ==
-                           ModulePanelState::Tab::kLoopFiles) {
-                    // Loop file/sample selection view backed by the
-                    // generic TextScrollList and LoopFileBrowser.
-                    auto* loopModule =
-                        dynamic_cast<rectai::LoopModule*>(
-                            const_cast<rectai::AudioModule*>(
-                                moduleForObject));
-                    if (loopModule == nullptr) {
-                        g.drawFittedText("Loop files not available",
-                                          textBounds.toNearestInt(),
-                                          juce::Justification::centred, 2);
-                    } else {
-                        ensureLoopFileBrowserInitialised(
-                            panelState.moduleId, loopModule);
-                        rebuildLoopFileBrowserEntries(
-                            panelState.moduleId, loopModule);
-
-                        auto* list =
-                            getOrCreateLoopFileList(panelState.moduleId);
-                        if (list != nullptr) {
-                            juce::Rectangle<float> listBounds =
-                                contentBounds.reduced(4.0F, 4.0F);
-
-                            juce::Graphics::ScopedSaveState state(g);
-                            list->setBounds(
-                                listBounds.toNearestInt());
-                            g.reduceClipRegion(
-                                listBounds.toNearestInt());
-                            g.addTransform(
-                                juce::AffineTransform::translation(
-                                    listBounds.getX(),
-                                    listBounds.getY()));
-                            list->paint(g);
-                        }
-                    }
-                } else if (panelState.activeTab ==
-                           ModulePanelState::Tab::kXYControl) {
-                    // Generic 2D XY control pad used by modules such
-                    // as Filter and LFO to expose two correlated
-                    // parameters in a compact view.
-                    juce::Rectangle<float> xyBounds = contentBounds;
-                    xyBounds.reduce(6.0F, 6.0F);
-
-                    auto* xy = getOrCreateXYControl(panelState.moduleId);
-                    if (xy == nullptr) {
-                        g.drawFittedText("XY control not available",
-                                          textBounds.toNearestInt(),
-                                          juce::Justification::centred, 2);
-                    } else {
-                        // Configure the XY pad based on the
-                        // AudioModule-level XYControlMapping so that
-                        // the mapping between axes and parameters
-                        // lives in the model instead of the UI.
-                        const auto* baseModule = moduleForObject;
-
-                        // Default visual minimums: allow using the
-                        // full panel area. Callers can tweak these in
-                        // a future iteration if a dead zone is
-                        // desired near the edges.
-                        xy->setVisualMinimums(0.0F, 0.0F);
-
-                        const std::string moduleId = panelState.moduleId;
-
-                        const auto mapping =
-                            baseModule->xy_control_mapping();
-                        if (!mapping.has_value()) {
-                            g.drawFittedText("XY control not available",
-                                              textBounds.toNearestInt(),
-                                              juce::Justification::centred,
-                                              2);
-                        } else {
-                            const auto& m = mapping.value();
-
-                            const float xValue =
-                                baseModule->GetParameterOrDefault(
-                                    m.x_parameter,
-                                    baseModule->default_parameter_value(
-                                        m.x_parameter));
-                            const float yValue =
-                                baseModule->GetParameterOrDefault(
-                                    m.y_parameter,
-                                    baseModule->default_parameter_value(
-                                        m.y_parameter));
-
-                            xy->setNormalisedPosition(xValue, yValue, false);
-
-                            xy->setOnValueChanged(
-                                [this, moduleId, m](float x01, float y01) {
-                                    // X and Y drive the module
-                                    // parameters declared in
-                                    // xy_control_mapping(). Concrete
-                                    // modules are responsible for
-                                    // choosing non-volume parameters
-                                    // for the Y axis when exposing an
-                                    // XY tab.
-                                    scene_.SetModuleParameter(
-                                        moduleId, m.x_parameter, x01);
-                                    scene_.SetModuleParameter(
-                                        moduleId, m.y_parameter, y01);
-                                    repaintWithRateLimit();
-                                });
-                        }
-
-                        if (xy != nullptr) {
-                            juce::Graphics::ScopedSaveState state(g);
-                            xy->setBounds(xyBounds.toNearestInt());
-                            g.reduceClipRegion(xyBounds.toNearestInt());
-                            g.addTransform(
-                                juce::AffineTransform::translation(
-                                    xyBounds.getX(), xyBounds.getY()));
-                            xy->paint(g);
-                        }
-                    }
-                } else {
-                    // Default settings tab: for most modules this is a
-                    // placeholder, but Tempo exposes a dedicated
-                    // TextScroll-based BPM preset view.
-                    const auto* tempoModule =
-                        dynamic_cast<const rectai::TempoModule*>(
-                            moduleForObject);
-
-                    if (tempoModule != nullptr) {
-                        juce::Rectangle<float> listBounds =
-                            contentBounds.reduced(4.0F, 4.0F);
-
-                        auto* list =
-                            getOrCreateTempoPresetList(
-                                panelState.moduleId);
-                        if (list != nullptr) {
-                            // Populate static BPM presets.
-                            const auto& presets =
-                                rectai::TempoModule::bpm_presets();
-                            std::vector<rectai::ui::TextScrollList::Item>
-                                items;
-                            items.reserve(presets.size());
-
-                            for (const auto& preset : presets) {
-                                rectai::ui::TextScrollList::Item item;
-                                item.text = preset.label;
-                                items.push_back(std::move(item));
-                            }
-
-                            list->setItems(std::move(items));
-
-                            // Select the preset whose BPM is closest to
-                            // the current global BPM.
-                            if (!presets.empty()) {
-                                const float currentBpm = bpm_;
-                                int bestIndex = 0;
-                                float bestDiff =
-                                    std::numeric_limits<float>::max();
-
-                                for (std::size_t i = 0;
-                                     i < presets.size(); ++i) {
-                                    const float diff = std::fabs(
-                                        currentBpm - presets[i].bpm);
-                                    if (diff < bestDiff) {
-                                        bestDiff = diff;
-                                        bestIndex =
-                                            static_cast<int>(i);
-                                    }
-                                }
-
-                                if (list->getSelectedIndex() !=
-                                    bestIndex) {
-                                    list->setSelectedIndex(
-                                        bestIndex, false);
-                                }
-                            }
-
-                            juce::Graphics::ScopedSaveState state(g);
-                            list->setBounds(
-                                listBounds.toNearestInt());
-                            g.reduceClipRegion(
-                                listBounds.toNearestInt());
-                            g.addTransform(
-                                juce::AffineTransform::translation(
-                                    listBounds.getX(),
-                                    listBounds.getY()));
-                            list->paint(g);
-                        }
-                    } else {
-                        g.drawFittedText(
-                            "Module settings coming soon",
-                            textBounds.toNearestInt(),
-                            juce::Justification::centred, 2);
-                    }
-                }
-            }
-        }
-
-        // Tempo controller overlay: show the current global BPM as a
-        // small integer label positioned just outside the node circle,
-        // so it remains legible. The underlying value is kept as a
-        // float in `bpm_` but rendered without decimals, and only
-        // appears briefly after tempo changes.
-        if (moduleForObject != nullptr && bpmLabelAlpha > 0.0) {
-            const auto* tempoModule =
-                dynamic_cast<const rectai::TempoModule*>(
-                    moduleForObject);
-            if (tempoModule != nullptr) {
-                const int bpmInt = static_cast<int>(std::round(bpm_));
-                juce::String bpmText(bpmInt);
-
-                const float margin = 4.0F;
-                juce::Rectangle<float> bpmBounds(
-                    cx - nodeRadius,
-                    cy - nodeRadius - 18.0F - margin,
-                    nodeRadius * 2.0F, 18.0F);
-
-                const float alpha = static_cast<float>(bpmLabelAlpha);
-                g.setColour(
-                    juce::Colours::white.withAlpha(0.9F * alpha));
-                g.setFont(13.0F);
-                g.drawText(bpmText, bpmBounds,
-                           juce::Justification::topLeft, false);
-            }
-        }
+        paintNodeTempoOverlay(g,
+                              moduleForObject,
+                              cx,
+                              cy,
+                              nodeRadius,
+                              bpmLabelAlpha);
     }
 }
 
@@ -4027,6 +2475,1392 @@ MainComponent::computeObjectsWithOutgoingActiveConnection(
     }
 
     return result;
+}
+
+void MainComponent::paintNodeBodyAndOutline(juce::Graphics& g,
+                                            float cx,
+                                            float cy,
+                                            float nodeRadius,
+                                            juce::Colour bodyColour)
+{
+    g.setColour(bodyColour);
+    g.fillEllipse(cx - nodeRadius, cy - nodeRadius, nodeRadius * 2.0F,
+                  nodeRadius * 2.0F);
+
+    const float outlineThickness = 2.0F;
+    const float outlineInset = outlineThickness * 0.5F;
+    const juce::Colour outlineColour =
+        (bodyColour.getBrightness() > 0.6F
+             ? juce::Colours::black.withAlpha(0.9F)
+             : juce::Colours::white.withAlpha(0.9F));
+    g.setColour(outlineColour);
+    g.drawEllipse(cx - nodeRadius + outlineInset,
+                  cy - nodeRadius + outlineInset,
+                  nodeRadius * 2.0F - outlineThickness,
+                  nodeRadius * 2.0F - outlineThickness,
+                  outlineThickness);
+}
+
+void MainComponent::paintNodeDebugOverlay(
+    juce::Graphics& g,
+    const rectai::ObjectInstance& object,
+    float cx,
+    float cy,
+    float nodeRadius) const
+{
+    const juce::String debugId(object.logical_id());
+    const float debugMargin = 6.0F;
+    const float debugWidth = 60.0F;
+    const float debugHeight = 16.0F;
+    juce::Rectangle<float> debugBounds(cx + nodeRadius + debugMargin,
+                                       cy - debugHeight * 0.5F,
+                                       debugWidth,
+                                       debugHeight);
+
+    g.setColour(juce::Colours::white.withAlpha(0.8F));
+    g.setFont(11.0F);
+    g.drawText(debugId, debugBounds,
+               juce::Justification::centredLeft, false);
+}
+
+void MainComponent::paintNodeTempoOverlay(
+    juce::Graphics& g,
+    const rectai::AudioModule* moduleForObject,
+    float cx,
+    float cy,
+    float nodeRadius,
+    double bpmLabelAlpha) const
+{
+   if (moduleForObject == nullptr || bpmLabelAlpha <= 0.0) {
+       return;
+   }
+
+   const auto* tempoModule =
+       dynamic_cast<const rectai::TempoModule*>(moduleForObject);
+   if (tempoModule == nullptr) {
+       return;
+   }
+
+   const int bpmInt = static_cast<int>(std::round(bpm_));
+   juce::String bpmText(bpmInt);
+
+   const float margin = 4.0F;
+   juce::Rectangle<float> bpmBounds(cx - nodeRadius,
+                                    cy - nodeRadius - 18.0F - margin,
+                                    nodeRadius * 2.0F,
+                                    18.0F);
+
+   const float alpha = static_cast<float>(bpmLabelAlpha);
+   g.setColour(juce::Colours::white.withAlpha(0.9F * alpha));
+   g.setFont(13.0F);
+   g.drawText(bpmText, bpmBounds,
+              juce::Justification::topLeft,
+              false);
+}
+
+void MainComponent::paintNodeSideControls(
+    juce::Graphics& g,
+    const rectai::ObjectInstance& object,
+    const rectai::AudioModule* moduleForObject,
+    float cx,
+    float cy,
+    float ringRadius,
+    float sliderTop,
+    float sliderBottom,
+    float freqValue,
+    float gainValue,
+    bool showFreqControl,
+    bool showGainControl)
+{
+    if (showFreqControl) {
+        const bool modeMenuVisibleForThisModule =
+            (modeSelection_.menuVisible &&
+             modeSelection_.moduleId == object.logical_id());
+        const float modeMenuAlpha =
+            modeMenuVisibleForThisModule ? 0.15F : 1.0F;
+        const juce::Colour freqBackgroundColour =
+            juce::Colours::white.withAlpha(0.35F * modeMenuAlpha);
+        const juce::Colour freqForegroundColour =
+            juce::Colours::white.withAlpha(1.0F * modeMenuAlpha);
+
+        if (moduleForObject != nullptr &&
+            moduleForObject->uses_pitch_control()) {
+            const float midiNote = moduleForObject->GetParameterOrDefault(
+                "midifreq", 57.0F);
+
+            constexpr float kMinMidi = 24.0F;
+            constexpr float kMaxMidi = 108.0F;
+
+            float clampedMidi =
+                juce::jlimit(kMinMidi, kMaxMidi, midiNote);
+            int relative = static_cast<int>(std::floor(
+                static_cast<double>(clampedMidi - kMinMidi)));
+            if (relative < 0) {
+                relative = 0;
+            }
+            const int octaveIndex = relative / 12;
+            const int noteIndex = relative % 12;
+
+            const float dyTop = sliderTop - cy;
+            const float dyBottom = sliderBottom - cy;
+            const float sinTop = juce::jlimit(-1.0F, 1.0F,
+                                              dyTop / ringRadius);
+            const float sinBottom = juce::jlimit(-1.0F, 1.0F,
+                                                 dyBottom / ringRadius);
+            const float angleTop = std::asin(sinTop);
+            const float angleBottom = std::asin(sinBottom);
+
+            const int kOctaveSegments = 8;
+            const float innerRadius = ringRadius - 5.0F;
+            const float octaveGap = 1.0F;
+
+            for (int i = 0; i < kOctaveSegments; ++i) {
+                const float segStartT = 1.0F -
+                    (static_cast<float>(i + 1) /
+                     static_cast<float>(kOctaveSegments));
+                const float segEndT = 1.0F -
+                    (static_cast<float>(i) /
+                     static_cast<float>(kOctaveSegments));
+
+                const float segAngle0 = juce::jmap(
+                    segStartT, 0.0F, 1.0F, angleTop, angleBottom);
+                const float segAngle1 = juce::jmap(
+                    segEndT, 0.0F, 1.0F, angleTop, angleBottom);
+
+                const float shrink = octaveGap / innerRadius;
+                const float a0 = segAngle0 + shrink;
+                const float a1 = segAngle1 - shrink;
+                if (a1 <= a0) {
+                    continue;
+                }
+
+                juce::Path segPath;
+                const int segSteps = 16;
+                for (int s = 0; s <= segSteps; ++s) {
+                    const float tt = static_cast<float>(s) /
+                                     static_cast<float>(segSteps);
+                    const float a = juce::jmap(tt, 0.0F, 1.0F,
+                                               a0, a1);
+                    const float x = cx - innerRadius * std::cos(a);
+                    const float y = cy + innerRadius * std::sin(a);
+                    if (s == 0) {
+                        segPath.startNewSubPath(x, y);
+                    } else {
+                        segPath.lineTo(x, y);
+                    }
+                }
+
+                g.setColour(freqBackgroundColour);
+                g.strokePath(segPath, juce::PathStrokeType(3.0F));
+
+                if (i == octaveIndex) {
+                    g.setColour(freqForegroundColour);
+                    g.strokePath(segPath, juce::PathStrokeType(3.0F));
+                }
+            }
+
+            const int kNoteSegments = 12;
+            const float outerRadius = ringRadius + 4.0F;
+            const float noteGap = 1.0F;
+
+            float noteCenterAngle = angleTop;
+
+            for (int i = 0; i < kNoteSegments; ++i) {
+                const float segStartT = 1.0F -
+                    (static_cast<float>(i + 1) /
+                     static_cast<float>(kNoteSegments));
+                const float segEndT = 1.0F -
+                    (static_cast<float>(i) /
+                     static_cast<float>(kNoteSegments));
+
+                const float segAngle0 = juce::jmap(
+                    segStartT, 0.0F, 1.0F, angleTop, angleBottom);
+                const float segAngle1 = juce::jmap(
+                    segEndT, 0.0F, 1.0F, angleTop, angleBottom);
+
+                const float shrink = noteGap / outerRadius;
+                const float a0 = segAngle0 + shrink;
+                const float a1 = segAngle1 - shrink;
+                if (a1 <= a0) {
+                    continue;
+                }
+
+                const float centerAngle = 0.5F * (a0 + a1);
+                if (i == noteIndex) {
+                    noteCenterAngle = centerAngle;
+                }
+
+                juce::Path segPath;
+                const int segSteps = 16;
+                for (int s = 0; s <= segSteps; ++s) {
+                    const float tt = static_cast<float>(s) /
+                                     static_cast<float>(segSteps);
+                    const float a = juce::jmap(tt, 0.0F, 1.0F,
+                                               a0, a1);
+                    const float x = cx - outerRadius * std::cos(a);
+                    const float y = cy + outerRadius * std::sin(a);
+                    if (s == 0) {
+                        segPath.startNewSubPath(x, y);
+                    } else {
+                        segPath.lineTo(x, y);
+                    }
+                }
+
+                g.setColour(freqBackgroundColour);
+                g.strokePath(segPath, juce::PathStrokeType(4.0F));
+
+                if (i == noteIndex) {
+                    g.setColour(freqForegroundColour);
+                    g.strokePath(segPath, juce::PathStrokeType(4.0F));
+                }
+            }
+
+            const float triAngle = noteCenterAngle;
+
+            const float tipX = cx - outerRadius * std::cos(triAngle);
+            const float tipY = cy + outerRadius * std::sin(triAngle);
+
+            const float ux = (tipX - cx) / outerRadius;
+            const float uy = (tipY - cy) / outerRadius;
+
+            const float triHeight = 7.0F;
+            const float halfWidth = 4.5F;
+
+            const juce::Point<float> tip(tipX, tipY);
+            const juce::Point<float> baseCenter(
+                tip.x + ux * triHeight,
+                tip.y + uy * triHeight);
+
+            const float tx = -uy;
+            const float ty = ux;
+
+            const juce::Point<float> base1(
+                baseCenter.x + tx * halfWidth,
+                baseCenter.y + ty * halfWidth);
+            const juce::Point<float> base2(
+                baseCenter.x - tx * halfWidth,
+                baseCenter.y - ty * halfWidth);
+
+            juce::Path tri;
+            tri.startNewSubPath(tip);
+            tri.lineTo(base1);
+            tri.lineTo(base2);
+            tri.closeSubPath();
+
+            g.setColour(freqForegroundColour);
+            g.fillPath(tri);
+        } else if (moduleForObject != nullptr &&
+                   moduleForObject->is<rectai::LoopModule>()) {
+            const int segmentsCount = 4;
+            const float gap = 1.0F;
+
+            float sampleParam = juce::jlimit(0.0F, 1.0F, freqValue);
+            int activeIndex = static_cast<int>(sampleParam * 4.0F);
+            if (activeIndex < 0) {
+                activeIndex = 0;
+            } else if (activeIndex > 3) {
+                activeIndex = 3;
+            }
+
+            const float dyTop = sliderTop - cy;
+            const float dyBottom = sliderBottom - cy;
+            const float sinTop = juce::jlimit(-1.0F, 1.0F,
+                                              dyTop / ringRadius);
+            const float sinBottom = juce::jlimit(-1.0F, 1.0F,
+                                                 dyBottom / ringRadius);
+            const float angleTop = std::asin(sinTop);
+            const float angleBottom = std::asin(sinBottom);
+
+            for (int i = 0; i < segmentsCount; ++i) {
+                const float segStartT = 1.0F -
+                    (static_cast<float>(i + 1) /
+                     static_cast<float>(segmentsCount));
+                const float segEndT = 1.0F -
+                    (static_cast<float>(i) /
+                     static_cast<float>(segmentsCount));
+
+                const float segAngle0 = juce::jmap(
+                    segStartT, 0.0F, 1.0F, angleTop, angleBottom);
+                const float segAngle1 = juce::jmap(
+                    segEndT, 0.0F, 1.0F, angleTop, angleBottom);
+
+                const float shrink = gap / ringRadius;
+                const float a0 = segAngle0 + shrink;
+                const float a1 = segAngle1 - shrink;
+                if (a1 <= a0) {
+                    continue;
+                }
+
+                juce::Path segPath;
+                const int segSteps = 16;
+                for (int s = 0; s <= segSteps; ++s) {
+                    const float tt = static_cast<float>(s) /
+                                     static_cast<float>(segSteps);
+                    const float a = juce::jmap(tt, 0.0F, 1.0F,
+                                               a0, a1);
+                    const float x = cx - ringRadius * std::cos(a);
+                    const float y = cy + ringRadius * std::sin(a);
+                    if (s == 0) {
+                        segPath.startNewSubPath(x, y);
+                    } else {
+                        segPath.lineTo(x, y);
+                    }
+                }
+
+                g.setColour(freqBackgroundColour);
+                g.strokePath(segPath, juce::PathStrokeType(5.0F));
+
+                if (i == activeIndex) {
+                    g.setColour(freqForegroundColour);
+                    g.strokePath(segPath, juce::PathStrokeType(5.0F));
+                }
+            }
+
+            const float triAngle = juce::jmap(
+                sampleParam, 0.0F, 1.0F, angleBottom, angleTop);
+
+            const float barX = cx - ringRadius * std::cos(triAngle);
+            const float triY = cy + ringRadius * std::sin(triAngle);
+
+            const float dyTri = triY - cy;
+            const float insideTri =
+                ringRadius * ringRadius - dyTri * dyTri;
+            if (insideTri > 0.0F) {
+                const float ux = (barX - cx) / ringRadius;
+                const float uy = (triY - cy) / ringRadius;
+
+                const float triHeight = 7.0F;
+                const float halfWidth = 4.5F;
+
+                const juce::Point<float> tip(barX, triY);
+                const juce::Point<float> baseCenter(
+                    tip.x + ux * triHeight,
+                    tip.y + uy * triHeight);
+
+                const float tx = -uy;
+                const float ty = ux;
+
+                const juce::Point<float> base1(
+                    baseCenter.x + tx * halfWidth,
+                    baseCenter.y + ty * halfWidth);
+                const juce::Point<float> base2(
+                    baseCenter.x - tx * halfWidth,
+                    baseCenter.y - ty * halfWidth);
+
+                juce::Path tri;
+                tri.startNewSubPath(tip);
+                tri.lineTo(base1);
+                tri.lineTo(base2);
+                tri.closeSubPath();
+
+                g.setColour(freqForegroundColour);
+                g.fillPath(tri);
+            }
+        } else {
+            juce::Path freqArc;
+            const int arcSegments = 40;
+            for (int i = 0; i <= arcSegments; ++i) {
+                const float t = static_cast<float>(i) /
+                                static_cast<float>(arcSegments);
+                const float y = juce::jmap(t, 0.0F, 1.0F,
+                                           sliderTop, sliderBottom);
+                const float dy = y - cy;
+                const float inside =
+                    ringRadius * ringRadius - dy * dy;
+                if (inside < 0.0F) {
+                    continue;
+                }
+                const float dx = std::sqrt(inside);
+                const float x = cx - dx;
+                if (i == 0) {
+                    freqArc.startNewSubPath(x, y);
+                } else {
+                    freqArc.lineTo(x, y);
+                }
+            }
+
+            const bool freqIsFull = (freqValue >= 0.999F);
+            const bool freqIsEmpty = (freqValue <= 0.001F);
+
+            if (freqIsEmpty) {
+                g.setColour(freqBackgroundColour);
+                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+            } else {
+                const float handleY = juce::jmap(freqValue, 0.0F, 1.0F,
+                                                 sliderBottom,
+                                                 sliderTop);
+
+                juce::Colour effectiveFreqBackground =
+                    freqBackgroundColour;
+                juce::Colour effectiveFreqForeground =
+                    freqForegroundColour;
+
+                if (freqIsFull) {
+                    effectiveFreqBackground = freqForegroundColour;
+                }
+
+                g.setColour(effectiveFreqBackground);
+                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+
+                const float handleT = juce::jmap(handleY,
+                                                 sliderTop,
+                                                 sliderBottom,
+                                                 0.0F,
+                                                 1.0F);
+
+                juce::Path filledArc;
+                const int segments = 64;
+                bool started = false;
+                for (int i = 0; i <= segments; ++i) {
+                    const float t = static_cast<float>(i) /
+                                    static_cast<float>(segments);
+                    if (t < handleT) {
+                        continue;
+                    }
+
+                    const float y = juce::jmap(t, 0.0F, 1.0F,
+                                               sliderTop,
+                                               sliderBottom);
+                    const float dy = y - cy;
+                    const float inside =
+                        ringRadius * ringRadius - dy * dy;
+                    if (inside < 0.0F) {
+                        continue;
+                    }
+                    const float dx = std::sqrt(inside);
+                    const float x = cx - dx;
+
+                    if (!started) {
+                        filledArc.startNewSubPath(x, y);
+                        started = true;
+                    } else {
+                        filledArc.lineTo(x, y);
+                    }
+                }
+
+                if (!filledArc.isEmpty()) {
+                    g.setColour(effectiveFreqForeground);
+                    g.strokePath(filledArc,
+                                 juce::PathStrokeType(5.0F));
+                }
+            }
+        }
+    }
+
+    if (showGainControl) {
+        juce::Path gainArc;
+        const int segments = 40;
+        for (int i = 0; i <= segments; ++i) {
+            const float t = static_cast<float>(i) /
+                            static_cast<float>(segments);
+            const float y = juce::jmap(t, 0.0F, 1.0F,
+                                       sliderTop, sliderBottom);
+            const float dy = y - cy;
+            const float inside = ringRadius * ringRadius - dy * dy;
+            if (inside < 0.0F) {
+                continue;
+            }
+            const float dx = std::sqrt(inside);
+            const float x = cx + dx;
+            if (i == 0) {
+                gainArc.startNewSubPath(x, y);
+            } else {
+                gainArc.lineTo(x, y);
+            }
+        }
+        g.setColour(juce::Colours::white.withAlpha(0.5F));
+        g.strokePath(gainArc, juce::PathStrokeType(1.0F));
+
+        const float handleY = juce::jmap(gainValue, 0.0F, 1.0F,
+                                         sliderBottom, sliderTop);
+        const float dy = handleY - cy;
+        const float inside = ringRadius * ringRadius - dy * dy;
+        float handleX = cx + ringRadius;
+        if (inside >= 0.0F) {
+            const float dx = std::sqrt(inside);
+            handleX = cx + dx;
+            g.setColour(juce::Colours::white);
+            g.fillEllipse(handleX - 4.0F, handleY - 4.0F, 8.0F, 8.0F);
+        }
+
+        if (sequencerControlsVolume_ && moduleForObject != nullptr &&
+            moduleForObject->is<rectai::OscillatorModule>()) {
+            float seqGain = 1.0F;
+            const auto it = oscillatorSequencerGain_.find(
+                moduleForObject->id());
+            if (it != oscillatorSequencerGain_.end()) {
+                seqGain = juce::jlimit(0.0F, 1.0F, it->second);
+            }
+
+            const float cappedSeq = std::min(gainValue, seqGain);
+            if (cappedSeq < gainValue - 0.001F) {
+                const float greyY = juce::jmap(cappedSeq, 0.0F, 1.0F,
+                                               sliderBottom,
+                                               sliderTop);
+                const float greyDy = greyY - cy;
+                const float greyInside =
+                    ringRadius * ringRadius - greyDy * greyDy;
+                if (greyInside >= 0.0F) {
+                    const float greyDx = std::sqrt(greyInside);
+                    const float greyX = cx + greyDx;
+                    g.setColour(
+                        juce::Colours::lightgrey.withAlpha(0.9F));
+                    g.fillEllipse(greyX - 4.0F, greyY - 4.0F,
+                                  8.0F, 8.0F);
+                }
+            }
+        }
+    }
+}
+
+void MainComponent::paintNodeModulePanel(
+    juce::Graphics& g,
+    const juce::Rectangle<float>& bounds,
+    const rectai::ObjectInstance& object,
+    const rectai::AudioModule* moduleForObject,
+    float cx,
+    float cy,
+    bool insideMusic)
+{
+    if (modulePanels_.empty() || !insideMusic) {
+        return;
+    }
+
+    const auto panelIt = modulePanels_.find(object.logical_id());
+    if (panelIt == modulePanels_.end() || !panelIt->second.visible) {
+        return;
+    }
+
+    const auto& panelState = panelIt->second;
+    const auto panelBounds = getModulePanelBounds(object, bounds);
+
+    constexpr float kPanelCornerRadius = 10.0F;
+    const juce::Colour panelBg =
+        juce::Colour::fromRGB(0x00, 0x10, 0x50);
+    const juce::Colour panelBorder =
+        juce::Colours::white.withAlpha(0.20F);
+
+    g.setColour(panelBg.withAlpha(0.96F));
+    g.fillRoundedRectangle(panelBounds, kPanelCornerRadius);
+
+    g.setColour(panelBorder);
+    g.drawRoundedRectangle(panelBounds, kPanelCornerRadius, 2.0F);
+
+    {
+        const float triWidth = 12.0F;
+        const float triHalfHeight = 7.0F;
+        const float leftX = panelBounds.getX();
+        const float centreY = cy;
+
+        juce::Path tri;
+        tri.startNewSubPath(leftX, centreY - triHalfHeight);
+        tri.lineTo(leftX, centreY + triHalfHeight);
+        tri.lineTo(leftX - triWidth, centreY);
+        tri.closeSubPath();
+
+        g.setColour(panelBorder);
+        g.fillPath(tri);
+    }
+
+    constexpr float kTabStripHeight = 26.0F;
+    juce::Rectangle<float> tabStrip(
+        panelBounds.getX(), panelBounds.getBottom(),
+        panelBounds.getWidth(), kTabStripHeight);
+
+    const rectai::AudioModule::SettingsTabs* settingsTabsPtr = nullptr;
+    if (moduleForObject != nullptr) {
+        settingsTabsPtr = &moduleForObject->supported_settings_tabs();
+    }
+
+    const int settingsTabCount =
+        (settingsTabsPtr != nullptr)
+            ? static_cast<int>(settingsTabsPtr->size())
+            : 0;
+    const int tabCount = settingsTabCount + 1;
+
+    juce::ignoreUnused(tabCount);
+
+    const float tabSide = tabStrip.getHeight();
+    const float tabSpacing = 0.0F;
+
+    auto drawTab = [&](int index, const juce::String& iconId,
+                       bool isActive) {
+        const float x = tabStrip.getX() +
+                        (tabSide + tabSpacing) *
+                            static_cast<float>(index);
+        juce::Rectangle<float> tabBounds(
+            x, tabStrip.getY(), tabSide,
+            tabStrip.getHeight());
+
+        const auto baseColour =
+            isActive ? juce::Colours::white.withAlpha(0.14F)
+                     : juce::Colours::white.withAlpha(0.04F);
+        g.setColour(baseColour);
+        g.fillRect(tabBounds);
+
+        const int destSize = static_cast<int>(
+            std::floor(tabBounds.getHeight()));
+        if (destSize > 0 && atlasLoaded_) {
+            auto iconImage = getCachedAtlasIcon(
+                iconId.toStdString(), destSize, destSize);
+            if (iconImage.isValid()) {
+                const int destX = juce::roundToInt(tabBounds.getX());
+                const int destY = juce::roundToInt(tabBounds.getY());
+                g.setColour(juce::Colours::white.withAlpha(
+                    isActive ? 0.95F : 0.85F));
+                g.drawImageAt(iconImage, destX, destY);
+            }
+        }
+    };
+
+    auto mapSettingsKindToPanelTab =
+        [](rectai::AudioModule::SettingsTabKind kind) {
+            using Kind = rectai::AudioModule::SettingsTabKind;
+            switch (kind) {
+            case Kind::kEnvelope:
+                return ModulePanelState::Tab::kEnvelope;
+            case Kind::kLoopFiles:
+                return ModulePanelState::Tab::kLoopFiles;
+            case Kind::kXYControl:
+                return ModulePanelState::Tab::kXYControl;
+            case Kind::kSettings:
+            default:
+                return ModulePanelState::Tab::kSettings;
+            }
+        };
+
+    for (int i = 0; i < settingsTabCount; ++i) {
+        const auto& desc =
+            (*settingsTabsPtr)[static_cast<std::size_t>(i)];
+        const ModulePanelState::Tab tabKind =
+            mapSettingsKindToPanelTab(desc.kind);
+        const bool isActive = (panelState.activeTab == tabKind);
+        drawTab(i, juce::String(desc.icon_id), isActive);
+    }
+
+    drawTab(settingsTabCount, "close_button", false);
+
+    juce::Rectangle<float> contentBounds = panelBounds;
+    juce::Rectangle<float> textBounds = contentBounds;
+    textBounds.reduce(8.0F, 8.0F);
+
+    g.setColour(juce::Colours::white.withAlpha(0.45F));
+    g.setFont(juce::Font(12.0F));
+
+    if (panelState.activeTab == ModulePanelState::Tab::kEnvelope) {
+        const auto* envModule =
+            dynamic_cast<const rectai::AudioModuleWithEnvelope*>(
+                moduleForObject);
+
+        if (envModule != nullptr) {
+            auto getIcon = [this](const std::string& iconId,
+                                  int width, int height) {
+                return getCachedAtlasIcon(iconId, width, height);
+            };
+
+            paintModuleEnvelopeView(
+                g, contentBounds, *envModule, atlasLoaded_, getIcon,
+                kModuleEnvelopeMaxAttackMs,
+                kModuleEnvelopeMaxDecayMs,
+                kModuleEnvelopeMaxDurationMs,
+                kModuleEnvelopeMaxReleaseMs);
+        } else {
+            g.drawFittedText("Envelope not available",
+                              textBounds.toNearestInt(),
+                              juce::Justification::centred, 2);
+        }
+    } else if (panelState.activeTab ==
+               ModulePanelState::Tab::kLoopFiles) {
+        auto* loopModule = dynamic_cast<rectai::LoopModule*>(
+            const_cast<rectai::AudioModule*>(moduleForObject));
+        if (loopModule == nullptr) {
+            g.drawFittedText("Loop files not available",
+                              textBounds.toNearestInt(),
+                              juce::Justification::centred, 2);
+        } else {
+            ensureLoopFileBrowserInitialised(panelState.moduleId,
+                                             loopModule);
+            rebuildLoopFileBrowserEntries(panelState.moduleId,
+                                          loopModule);
+
+            auto* list = getOrCreateLoopFileList(panelState.moduleId);
+            if (list != nullptr) {
+                juce::Rectangle<float> listBounds =
+                    contentBounds.reduced(4.0F, 4.0F);
+
+                juce::Graphics::ScopedSaveState state(g);
+                list->setBounds(listBounds.toNearestInt());
+                g.reduceClipRegion(listBounds.toNearestInt());
+                g.addTransform(juce::AffineTransform::translation(
+                    listBounds.getX(), listBounds.getY()));
+                list->paint(g);
+            }
+        }
+    } else if (panelState.activeTab ==
+               ModulePanelState::Tab::kXYControl) {
+        juce::Rectangle<float> xyBounds = contentBounds;
+        xyBounds.reduce(6.0F, 6.0F);
+
+        auto* xy = getOrCreateXYControl(panelState.moduleId);
+        if (xy == nullptr) {
+            g.drawFittedText("XY control not available",
+                              textBounds.toNearestInt(),
+                              juce::Justification::centred, 2);
+        } else {
+            const auto* baseModule = moduleForObject;
+
+            xy->setVisualMinimums(0.0F, 0.0F);
+
+            const std::string moduleId = panelState.moduleId;
+
+            const auto mapping = baseModule->xy_control_mapping();
+            if (!mapping.has_value()) {
+                g.drawFittedText("XY control not available",
+                                  textBounds.toNearestInt(),
+                                  juce::Justification::centred, 2);
+            } else {
+                const auto& m = mapping.value();
+
+                const float xValue = baseModule->GetParameterOrDefault(
+                    m.x_parameter,
+                    baseModule->default_parameter_value(
+                        m.x_parameter));
+                const float yValue = baseModule->GetParameterOrDefault(
+                    m.y_parameter,
+                    baseModule->default_parameter_value(
+                        m.y_parameter));
+
+                xy->setNormalisedPosition(xValue, yValue, false);
+
+                xy->setOnValueChanged(
+                    [this, moduleId, m](float x01, float y01) {
+                        scene_.SetModuleParameter(moduleId, m.x_parameter,
+                                                  x01);
+                        scene_.SetModuleParameter(moduleId, m.y_parameter,
+                                                  y01);
+                        repaintWithRateLimit();
+                    });
+            }
+
+            if (xy != nullptr) {
+                juce::Graphics::ScopedSaveState state(g);
+                xy->setBounds(xyBounds.toNearestInt());
+                g.reduceClipRegion(xyBounds.toNearestInt());
+                g.addTransform(juce::AffineTransform::translation(
+                    xyBounds.getX(), xyBounds.getY()));
+                xy->paint(g);
+            }
+        }
+    } else {
+        const auto* tempoModule =
+            dynamic_cast<const rectai::TempoModule*>(moduleForObject);
+
+        if (tempoModule != nullptr) {
+            juce::Rectangle<float> listBounds =
+                contentBounds.reduced(4.0F, 4.0F);
+
+            auto* list =
+                getOrCreateTempoPresetList(panelState.moduleId);
+            if (list != nullptr) {
+                const auto& presets =
+                    rectai::TempoModule::bpm_presets();
+                std::vector<rectai::ui::TextScrollList::Item> items;
+                items.reserve(presets.size());
+
+                for (const auto& preset : presets) {
+                    rectai::ui::TextScrollList::Item item;
+                    item.text = preset.label;
+                    items.push_back(std::move(item));
+                }
+
+                list->setItems(std::move(items));
+
+                if (!presets.empty()) {
+                    const float currentBpm = bpm_;
+                    int bestIndex = 0;
+                    float bestDiff =
+                        std::numeric_limits<float>::max();
+
+                    for (std::size_t i = 0; i < presets.size(); ++i) {
+                        const float diff = std::fabs(
+                            currentBpm - presets[i].bpm);
+                        if (diff < bestDiff) {
+                            bestDiff = diff;
+                            bestIndex = static_cast<int>(i);
+                        }
+                    }
+
+                    if (list->getSelectedIndex() != bestIndex) {
+                        list->setSelectedIndex(bestIndex, false);
+                    }
+                }
+
+                juce::Graphics::ScopedSaveState state(g);
+                list->setBounds(listBounds.toNearestInt());
+                g.reduceClipRegion(listBounds.toNearestInt());
+                g.addTransform(juce::AffineTransform::translation(
+                    listBounds.getX(), listBounds.getY()));
+                list->paint(g);
+            }
+        } else {
+            g.drawFittedText("Module settings coming soon",
+                              textBounds.toNearestInt(),
+                              juce::Justification::centred, 2);
+        }
+    }
+}
+
+void MainComponent::paintNodeIconAndModeButton(
+    juce::Graphics& g,
+    const rectai::ObjectInstance& object,
+    const rectai::AudioModule* moduleForObject,
+    float cx,
+    float cy,
+    float nodeRadius,
+    juce::Colour bodyColour)
+{
+    std::string iconId;
+    if (moduleForObject != nullptr) {
+        iconId = moduleForObject->icon_id();
+    }
+
+    const float iconSize = nodeRadius * 1.4F;
+    const juce::Rectangle<float> iconBounds(cx - iconSize * 0.5F,
+                                            cy - iconSize * 0.5F,
+                                            iconSize, iconSize);
+
+    bool drewAtlasIcon = false;
+    if (atlasLoaded_ && !iconId.empty()) {
+        const auto spriteIt = atlasSprites_.find(iconId);
+        if (spriteIt != atlasSprites_.end() && atlasImage_.isValid()) {
+            const auto& src = spriteIt->second.bounds;
+
+            const float brightness = bodyColour.getBrightness();
+            const juce::Colour iconTint =
+                brightness > 0.6F
+                    ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
+                    : juce::Colours::white;
+            g.setColour(iconTint.withAlpha(0.9F));
+
+            const int destX = juce::roundToInt(iconBounds.getX());
+            const int destY = juce::roundToInt(iconBounds.getY());
+            const int destW = juce::roundToInt(iconBounds.getWidth());
+            const int destH = juce::roundToInt(iconBounds.getHeight());
+
+            const bool isTempoIcon =
+                (moduleForObject != nullptr &&
+                 moduleForObject->is<rectai::TempoModule>());
+            if (isTempoIcon) {
+                juce::Graphics::ScopedSaveState tempoIconState(g);
+                g.addTransform(juce::AffineTransform::rotation(
+                    -object.angle_radians(), cx, cy));
+                g.drawImage(atlasImage_, destX, destY, destW, destH,
+                            src.getX(), src.getY(), src.getWidth(),
+                            src.getHeight());
+            } else {
+                g.drawImage(atlasImage_, destX, destY, destW, destH,
+                            src.getX(), src.getY(), src.getWidth(),
+                            src.getHeight());
+            }
+            drewAtlasIcon = true;
+        }
+    }
+
+    if (!drewAtlasIcon) {
+        const float iconRadius = nodeRadius * 0.6F;
+        const float left = cx - iconRadius;
+        const float right = cx + iconRadius;
+        const float top = cy - iconRadius * 0.5F;
+        const float midY = cy;
+        const float bottom = cy + iconRadius * 0.5F;
+
+        const float proceduralBrightness = bodyColour.getBrightness();
+        const juce::Colour iconTint =
+            proceduralBrightness > 0.6F
+                ? juce::Colour::fromRGB(0x20, 0x20, 0x20)
+                : juce::Colours::white;
+        g.setColour(iconTint.withAlpha(0.9F));
+
+        const bool isOscillatorIcon =
+            (iconId == "oscillator" ||
+             iconId.rfind("oscillator_", 0) == 0);
+
+        if (isOscillatorIcon) {
+            juce::Path wave;
+            const int segments = 24;
+            for (int i = 0; i <= segments; ++i) {
+                const float t = static_cast<float>(i) /
+                                static_cast<float>(segments);
+                const float x = juce::jmap(t, 0.0F, 1.0F, left, right);
+                const float s =
+                    std::sin(t * juce::MathConstants<float>::twoPi);
+                const float y = midY - s * iconRadius * 0.4F;
+                if (i == 0) {
+                    wave.startNewSubPath(x, y);
+                } else {
+                    wave.lineTo(x, y);
+                }
+            }
+            g.strokePath(wave, juce::PathStrokeType(1.6F));
+        } else if (iconId == "filter") {
+            juce::Path curve;
+            curve.startNewSubPath(left, bottom);
+            curve.quadraticTo({cx, top}, {right, midY});
+            g.strokePath(curve, juce::PathStrokeType(1.6F));
+        } else if (iconId == "sampler") {
+            const float barWidth = (right - left) / 6.0F;
+            for (int i = 0; i < 6; ++i) {
+                const float x = left +
+                                (static_cast<float>(i) + 0.5F) *
+                                    barWidth;
+                const float hFactor = 0.3F +
+                                       0.1F * static_cast<float>(i);
+                const float yTop = midY - iconRadius * hFactor;
+                const float yBottom = midY + iconRadius * 0.3F;
+                g.drawLine(x, yTop, x, yBottom, 1.5F);
+            }
+        } else if (iconId == "effect") {
+            const float r = iconRadius * 0.6F;
+            g.drawEllipse(cx - r, cy - r, r * 2.0F, r * 2.0F, 1.5F);
+            for (int i = 0; i < 3; ++i) {
+                const float a = juce::MathConstants<float>::twoPi *
+                                static_cast<float>(i) / 3.0F;
+                const float ex = cx + r * std::cos(a);
+                const float ey = cy + r * std::sin(a);
+                g.fillEllipse(ex - 2.0F, ey - 2.0F, 4.0F, 4.0F);
+            }
+        } else if (iconId == "controller") {
+            const float innerR = iconRadius * 0.4F;
+            const float outerR = iconRadius * 0.8F;
+            g.drawEllipse(cx - innerR, cy - innerR, innerR * 2.0F,
+                          innerR * 2.0F, 1.2F);
+            g.drawEllipse(cx - outerR, cy - outerR, outerR * 2.0F,
+                          outerR * 2.0F, 1.2F);
+        } else {
+            juce::String fallbackLabel(object.logical_id());
+            if (moduleForObject != nullptr) {
+                const auto& moduleLabel = moduleForObject->label();
+                if (!moduleLabel.empty()) {
+                    fallbackLabel = moduleLabel + " (" +
+                                    object.logical_id() + ")";
+                }
+            }
+            const float fallbackBrightness = bodyColour.getBrightness();
+            const juce::Colour textTint =
+                fallbackBrightness > 0.6F ? juce::Colours::black
+                                          : juce::Colours::white;
+            g.setColour(textTint);
+            g.setFont(14.0F);
+            g.drawText(fallbackLabel,
+                       juce::Rectangle<float>(cx - nodeRadius,
+                                              cy - nodeRadius,
+                                              nodeRadius * 2.0F,
+                                              nodeRadius * 2.0F),
+                       juce::Justification::centred, false);
+        }
+    }
+
+    const bool hasModeMenu =
+        (moduleForObject != nullptr &&
+         !moduleForObject->supported_modes().empty());
+    if (hasModeMenu) {
+        const float buttonWidth = nodeRadius * 1.4F;
+        const float buttonHeight = 12.0F;
+        const float buttonCenterY = cy + nodeRadius + 8.0F;
+
+        juce::Rectangle<float> buttonBounds(
+            cx - buttonWidth * 0.5F,
+            buttonCenterY - buttonHeight * 0.5F,
+            buttonWidth, buttonHeight);
+
+        const bool isMenuVisible =
+            (modeSelection_.menuVisible &&
+             modeSelection_.moduleId == object.logical_id());
+
+        std::string modeIconId;
+        if (moduleForObject != nullptr) {
+            modeIconId = moduleForObject->icon_id();
+        }
+
+        if (!modeIconId.empty() && atlasLoaded_ && atlasImage_.isValid()) {
+            const int destW = juce::jmin(
+                static_cast<int>(buttonBounds.getWidth()) - 4, 18);
+            const int destH = destW;
+            const int destX = juce::roundToInt(
+                buttonBounds.getCentreX() -
+                static_cast<float>(destW) * 0.5F);
+            const int destY = juce::roundToInt(
+                buttonBounds.getCentreY() -
+                static_cast<float>(destH) * 0.5F);
+
+            auto iconImage = getCachedAtlasIcon(modeIconId, destW, destH);
+            if (iconImage.isValid()) {
+                float dragProgress =
+                    isMenuVisible ? 1.0F : modeDragProgress_;
+                dragProgress = juce::jlimit(0.0F, 1.0F, dragProgress);
+                const float iconAlpha = 0.95F - 0.35F * dragProgress;
+                g.setColour(juce::Colours::white.withAlpha(iconAlpha));
+                g.drawImageAt(iconImage, destX, destY);
+            }
+        }
+    }
+}
+
+void MainComponent::paintNodeModeOverlayAndIcons(
+    juce::Graphics& g,
+    const rectai::ObjectInstance& object,
+    const rectai::AudioModule* moduleForObject,
+    float cx,
+    float cy,
+    float ringRadius,
+    float sliderTop,
+    float sliderBottom,
+    float nodeRadius)
+{
+    const bool drawModeOverlay =
+        (modeSelection_.menuVisible &&
+         modeSelection_.moduleId == object.logical_id());
+
+    if (!drawModeOverlay || moduleForObject == nullptr) {
+        return;
+    }
+
+    const auto& modes = moduleForObject->supported_modes();
+    const int modeCount = static_cast<int>(modes.size());
+    if (modeCount <= 0) {
+        return;
+    }
+
+    const int maxSlots = 4;
+    const float extraLeft = 7.0F;
+    const int baseIconSize = 16;
+
+    const float dyTop = sliderTop - cy;
+    const float dyBottom = sliderBottom - cy;
+    const float sinTop =
+        juce::jlimit(-1.0F, 1.0F, dyTop / ringRadius);
+    const float sinBottom =
+        juce::jlimit(-1.0F, 1.0F, dyBottom / ringRadius);
+    float angleTop = std::asin(sinTop);
+    const float angleBottom = std::asin(sinBottom);
+
+    {
+        const float angleRange = angleTop - angleBottom;
+        const float compression = 0.85F;
+        angleTop = angleBottom + angleRange * compression;
+    }
+
+    const float buttonCenterY = cy + nodeRadius + 8.0F;
+    float radiusIcons = ringRadius + 6.0F;
+    if (std::abs(sinBottom) > 1.0e-3F) {
+        const float candidateRadius =
+            (buttonCenterY - cy) / sinBottom;
+        if (candidateRadius > 0.0F) {
+            radiusIcons = candidateRadius;
+        }
+    }
+
+    const int slotsToUse = std::min(modeCount, maxSlots);
+    juce::ignoreUnused(slotsToUse);
+
+    const int startSlot = 0;
+    const int currentIndex = moduleForObject->current_mode_index();
+
+    for (int i = 0; i < modeCount; ++i) {
+        const int slotIndex =
+            std::min(startSlot + i, maxSlots - 1);
+        const float t = static_cast<float>(slotIndex) /
+                        static_cast<float>(maxSlots - 1);
+        const float angle = juce::jmap(
+            t, 0.0F, 1.0F, angleBottom, angleTop);
+
+        const float cosA = std::cos(angle);
+        const float sinA = std::sin(angle);
+
+        const float iconCx = cx - radiusIcons * cosA - extraLeft;
+        const float iconCy = cy + radiusIcons * sinA;
+
+        const bool isActive = (i == currentIndex);
+        const float scale = isActive ? 1.25F : 1.0F;
+        const int iconSize = static_cast<int>(
+            static_cast<float>(baseIconSize) * scale);
+        const int destX = juce::roundToInt(
+            iconCx - static_cast<float>(iconSize) * 0.5F);
+        const int destY = juce::roundToInt(
+            iconCy - static_cast<float>(iconSize) * 0.5F);
+
+        if (!modes[static_cast<std::size_t>(i)].icon_id.empty() &&
+            atlasLoaded_ && atlasImage_.isValid()) {
+            auto iconImage = getCachedAtlasIcon(
+                modes[static_cast<std::size_t>(i)].icon_id,
+                iconSize,
+                iconSize);
+            if (iconImage.isValid()) {
+                const float alpha = isActive ? 1.0F : 0.8F;
+                g.setColour(
+                    juce::Colours::white.withAlpha(alpha));
+                g.drawImageAt(iconImage, destX, destY);
+            }
+        }
+    }
+}
+
+void MainComponent::paintNodeLabelsAndLoopTrail(
+    juce::Graphics& g,
+    const rectai::AudioModule* moduleForObject,
+    float cx,
+    float cy,
+    float nodeRadius,
+    float ringRadius,
+    juce::Colour bodyColour,
+    double nowSeconds)
+{
+    if (const auto* sampleModule =
+            dynamic_cast<const rectai::SampleplayModule*>(
+                moduleForObject)) {
+        const auto* activeInstrument =
+            sampleModule->active_instrument();
+        if (activeInstrument != nullptr &&
+            !activeInstrument->name.empty()) {
+            const juce::String instrumentName(activeInstrument->name);
+            const float labelMargin = 10.0F;
+            const float labelHeight = 18.0F;
+            const float labelWidth = 140.0F;
+            juce::Rectangle<float> labelBounds(
+                cx + nodeRadius + labelMargin,
+                cy - labelHeight * 0.5F,
+                labelWidth,
+                labelHeight);
+
+            double labelAlpha = 0.0;
+            const auto itTime =
+                sampleplayLabelLastChangeSeconds_.find(
+                    sampleModule->id());
+            if (itTime != sampleplayLabelLastChangeSeconds_.end()) {
+                const double elapsed = nowSeconds - itTime->second;
+                if (elapsed >= 0.0) {
+                    if (elapsed <= 3.0) {
+                        labelAlpha = 1.0;
+                    } else if (elapsed <= 3.5) {
+                        labelAlpha =
+                            1.0 - (elapsed - 3.0) / 0.5;
+                    }
+                }
+            } else {
+                labelAlpha = 1.0;
+                const double firstNow = nowSeconds;
+                sampleplayLabelLastChangeSeconds_.emplace(
+                    sampleModule->id(), firstNow);
+            }
+
+            if (labelAlpha > 0.0) {
+                const float brightness = bodyColour.getBrightness();
+                const juce::Colour textColour =
+                    brightness > 0.6F ? juce::Colours::white
+                                      : juce::Colours::white;
+                const float alpha =
+                    static_cast<float>(labelAlpha);
+                g.setColour(textColour.withAlpha(0.9F * alpha));
+                g.setFont(13.0F);
+                g.drawText(instrumentName, labelBounds,
+                           juce::Justification::centredLeft, false);
+            }
+        }
+    }
+
+    if (const auto* loopModule =
+            dynamic_cast<const rectai::LoopModule*>(moduleForObject)) {
+        const auto& loops = loopModule->loops();
+        if (!loops.empty()) {
+            float sampleParam = loopModule->GetParameterOrDefault(
+                "sample", 0.0F);
+            sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
+            int selectedIndex =
+                static_cast<int>(sampleParam * 4.0F);
+            if (selectedIndex < 0) {
+                selectedIndex = 0;
+            } else if (selectedIndex > 3) {
+                selectedIndex = 3;
+            }
+
+            const rectai::LoopDefinition* chosen = nullptr;
+            if (selectedIndex < static_cast<int>(loops.size())) {
+                chosen = &loops[static_cast<std::size_t>(
+                    selectedIndex)];
+            } else {
+                chosen = &loops.front();
+            }
+
+            if (chosen != nullptr && !chosen->filename.empty()) {
+                juce::String name(chosen->filename);
+                const int lastSlash = name.lastIndexOfAnyOf("/\\");
+                if (lastSlash >= 0 &&
+                    lastSlash < name.length() - 1) {
+                    name = name.substring(lastSlash + 1);
+                }
+
+                const float labelMargin = 10.0F;
+                const float labelHeight = 18.0F;
+                const float labelWidth = 160.0F;
+                juce::Rectangle<float> labelBounds(
+                    cx + nodeRadius + labelMargin,
+                    cy - labelHeight * 0.5F,
+                    labelWidth,
+                    labelHeight);
+
+                double labelAlpha = 0.0;
+                const auto itTime =
+                    loopLabelLastChangeSeconds_.find(
+                        loopModule->id());
+                if (itTime != loopLabelLastChangeSeconds_.end()) {
+                    const double elapsed =
+                        nowSeconds - itTime->second;
+                    if (elapsed >= 0.0) {
+                        if (elapsed <= 5.0) {
+                            labelAlpha = 1.0;
+                        } else if (elapsed <= 5.5) {
+                            labelAlpha =
+                                1.0 - (elapsed - 5.0) / 0.5;
+                        }
+                    }
+                } else {
+                    labelAlpha = 1.0;
+                    const double firstNow = nowSeconds;
+                    loopLabelLastChangeSeconds_.emplace(
+                        loopModule->id(), firstNow);
+                }
+
+                if (labelAlpha > 0.0) {
+                    const juce::Colour textColour =
+                        juce::Colours::white;
+                    const float alpha =
+                        static_cast<float>(labelAlpha);
+                    g.setColour(textColour.withAlpha(0.9F * alpha));
+                    g.setFont(13.0F);
+                    g.drawText(name, labelBounds,
+                               juce::Justification::centredLeft,
+                               false);
+                }
+            }
+        }
+
+        const auto& loopsForTrail = loopModule->loops();
+        if (!loopsForTrail.empty()) {
+            float sampleParam = loopModule->GetParameterOrDefault(
+                "sample", 0.0F);
+            sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
+
+            int selectedIndex =
+                static_cast<int>(sampleParam * 4.0F);
+            if (selectedIndex < 0) {
+                selectedIndex = 0;
+            } else if (selectedIndex > 3) {
+                selectedIndex = 3;
+            }
+
+            const rectai::LoopDefinition* chosenTrail = nullptr;
+            if (selectedIndex < static_cast<int>(loopsForTrail.size())) {
+                chosenTrail = &loopsForTrail[static_cast<std::size_t>(
+                    selectedIndex)];
+            } else {
+                chosenTrail = &loopsForTrail.front();
+            }
+
+            if (chosenTrail != nullptr && chosenTrail->beats > 0) {
+                const int beatsPerLoop = chosenTrail->beats;
+                const double totalBeats =
+                    transportBeats_ + beatPhase_;
+                const double beatsMod = std::fmod(
+                    totalBeats,
+                    static_cast<double>(beatsPerLoop));
+                const double positiveBeatsMod =
+                    (beatsMod < 0.0)
+                        ? (beatsMod +
+                           static_cast<double>(beatsPerLoop))
+                        : beatsMod;
+                const double phase01Double =
+                    (beatsPerLoop > 0)
+                        ? (positiveBeatsMod /
+                           static_cast<double>(beatsPerLoop))
+                        : 0.0;
+                const float phase01 = static_cast<float>(
+                    juce::jlimit(0.0, 1.0, phase01Double));
+
+                constexpr double kTrailFadeSeconds = 0.3;
+                constexpr int kMaxTrailSegments = 15;
+
+                auto& trail = loopPlayTrails_[loopModule->id()];
+                trail.push_back(
+                    LoopPlayTrailSample{phase01, nowSeconds});
+
+                const auto isExpired = [nowSeconds](
+                                                     const LoopPlayTrailSample& s) {
+                    return (nowSeconds - s.timestampSeconds) >
+                           kTrailFadeSeconds;
+                };
+
+                while (!trail.empty() && isExpired(trail.front())) {
+                    trail.erase(trail.begin());
+                }
+
+                if (static_cast<int>(trail.size()) >
+                    kMaxTrailSegments) {
+                    const auto extra = static_cast<int>(
+                        trail.size()) - kMaxTrailSegments;
+                    trail.erase(trail.begin(),
+                                trail.begin() + extra);
+                }
+
+                const float innerRadius = nodeRadius + 1.0F;
+                const float outerRadius = ringRadius - 4.0F;
+                const float barThickness = 2.0F;
+
+                auto drawBarAtPhase = [&](float phase,
+                                          const juce::Colour& colour,
+                                          float alphaScale) {
+                    const float angle =
+                        juce::MathConstants<float>::twoPi * phase -
+                        juce::MathConstants<float>::halfPi;
+                    const float cosA = std::cos(angle);
+                    const float sinA = std::sin(angle);
+
+                    const juce::Point<float> p1(
+                        cx + innerRadius * cosA,
+                        cy + innerRadius * sinA);
+                    const juce::Point<float> p2(
+                        cx + outerRadius * cosA,
+                        cy + outerRadius * sinA);
+
+                    g.setColour(colour.withAlpha(
+                        colour.getFloatAlpha() * alphaScale));
+                    g.drawLine(juce::Line<float>(p1, p2),
+                               barThickness);
+                };
+
+                for (const auto& sample : trail) {
+                    const double age =
+                        nowSeconds - sample.timestampSeconds;
+                    if (age < 0.0 || age > kTrailFadeSeconds) {
+                        continue;
+                    }
+
+                    const float t = static_cast<float>(
+                        age / kTrailFadeSeconds);
+                    const float alpha =
+                        juce::jlimit(0.0F, 1.0F, 1.0F - t);
+                    if (alpha <= 0.0F) {
+                        continue;
+                    }
+
+                    drawBarAtPhase(sample.phase01,
+                                   juce::Colours::white,
+                                   alpha * 0.8F);
+                }
+
+                drawBarAtPhase(phase01, juce::Colours::red, 1.0F);
+            }
+        }
+    }
 }
 
 void MainComponent::paintSequencerOverlays(
