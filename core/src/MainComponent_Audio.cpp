@@ -653,6 +653,14 @@ void MainComponent::timerCallback()
             float updatedMidi = clampedCurrent + deltaSemitones;
             updatedMidi = juce::jlimit(kMinMidi, kMaxMidi, updatedMidi);
 
+            // Skip updates when rotation would keep the pitch at the
+            // same MIDI note (for example when already at the
+            // minimum or maximum allowed note), to avoid
+            // retriggering identical notes.
+            if (std::abs(updatedMidi - clampedCurrent) <= 1.0e-4F) {
+                continue;
+            }
+
             scene_.SetModuleParameter(obj.logical_id(), "midifreq",
                                       updatedMidi);
 
@@ -703,6 +711,13 @@ void MainComponent::timerCallback()
                 "freq", module->default_parameter_value("freq"));
             const float newFreq = juce::jlimit(
                 0.0F, 1.0F, currentFreq + deltaFreq);
+
+            // Do not propagate changes or retrigger envelopes when
+            // rotation does not move the effective normalised
+            // frequency (e.g. clamped at 0 or 1).
+            if (std::abs(newFreq - currentFreq) <= 1.0e-4F) {
+                continue;
+            }
 
             scene_.SetModuleParameter(obj.logical_id(), "freq",
                                       newFreq);

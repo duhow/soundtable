@@ -90,13 +90,14 @@ private:
 
     void applyControlDropMuteIfNeeded(const juce::ModifierKeys& mods);
 
-    // When changing the frequency control of a module (for example,
-    // via the side Freq bar or by rotating the tangible), decide
-    // whether we should retrigger its audio envelope. For Oscillator
-    // modules whose envelope behaves as one-shot (no clear sustain
-    // plateau in points_x/points_y), a frequency change should
-    // restart the envelope so that new notes become audible even if
-    // the previous envelope had decayed to silence.
+    // When changing the pitch or frequency control of a module (for
+    // example, via the side Freq bar, the radial pitch UI or by
+    // rotating the tangible), decide whether we should retrigger its
+    // audio envelope. For Oscillator modules we treat any
+    // pitch/frequency change as a new note event and explicitly
+    // restart the per-voice envelope so that the updated ADSR
+    // settings are applied consistently, matching MIDI-style
+    // retrigger semantics.
     void maybeRetriggerOscillatorOnFreqChange(
         const std::string& moduleId,
         rectai::AudioModule* module);

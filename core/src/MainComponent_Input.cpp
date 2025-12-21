@@ -1173,11 +1173,22 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                     constexpr float kMinMidi = 24.0F;
                     constexpr float kMaxMidi = 108.0F;
 
+                    const float previousMidi =
+                        moduleForFreq->GetParameterOrDefault(
+                            "midifreq", 57.0F);
+
                     const float clamped = juce::jlimit(0.0F, 1.0F, value);
                     const float newMidi = juce::jmap(clamped,
                                                      0.0F, 1.0F,
                                                      kMinMidi,
                                                      kMaxMidi);
+
+                    // Do not retrigger or repaint if the effective
+                    // MIDI note did not change (for example when
+                    // dragging while already at the pitch limits).
+                    if (std::abs(newMidi - previousMidi) <= 1.0e-4F) {
+                        return;
+                    }
 
                     scene_.SetModuleParameter(object.logical_id(),
                                               "midifreq", newMidi);
@@ -1236,14 +1247,20 @@ void MainComponent::handlePointerDown(juce::Point<float> position,
                                               "sample", sampleValue);
                     markLoopSampleLabelActive(loopModule->id());
                 } else {
+                    float previousFreq = 0.0F;
+                    if (moduleForFreq != nullptr) {
+                        previousFreq = moduleForFreq->GetParameterOrDefault(
+                            "freq",
+                            moduleForFreq->default_parameter_value("freq"));
+                    }
+
+                    if (std::abs(value - previousFreq) <= 1.0e-4F) {
+                        return;
+                    }
+
                     scene_.SetModuleParameter(object.logical_id(), "freq",
                                               value);
 
-                    // If this is an Oscillator with a one-shot
-                    // style envelope (no sustain plateau), changing
-                    // frequency should retrigger its envelope so
-                    // that new notes are audible even when the
-                    // previous tail has already decayed to zero.
                     maybeRetriggerOscillatorOnFreqChange(
                         object.logical_id(), moduleForFreq);
                 }
@@ -2501,11 +2518,21 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                 constexpr float kMinMidi = 24.0F;
                 constexpr float kMaxMidi = 108.0F;
 
+                const float previousMidi =
+                    moduleForFreq->GetParameterOrDefault(
+                        "midifreq", 57.0F);
+
                 const float clamped = juce::jlimit(0.0F, 1.0F, value);
                 const float newMidi = juce::jmap(clamped,
                                                  0.0F, 1.0F,
                                                  kMinMidi,
                                                  kMaxMidi);
+
+                // Avoid retriggering the same note when dragging at
+                // the pitch extremes or within the same segment.
+                if (std::abs(newMidi - previousMidi) <= 1.0e-4F) {
+                    return;
+                }
 
                 scene_.SetModuleParameter(object.logical_id(),
                                           "midifreq", newMidi);
@@ -2540,6 +2567,17 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
                     }
                 }
             } else {
+                float previousFreq = 0.0F;
+                if (moduleForFreq != nullptr) {
+                    previousFreq = moduleForFreq->GetParameterOrDefault(
+                        "freq",
+                        moduleForFreq->default_parameter_value("freq"));
+                }
+
+                if (std::abs(value - previousFreq) <= 1.0e-4F) {
+                    return;
+                }
+
                 scene_.SetModuleParameter(object.logical_id(), "freq", value);
 
                 maybeRetriggerOscillatorOnFreqChange(
@@ -2703,65 +2741,10 @@ void MainComponent::handlePointerDrag(juce::Point<float> position,
 void MainComponent::maybeRetriggerOscillatorOnFreqChange(
     const std::string& moduleId, rectai::AudioModule* module)
 {
+    // Only Oscillator modules expose a per-voice amplitude envelope
+    // that we can explicitly retrigger on pitch/frequency changes.
     if (module == nullptr ||
         !module->is<rectai::OscillatorModule>()) {
-        return;
-    }
-
-    auto* oscModule =
-        dynamic_cast<rectai::OscillatorModule*>(module);
-    if (oscModule == nullptr) {
-        return;
-    }
-
-    const auto& env = oscModule->envelope();
-    const auto& xs = env.points_x;
-    const auto& ys = env.points_y;
-    const std::size_t n = ys.size();
-
-    bool hasSustainPlateau = false;
-    if (n > 0 && xs.size() == n) {
-        // Detect a clear sustain plateau using the same heuristic as
-        // in MainComponent_Audio: we look for the widest internal
-        // segment with y>0 and require a minimum width in X so that
-        // one-shot envelopes (like the default saw) are not treated
-        // as sustain.
-        constexpr float kMinPlateauWidth = 0.15F;
-
-        float bestWidth = 0.0F;
-        for (std::size_t i = 1; i + 1 < n;) {
-            const float y = ys[i];
-            if (y <= 0.0F) {
-                ++i;
-                continue;
-            }
-
-            std::size_t j = i + 1;
-            while (j + 1 < n &&
-                   std::abs(ys[j] - y) < 1.0e-3F) {
-                ++j;
-            }
-
-            const float width =
-                static_cast<float>(xs[j - 1] - xs[i]);
-            if (width > bestWidth) {
-                bestWidth = width;
-            }
-
-            i = j;
-        }
-
-        if (bestWidth >= kMinPlateauWidth) {
-            hasSustainPlateau = true;
-        }
-    }
-
-    // For sustain-style envelopes we do not need to retrigger on
-    // frequency changes: the oscillator remains audible while the
-    // tangible is active. For one-shot envelopes, restarting the
-    // envelope on freq change ensures new notes are heard after the
-    // previous tail has faded out.
-    if (hasSustainPlateau) {
         return;
     }
 
@@ -2775,6 +2758,11 @@ void MainComponent::maybeRetriggerOscillatorOnFreqChange(
         return;
     }
 
+    // Treat any pitch/frequency change as a new note event for the
+    // assigned Oscillator voice so that the envelope restarts and
+    // the updated settings (attack/decay/sustain/release) are
+    // applied consistently, matching MIDI-style retrigger
+    // semantics.
     audioEngine_.triggerVoiceEnvelope(voiceIndex);
 }
 
