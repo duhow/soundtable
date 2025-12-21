@@ -97,6 +97,28 @@ bool TrackerEngine::initialise(const int /*cameraIndex*/,
     return initialised_;
 }
 
+void TrackerEngine::setOnlySingleFilterByIndex(const bool enabled, const int filterIdx) noexcept
+{
+    onlySingleFilter_ = enabled;
+
+    switch (filterIdx) {
+    case 0:
+        activeFilter_ = ThresholdFilter::OtsuBinary;
+        break;
+    case 1:
+        activeFilter_ = ThresholdFilter::OtsuBinaryInv;
+        break;
+    case 2:
+        activeFilter_ = ThresholdFilter::AdaptiveBinary;
+        break;
+    case 3:
+        activeFilter_ = ThresholdFilter::AdaptiveBinaryInv;
+        break;
+    default:
+        break;
+    }
+}
+
 bool TrackerEngine::isInitialised() const noexcept
 {
     return initialised_;
@@ -191,6 +213,13 @@ TrackedObjectList TrackerEngine::processFrameInternal(const cv::Mat& frame, cv::
     };
 
     TrackedObjectList fiducials;
+
+    // In single-filter mode, bypass the adaptive multi-filter training
+    // and always use the current active filter (default: OtsuBinary).
+    if (onlySingleFilter_) {
+        fiducials = runFilter(activeFilter_);
+        return fiducials;
+    }
 
     // 1) Ventana de entrenamiento: evaluar todos los filtros
     // durante kTrainingWindowFrames para un fiducial principal.

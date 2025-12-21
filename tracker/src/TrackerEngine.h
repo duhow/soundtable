@@ -37,6 +37,16 @@ public:
     // used internally for fiducial detection (e.g. binarized frame).
     [[nodiscard]] TrackedObjectList processFrame(const cv::Mat& frame, cv::Mat& debugFrame);
 
+    // When enabled, always run a single threshold filter instead of
+    // evaluating all available filters and performing adaptive
+    // per-fiducial training.
+    void setOnlySingleFilter(bool enabled) noexcept { onlySingleFilter_ = enabled; }
+
+    // Convenience helper used by the command-line front-end to select
+    // a specific threshold filter by index (0..3) and enable single
+    // filter mode in one call.
+    void setOnlySingleFilterByIndex(bool enabled, int filterIndex) noexcept;
+
 private:
     enum class ThresholdFilter : std::uint8_t {
         OtsuBinary = 0,
@@ -56,6 +66,10 @@ private:
     Segmenter segmenter_{};
     TreeIdMap treeIdMap_{};
     FidtrackerX fidtrackerX_{};
+
+    // If true, bypass the adaptive multi-filter selection logic and
+    // always run a single threshold filter per frame.
+    bool onlySingleFilter_{false};
 
     // State for per-fiducial filter evaluation:
     // - when a fiducial is first seen, we start a 30-frame window

@@ -42,6 +42,17 @@ enum class PixelFormat {
 	Yuyv
 };
 
+bool hasDisableAutofocusFlag(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		if (arg == "--no-autofocus") {
+			return true;
+		}
+	}
+	return false;
+}
+
 std::optional<int> parseCameraIndexArg(int argc, char** argv)
 {
 	for (int i = 1; i < argc; ++i) {
@@ -110,6 +121,50 @@ bool hasOscFlag(int argc, char** argv)
 	for (int i = 1; i < argc; ++i) {
 		const std::string arg{argv[i]};
 		if (arg == "--osc") {
+			return true;
+		}
+	}
+	return false;
+}
+
+std::optional<int> parseSingleFilterArg(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		constexpr std::string_view prefix{"--filter="};
+		if (arg.rfind(prefix.data(), 0) == 0) {
+			std::string value = arg.substr(prefix.size());
+			for (char& ch : value) {
+				ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+			}
+
+			if (value == "otsu" || value == "otsu-binary" || value == "otsu_binary") {
+				return 0;
+			}
+			if (value == "otsu-inv" || value == "otsu_inverse" || value == "otsu-binary-inv") {
+				return 1;
+			}
+			if (value == "adaptive" || value == "adaptive-binary" || value == "adaptive_binary") {
+				return 2;
+			}
+			if (value == "adaptive-inv" || value == "adaptive_inverse" || value == "adaptive-binary-inv") {
+				return 3;
+			}
+
+			std::cerr << "[rectai-tracker] Invalid --filter value '" << value
+			          << "'. Supported values: otsu, otsu-inv, adaptive, adaptive-inv." << std::endl;
+			return std::nullopt;
+		}
+	}
+
+	return std::nullopt;
+}
+
+bool hasOnlyFilterFlag(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg{argv[i]};
+		if (arg == "--only-filter") {
 			return true;
 		}
 	}
@@ -222,9 +277,12 @@ void printHelp()
 	          << "  --camera-format=mjpg|yuyv  Request camera pixel format (Linux V4L2 backends).\n"
 	          << "  --resolution=WxH         Request capture resolution, e.g. 1280x720.\n"
 	          << "  --fps=N                  Request capture framerate in FPS.\n"
+	          << "  --no-autofocus           Disable continuous camera autofocus when supported.\n"
 	          << "  --debug-view             Show debug thresholded view from TrackerEngine.\n"
 	          << "  --no-downscale           Disable internal downscaling in TrackerEngine.\n"
-	          << "  --osc                    Force legacy OSC output instead of TUIO 1.1.\n";
+	          << "  --osc                    Force legacy OSC output instead of TUIO 1.1.\n"
+	          << "  --only-filter            Always run a single threshold filter (no adaptive multi-filter training).\n"
+	          << "  --filter=otsu|otsu-inv|adaptive|adaptive-inv  Select threshold filter (implies --only-filter).\n";
 }
 
 // Maps physical tracker marker IDs to logical module IDs used by the
@@ -268,7 +326,10 @@ int main(int argc, char** argv)
 	const auto mode = parseMode(argc, argv);
 	const bool debugView = hasDebugViewFlag(argc, argv);
 	const bool noDownscale = hasNoDownscaleFlag(argc, argv);
+	const bool disableAutofocus = hasDisableAutofocusFlag(argc, argv);
 	const bool forceOsc = hasOscFlag(argc, argv);
+	const bool onlyFilter = hasOnlyFilterFlag(argc, argv);
+	const auto filterIndex = parseSingleFilterArg(argc, argv);
 	const auto requestedResolution = parseResolutionArg(argc, argv);
 	const auto requestedCameraFormat = parseCameraFormatArg(argc, argv);
 	const auto requestedFps = parseFpsArg(argc, argv);
@@ -305,6 +366,14 @@ int main(int argc, char** argv)
 
 		if (fourcc != 0) {
 			(void)capture.set(cv::CAP_PROP_FOURCC, fourcc);
+		}
+	}
+
+	if (disableAutofocus) {
+		if (!capture.set(cv::CAP_PROP_AUTOFOCUS, 0.0)) {
+			std::cerr << "[rectai-tracker] Warning: failed to disable autofocus on this camera/backend." << std::endl;
+		} else {
+			std::cout << "[rectai-tracker] Continuous autofocus disabled via --no-autofocus." << std::endl;
 		}
 	}
 
@@ -357,6 +426,13 @@ int main(int argc, char** argv)
 	}
 
 	rectai::tracker::TrackerEngine trackerEngine;
+	if (filterIndex.has_value()) {
+		trackerEngine.setOnlySingleFilterByIndex(true, *filterIndex);
+		std::cout << "[rectai-tracker] Using single-threshold mode via --filter" << std::endl;
+	} else if (onlyFilter) {
+		trackerEngine.setOnlySingleFilter(true);
+		std::cout << "[rectai-tracker] Using single-threshold mode via --only-filter" << std::endl;
+	}
 	rectai::tracker::TrackerState trackerState;
 	rectai::tracker::TrackedObjectList lastStableObjectsForDebug;
 	std::unordered_map<int, rectai::tracker::TrackedObject> lastStableById;
