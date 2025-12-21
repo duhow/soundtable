@@ -275,7 +275,15 @@ int main(int argc, char** argv)
 	const auto requestedCameraIndex = parseCameraIndexArg(argc, argv);
 	const int cameraIndex = requestedCameraIndex.value_or(0);
 
-	cv::VideoCapture capture(cameraIndex);
+	cv::VideoCapture capture;
+#if defined(__linux__)
+	capture.open(cameraIndex, cv::CAP_V4L2);
+	if (!capture.isOpened()) {
+		capture.open(cameraIndex);
+	}
+#else
+	capture.open(cameraIndex);
+#endif
 	if (!capture.isOpened()) {
 		std::cerr << "[rectai-tracker] Failed to open camera index " << cameraIndex << "." << std::endl;
 		return 1;
@@ -307,6 +315,21 @@ int main(int argc, char** argv)
 
 	if (requestedFps.has_value()) {
 		(void)capture.set(cv::CAP_PROP_FPS, static_cast<double>(*requestedFps));
+	}
+
+	// Force the backend to actually start the stream with the
+	// requested settings before initialising the tracker. With
+	// some backends (notably GStreamer) the pipeline may fail to
+	// start even though isOpened() returns true, leading to
+	// width/height=0 and confusing errors later.
+	{
+		cv::Mat probeFrame;
+		if (!capture.read(probeFrame) || probeFrame.empty()) {
+			std::cerr << "[rectai-tracker] Failed to start camera stream on index "
+			          << cameraIndex
+			          << " with the requested settings (format/resolution/fps)." << std::endl;
+			return 1;
+		}
 	}
 
 	std::cout << "[rectai-tracker] Camera opened. Press Ctrl+C to exit." << std::endl;
