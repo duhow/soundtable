@@ -277,6 +277,14 @@ public:
     // powers visual pulses.
     void setLoopBeatPhase(double beatPhase01);
 
+    // Optional stereo filter applied to the mixed LoopModule
+    // output. Parameters are derived from the Scene in the same
+    // spirit as the Sampleplay filter, using Loop → Filter
+    // connections. This keeps the DSP backend simple while still
+    // allowing filters to shape loop audio even though the Loop
+    // engine does not occupy individual generator voices.
+    void setLoopFilter(int mode, double cutoffHz, float q);
+
     // Loop transport: global beat counter used to align the playback
     // phase of LoopModule samples when switching between slots. This
     // counter is advanced once per tempo beat from the UI thread and
@@ -310,6 +318,13 @@ public:
     // returns 0.
     int getLoopSampleBeats(const std::string& moduleId,
                            int slotIndex) const;
+
+    // Internal helper shared by `setSampleplayFilter` and
+    // `setLoopFilter` to configure one of the generic stereo filter
+    // buses. Exposed here so it can be defined in the implementation
+    // file without duplicating the filter setup logic per bus.
+    void setBusFilter(int busIndex, int mode, double cutoffHz,
+                      float q);
 
 private:
     juce::AudioDeviceManager deviceManager_;
@@ -434,14 +449,27 @@ private:
     std::vector<float> sampleplayLeft_;
     std::vector<float> sampleplayRight_;
 
-    // Optional filter applied to the Sampleplay stereo path. This
-    // allows modules such as Filter to affect SoundFont audio even
-    // though it does not occupy a generator voice slot.
-    std::atomic<int> sampleplayFilterMode_{0};
-    std::atomic<double> sampleplayFilterCutoffHz_{0.0};
-    std::atomic<float> sampleplayFilterQ_{0.7071F};
-    juce::dsp::StateVariableTPTFilter<float> sampleplayFilterL_{};
-    juce::dsp::StateVariableTPTFilter<float> sampleplayFilterR_{};
+    // Generic stereo filter buses used to apply processing to
+    // sound-producing paths that do not map 1:1 to oscillator
+    // voices (for example, the global Sampleplay path and the mixed
+    // output of all LoopModule instances). Each bus holds a simple
+    // StateVariableTPTFilter pair (L/R) plus the current mode,
+    // cutoff and resonance. Higher-level routing code maps Filter
+    // modules onto these buses so that the AudioEngine does not
+    // need to know about specific module types.
+    static constexpr int kBusFilterSampleplay = 0;
+    static constexpr int kBusFilterLoop = 1;
+    static constexpr int kNumBusFilters = 2;
+
+    struct BusFilterState {
+        std::atomic<int> mode{0};
+        std::atomic<double> cutoffHz{0.0};
+        std::atomic<float> q{0.7071F};
+        juce::dsp::StateVariableTPTFilter<float> filterL{};
+        juce::dsp::StateVariableTPTFilter<float> filterR{};
+    };
+
+    BusFilterState busFilters_[kNumBusFilters]{};
 
     // Connection-level waveform taps. Each tap is configured from
     // the UI thread via a stable connection key and attached to a

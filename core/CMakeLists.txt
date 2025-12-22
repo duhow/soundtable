@@ -112,6 +112,7 @@ target_sources(${PROJECT_NAME}
         src/MainComponent_Paint.cpp
         src/MainComponent_Input.cpp
         src/MainComponent_Audio.cpp
+        src/MainComponent_AudioRouting.cpp
         src/MainComponent_Atlas.cpp
         src/MainComponent_LoopFileBrowser.cpp
         src/MainComponent_LoopFileBrowser.h

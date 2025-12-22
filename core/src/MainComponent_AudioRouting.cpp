@@ -1,9 +1,90 @@
 #include "MainComponent.h"
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "AudioEngine.h"
+#include "MainComponentHelpers.h"
 #include "core/AudioModules.h"
+
+using rectai::ui::isConnectionGeometricallyActive;
+using rectai::ui::makeConnectionKey;
+
+namespace {
+
+// Shared analysis of Reactable-style envelopes to derive a sustain
+// level and whether a clear sustain plateau exists. This is used
+// when initialising per-voice envelopes.
+struct EnvelopeAnalysis {
+    float sustainLevel{1.0F};
+    bool hasSustainPlateau{false};
+};
+
+[[nodiscard]] EnvelopeAnalysis analyseEnvelope(const rectai::Envelope& e)
+{
+    EnvelopeAnalysis result{};
+
+    const auto& xs = e.points_x;
+    const auto& ys = e.points_y;
+    const std::size_t n = ys.size();
+    if (n == 0 || xs.size() != n) {
+        result.sustainLevel = 1.0F;
+        result.hasSustainPlateau = false;
+        return result;
+    }
+
+    // Search for the widest internal “flat” segment with y>0 and a
+    // minimum width in X. That segment is interpreted as sustain.
+    constexpr float kMinPlateauWidth = 0.15F;
+
+    float bestLevel = 1.0F;
+    float bestWidth = 0.0F;
+
+    for (std::size_t i = 1; i + 1 < n;) {
+        const float y = ys[i];
+        if (y <= 0.0F) {
+            ++i;
+            continue;
+        }
+
+        std::size_t j = i + 1;
+        while (j + 1 < n && std::abs(ys[j] - y) < 1.0e-3F) {
+            ++j;
+        }
+
+        const float width = static_cast<float>(xs[j - 1] - xs[i]);
+        if (width > bestWidth) {
+            bestWidth = width;
+            bestLevel = y;
+        }
+
+        i = j;
+    }
+
+    if (bestWidth >= kMinPlateauWidth && bestLevel > 0.0F) {
+        result.sustainLevel = bestLevel;
+        result.hasSustainPlateau = true;
+        return result;
+    }
+
+    // Without a clear plateau, fall back to the maximum y>0 before
+    // the last point and mark the envelope as one-shot.
+    float maxY = 0.0F;
+    for (std::size_t i = 0; i + 1 < n; ++i) {
+        maxY = std::max(maxY, ys[i]);
+    }
+    if (maxY > 0.0F) {
+        result.sustainLevel = maxY;
+    } else {
+        result.sustainLevel = 1.0F;
+    }
+
+    result.hasSustainPlateau = false;
+    return result;
+}
+
+}  // namespace
 
 void MainComponent::updateAudioRoutingAndVoices(
     const std::unordered_map<std::int64_t, rectai::ObjectInstance>& objects,
@@ -271,16 +352,18 @@ void MainComponent::updateAudioRoutingAndVoices(
         }
     }
 
-    // Configure an optional filter on the global Sampleplay path
-    // when there is an active Sampleplay → Filter connection. Since
-    // all Sampleplay modules share a single FluidSynth instance, we
-    // approximate the desired routing by selecting the closest
-    // compatible Filter connected to any Sampleplay module and
-    // applying its parameters to a dedicated Sampleplay filter in
-    // the AudioEngine.
+    // Configure optional filters on the global Sampleplay and Loop
+    // paths when there are active Sampleplay   Filter or Loop  
+    // Filter connections. Since both Sampleplay and Loop engines do
+    // not occupy individual generator voices, we approximate the
+    // desired routing by selecting the closest compatible Filter
+    // connected to any source module of that kind and applying its
+    // parameters to a dedicated stereo filter bus in the
+    // AudioEngine.
     int sampleplayFilterMode = 0;
     double sampleplayFilterCutoffHz = 0.0;
     float sampleplayFilterQ = 0.7071F;
+    std::string sampleplayFilterModuleId;
     {
         const rectai::FilterModule* bestFilter = nullptr;
         float bestDistSq = std::numeric_limits<float>::max();
@@ -302,7 +385,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                 continue;
             }
 
-            // Scan audio edges for Sampleplay → Filter connections
+            // Scan audio edges for Sampleplay   Filter connections
             // that are active (inside area, respect cone for
             // dynamic links and not muted at connection level).
             for (const auto& edge : audioEdges) {
@@ -391,12 +474,161 @@ void MainComponent::updateAudioRoutingAndVoices(
 
             const auto mode = bestFilter->current_mode();
             sampleplayFilterMode = mode->id;
+            sampleplayFilterModuleId = bestFilter->id();
+        }
+    }
+
+    int loopFilterMode = 0;
+    double loopFilterCutoffHz = 0.0;
+    float loopFilterQ = 0.7071F;
+    std::string loopFilterModuleId;
+    {
+        const rectai::FilterModule* bestFilter = nullptr;
+        float bestDistSq = std::numeric_limits<float>::max();
+
+        for (const auto& [objId, obj] : objects) {
+            juce::ignoreUnused(objId);
+
+            const auto modIt = modules.find(obj.logical_id());
+            if (modIt == modules.end() || modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* srcModule = modIt->second.get();
+            auto* loopModule =
+                dynamic_cast<rectai::LoopModule*>(srcModule);
+            if (loopModule == nullptr) {
+                continue;
+            }
+
+            if (!isInsideMusicArea(obj)) {
+                continue;
+            }
+
+            // Scan audio edges for Loop   Filter connections that
+            // are active (inside area, respect cone for dynamic
+            // links and not muted at connection level).
+            for (const auto& edge : audioEdges) {
+                if (edge.from_module_id != loopModule->id() ||
+                    edge.to_module_id == "-1") {
+                    continue;
+                }
+
+                const auto destModIt = modules.find(edge.to_module_id);
+                if (destModIt == modules.end() ||
+                    destModIt->second == nullptr) {
+                    continue;
+                }
+
+                auto* candidateFilter =
+                    dynamic_cast<rectai::FilterModule*>(
+                        destModIt->second.get());
+                if (candidateFilter == nullptr) {
+                    continue;
+                }
+
+                const auto toObjIdIt =
+                    moduleToObjectId.find(edge.to_module_id);
+                if (toObjIdIt == moduleToObjectId.end()) {
+                    continue;
+                }
+
+                const auto objIt = objects.find(toObjIdIt->second);
+                if (objIt == objects.end()) {
+                    continue;
+                }
+
+                const auto& destObj = objIt->second;
+                if (!isInsideMusicArea(destObj)) {
+                    continue;
+                }
+
+                if (!edge.is_hardlink &&
+                    !isConnectionGeometricallyActive(obj, destObj)) {
+                    continue;
+                }
+
+                rectai::Connection tmpConn{
+                    edge.from_module_id,
+                    edge.from_port_name,
+                    edge.to_module_id,
+                    edge.to_port_name,
+                    edge.is_hardlink};
+                const std::string key = makeConnectionKey(tmpConn);
+                const bool connIsMuted =
+                    mutedConnections_.find(key) !=
+                    mutedConnections_.end();
+                if (connIsMuted) {
+                    continue;
+                }
+
+                const float dx = destObj.x() - obj.x();
+                const float dy = destObj.y() - obj.y();
+                const float distSq = dx * dx + dy * dy;
+
+                if (bestFilter == nullptr || distSq < bestDistSq) {
+                    bestFilter = candidateFilter;
+                    bestDistSq = distSq;
+                }
+            }
+        }
+
+        if (bestFilter != nullptr) {
+            float filterFreqParam = bestFilter->GetParameterOrDefault(
+                "freq",
+                bestFilter->default_parameter_value("freq"));
+            filterFreqParam =
+                juce::jlimit(0.0F, 1.0F, filterFreqParam);
+            const double fb = bestFilter->base_frequency_hz();
+            const double fr = bestFilter->frequency_range_hz();
+            loopFilterCutoffHz =
+                fb + fr * static_cast<double>(filterFreqParam);
+
+            const float qParam = bestFilter->GetParameterOrDefault(
+                "q",
+                bestFilter->default_parameter_value("q"));
+            const float minQ = 0.5F;
+            const float maxQ = 10.0F;
+            loopFilterQ = minQ + (maxQ - minQ) * qParam;
+
+            const auto mode = bestFilter->current_mode();
+            loopFilterMode = mode->id;
+            loopFilterModuleId = bestFilter->id();
         }
     }
 
     audioEngine_.setSampleplayFilter(sampleplayFilterMode,
                                      sampleplayFilterCutoffHz,
                                      sampleplayFilterQ);
+    audioEngine_.setLoopFilter(loopFilterMode,
+                               loopFilterCutoffHz,
+                               loopFilterQ);
+
+    // Emit a compact log line with the effective bus filter
+    // configuration so that routing issues can be diagnosed from
+    // the console even in Release builds while this path is
+    // stabilised.
+    {
+        juce::String msg("[rectai-core][filter-routing] spModule=");
+        if (!sampleplayFilterModuleId.empty()) {
+            msg << sampleplayFilterModuleId.c_str();
+        } else {
+            msg << "none";
+        }
+        msg << " spMode=" << sampleplayFilterMode
+            << " spCutHz=" << sampleplayFilterCutoffHz
+            << " spQ=" << sampleplayFilterQ
+            << " loopModule=";
+        if (!loopFilterModuleId.empty()) {
+            msg << loopFilterModuleId.c_str();
+        } else {
+            msg << "none";
+        }
+        msg << " loopMode=" << loopFilterMode
+            << " loopCutHz=" << loopFilterCutoffHz
+            << " loopQ=" << loopFilterQ;
+        juce::Logger::writeToLog(msg);
+    }
 
     struct VoiceParams {
         double frequency{0.0};

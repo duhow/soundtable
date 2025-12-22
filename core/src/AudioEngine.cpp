@@ -91,16 +91,19 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
                                          0x01010101u;
     }
 
-    // Prepare Sampleplay filters (stereo, implemented as two
-    // independent mono filters sharing parameters).
-    sampleplayFilterL_.reset();
-    sampleplayFilterR_.reset();
-    sampleplayFilterL_.prepare(spec);
-    sampleplayFilterR_.prepare(spec);
-    sampleplayFilterMode_.store(0, std::memory_order_relaxed);
-    sampleplayFilterCutoffHz_.store(0.0,
-                                    std::memory_order_relaxed);
-    sampleplayFilterQ_.store(0.7071F, std::memory_order_relaxed);
+    // Prepare generic stereo filter buses (Sampleplay, Loop, and
+    // any future sound-producing paths that are modelled as
+    // buses rather than individual voices).
+    for (int i = 0; i < kNumBusFilters; ++i) {
+        auto& bus = busFilters_[i];
+        bus.filterL.reset();
+        bus.filterR.reset();
+        bus.filterL.prepare(spec);
+        bus.filterR.prepare(spec);
+        bus.mode.store(0, std::memory_order_relaxed);
+        bus.cutoffHz.store(0.0, std::memory_order_relaxed);
+        bus.q.store(0.7071F, std::memory_order_relaxed);
+    }
 
     // Resize Sampleplay scratch buffers to fit the maximum expected
     // block size and inform the internal synth about the current
@@ -123,8 +126,10 @@ void AudioEngine::audioDeviceStopped()
         filters_[v].reset();
     }
 
-    sampleplayFilterL_.reset();
-    sampleplayFilterR_.reset();
+    for (int i = 0; i < kNumBusFilters; ++i) {
+        busFilters_[i].filterL.reset();
+        busFilters_[i].filterR.reset();
+    }
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext(
@@ -281,8 +286,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         // Sampleplay → X can display the original SoundFont
         // waveform while radials aguas abajo reflejan la señal ya
         // procesada.
-        const int spFilterMode =
-            sampleplayFilterMode_.load(std::memory_order_relaxed);
+        auto& spBus =
+            busFilters_[kBusFilterSampleplay];
+        const double spCutoff =
+            spBus.cutoffHz.load(std::memory_order_relaxed);
         const std::size_t spIdx =
             static_cast<std::size_t>(sample);
         const float rawSampleplayL =
@@ -292,11 +299,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
         float filteredSampleplayL = rawSampleplayL;
         float filteredSampleplayR = rawSampleplayR;
-        if (spFilterMode != 0) {
+        if (spCutoff > 0.0) {
             filteredSampleplayL =
-                sampleplayFilterL_.processSample(0, rawSampleplayL);
+                spBus.filterL.processSample(0, rawSampleplayL);
             filteredSampleplayR =
-                sampleplayFilterR_.processSample(0, rawSampleplayR);
+                spBus.filterR.processSample(0, rawSampleplayR);
         }
 
         sampleplayLeft_[spIdx] = filteredSampleplayL;
@@ -757,6 +764,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
             float leftOut = filteredSampleplayL + oscMixed;
             float rightOut = filteredSampleplayR + oscMixed;
+            float loopMixedL = 0.0F;
+            float loopMixedR = 0.0F;
 
             // Mix Loop modules: sum the currently selected slot for
             // each instance. Playback phase for all slots advances
@@ -1026,8 +1035,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const float monoDry = l;
                         const float monoWithGain = monoDry * finalGain;
                         if (finalGain > 0.0F) {
-                            leftOut += monoWithGain;
-                            rightOut += r * finalGain;
+                            loopMixedL += monoWithGain;
+                            loopMixedR += r * finalGain;
                         }
 
                         const int wfIndex = instance.visualWaveformIndex;
@@ -1053,6 +1062,25 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     }
                 }
             }
+
+            // Optionally run the summed Loop output through the
+            // Loop bus filter so that Loop → Filter connections in
+            // the Scene can shape loop audio without affecting other
+            // paths.
+            auto& loopBus = busFilters_[kBusFilterLoop];
+            const double loopCutoff =
+                loopBus.cutoffHz.load(std::memory_order_relaxed);
+            float loopFilteredL = loopMixedL;
+            float loopFilteredR = loopMixedR;
+            if (loopCutoff > 0.0) {
+                loopFilteredL =
+                    loopBus.filterL.processSample(0, loopFilteredL);
+                loopFilteredR =
+                    loopBus.filterR.processSample(0, loopFilteredR);
+            }
+
+            leftOut += loopFilteredL;
+            rightOut += loopFilteredR;
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
             rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
@@ -1088,6 +1116,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 sampleplayLeft_[static_cast<std::size_t>(sample)];
             float rightOut =
                 sampleplayRight_[static_cast<std::size_t>(sample)];
+            float loopMixedL = 0.0F;
+            float loopMixedR = 0.0F;
             const float sampleplayMonoRaw = rawSampleplayL;
 
             // No oscillator voices are active: clear per-voice
@@ -1367,8 +1397,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const float monoDry = l;
                         const float monoWithGain = monoDry * finalGain;
                         if (finalGain > 0.0F) {
-                            leftOut += monoWithGain;
-                            rightOut += r * finalGain;
+                            loopMixedL += monoWithGain;
+                            loopMixedR += r * finalGain;
                         }
 
                         const int wfIndex = instance.visualWaveformIndex;
@@ -1394,6 +1424,25 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     }
                 }
             }
+
+            // Optionally process the summed Loop output through the
+            // Loop bus filter so that Loop → Filter connections
+            // affect loop audio even in scenes without active
+            // generators.
+            auto& loopBus = busFilters_[kBusFilterLoop];
+            const double loopCutoff =
+                loopBus.cutoffHz.load(std::memory_order_relaxed);
+            float loopFilteredL = loopMixedL;
+            float loopFilteredR = loopMixedR;
+            if (loopCutoff > 0.0) {
+                loopFilteredL =
+                    loopBus.filterL.processSample(0, loopFilteredL);
+                loopFilteredR =
+                    loopBus.filterR.processSample(0, loopFilteredR);
+            }
+
+            leftOut += loopFilteredL;
+            rightOut += loopFilteredR;
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
             rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
@@ -1868,7 +1917,31 @@ void AudioEngine::setSampleplayFilter(const int mode,
                                       const double cutoffHz,
                                       const float q)
 {
-    const int clampedMode = juce::jlimit(0, 3, mode);
+    setBusFilter(kBusFilterSampleplay, mode, cutoffHz, q);
+}
+
+void AudioEngine::setLoopFilter(const int mode,
+                                const double cutoffHz,
+                                const float q)
+{
+    setBusFilter(kBusFilterLoop, mode, cutoffHz, q);
+}
+
+void AudioEngine::setBusFilter(const int busIndex, const int mode,
+                               const double cutoffHz, const float q)
+{
+    if (busIndex < 0 || busIndex >= kNumBusFilters) {
+        return;
+    }
+
+    auto& bus = busFilters_[busIndex];
+
+    // FilterModule modes are defined as:
+    // 0 = low-pass, 1 = band-pass, 2 = high-pass. We mirror this
+    // mapping directly on the audio side so that UI mode ids can be
+    // passed through unchanged. Mode is not used as an explicit
+    // bypass flag here; instead, a cutoff <= 0 disables processing.
+    const int clampedMode = juce::jlimit(0, 2, mode);
 
     // Resonance must be strictly > 0 for the JUCE filter; clamp to
     // a musically useful range as with per-voice filters.
@@ -1884,42 +1957,40 @@ void AudioEngine::setSampleplayFilter(const int mode,
         fc = nyquist * 0.99;
     }
 
-    sampleplayFilterMode_.store(clampedMode,
-                                std::memory_order_relaxed);
-    sampleplayFilterCutoffHz_.store(fc,
-                                    std::memory_order_relaxed);
-    sampleplayFilterQ_.store(qClamped, std::memory_order_relaxed);
+    bus.mode.store(clampedMode, std::memory_order_relaxed);
+    bus.cutoffHz.store(fc, std::memory_order_relaxed);
+    bus.q.store(qClamped, std::memory_order_relaxed);
 
-    // If the filter is disabled or has an invalid cutoff, leave it
-    // effectively bypassed. We avoid resetting here to preserve
-    // continuity when parameters are toggled.
-    if (clampedMode == 0 || fc <= 0.0) {
+    // If the cutoff is invalid or zero, leave the filter effectively
+    // bypassed. We avoid resetting here to preserve continuity when
+    // parameters are toggled.
+    if (fc <= 0.0) {
         return;
     }
 
     using FilterType = juce::dsp::StateVariableTPTFilterType;
 
     switch (clampedMode) {
-        case 1:  // Low-pass
-            sampleplayFilterL_.setType(FilterType::lowpass);
-            sampleplayFilterR_.setType(FilterType::lowpass);
+        case 0:  // Low-pass
+            bus.filterL.setType(FilterType::lowpass);
+            bus.filterR.setType(FilterType::lowpass);
             break;
-        case 2:  // Band-pass
-            sampleplayFilterL_.setType(FilterType::bandpass);
-            sampleplayFilterR_.setType(FilterType::bandpass);
+        case 1:  // Band-pass
+            bus.filterL.setType(FilterType::bandpass);
+            bus.filterR.setType(FilterType::bandpass);
             break;
-        case 3:  // High-pass
-            sampleplayFilterL_.setType(FilterType::highpass);
-            sampleplayFilterR_.setType(FilterType::highpass);
+        case 2:  // High-pass
+            bus.filterL.setType(FilterType::highpass);
+            bus.filterR.setType(FilterType::highpass);
             break;
         default:
             return;
     }
 
-    sampleplayFilterL_.setCutoffFrequency(static_cast<float>(fc));
-    sampleplayFilterR_.setCutoffFrequency(static_cast<float>(fc));
-    sampleplayFilterL_.setResonance(qClamped);
-    sampleplayFilterR_.setResonance(qClamped);
+    bus.filterL.setCutoffFrequency(static_cast<float>(fc));
+    bus.filterR.setCutoffFrequency(static_cast<float>(fc));
+    bus.filterL.setResonance(qClamped);
+    bus.filterR.setResonance(qClamped);
 }
 
 void AudioEngine::setVoiceEnvelope(const int index,
@@ -2174,7 +2245,12 @@ void AudioEngine::setVoiceFilter(const int index, const int mode,
         return;
     }
 
-    const int clampedMode = juce::jlimit(0, 3, mode);
+    // FilterModule modes are defined as 0 = low-pass, 1 = band-pass,
+    // 2 = high-pass. Mirror this mapping directly for per-voice
+    // filters so that UI mode ids can be forwarded unchanged. As
+    // with bus filters, bypass is handled via cutoff <= 0 rather
+    // than a dedicated mode value.
+    const int clampedMode = juce::jlimit(0, 2, mode);
 
     // Resonance must be strictly > 0 for the JUCE filter; clamp
     // to a musically useful range to prevent extreme peaks and
@@ -2196,23 +2272,23 @@ void AudioEngine::setVoiceFilter(const int index, const int mode,
     voices_[index].filterCutoffHz.store(fc, std::memory_order_relaxed);
     voices_[index].filterQ.store(qClamped, std::memory_order_relaxed);
 
-    // If the filter is disabled or has an invalid cutoff, leave it
-    // effectively bypassed. We avoid resetting here to preserve
-    // continuity when parameters are toggled.
-    if (clampedMode == 0 || fc <= 0.0) {
+    // If the cutoff is invalid or zero, leave the filter effectively
+    // bypassed. We avoid resetting here to preserve continuity when
+    // parameters are toggled.
+    if (fc <= 0.0) {
         return;
     }
 
     switch (clampedMode) {
-        case 1: // Low-pass
+        case 0: // Low-pass
             filters_[index].setType(
                 juce::dsp::StateVariableTPTFilterType::lowpass);
             break;
-        case 2: // Band-pass
+        case 1: // Band-pass
             filters_[index].setType(
                 juce::dsp::StateVariableTPTFilterType::bandpass);
             break;
-        case 3: // High-pass
+        case 2: // High-pass
             filters_[index].setType(
                 juce::dsp::StateVariableTPTFilterType::highpass);
             break;
