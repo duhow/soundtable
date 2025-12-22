@@ -141,9 +141,8 @@ void MainComponent::toggleHardlinkBetweenObjects(
 
     // Keep the engine's internal logical audio graph in sync with
     // the current Scene so that audio-side structures (such as
-    // connection waveform taps or future DSP routing) can reason
-    // about modules and typed connections without re-parsing the
-    // Scene.
+    // future DSP routing and visual voice mapping) can reason about
+    // modules and typed connections without re-parsing the Scene.
     audioEngine_.rebuildAudioGraphFromScene(scene_);
 
     const auto itA = objects.find(objectIdA);
@@ -1775,57 +1774,6 @@ void MainComponent::timerCallback()
 
     updateAudioRoutingAndVoices(objects, modules, audioEdges,
                                 moduleToObjectId, globalVolumeGain);
-
-    // Configure per-connection waveform taps in the audio engine
-    // based on the current visual source mapping. Each audio
-    // connection is mapped to a low-level source (voice pre/post
-    // filter or Sampleplay) so that the engine can maintain an
-    // independent waveform history per connection.
-    audioEngine_.clearAllConnectionWaveformTaps();
-
-    // Use the engine-owned AudioGraph as the canonical list of audio
-    // edges that can have waveform taps. We still rely on the
-    // UI-side ConnectionVisualSource map to decide whether each edge
-    // should observe pre/post voice or Sampleplay, but the set of
-    // candidate edges comes from AudioGraph::audio_edges().
-    using VSKind = MainComponent::ConnectionVisualSource::Kind;
-
-    for (const auto& edge : audioEdges) {
-        rectai::Connection tmpConn{edge.from_module_id,
-                                   edge.from_port_name,
-                                   edge.to_module_id,
-                                   edge.to_port_name,
-                                   edge.is_hardlink};
-        const std::string key = makeConnectionKey(tmpConn);
-
-        const auto vsIt = connectionVisualSources_.find(key);
-        if (vsIt == connectionVisualSources_.end()) {
-            continue;
-        }
-
-        const auto& source = vsIt->second;
-
-        if (source.kind == VSKind::kSampleplay) {
-            audioEngine_.configureConnectionWaveformTap(
-                key,
-                AudioEngine::ConnectionTapSourceKind::kSampleplay,
-                -1);
-        } else if (source.kind == VSKind::kVoicePre ||
-                   source.kind == VSKind::kVoicePost) {
-            if (source.voiceIndex < 0 ||
-                source.voiceIndex >= AudioEngine::kMaxVoices) {
-                continue;
-            }
-
-            const auto tapKind =
-                (source.kind == VSKind::kVoicePre)
-                    ? AudioEngine::ConnectionTapSourceKind::kVoicePre
-                    : AudioEngine::ConnectionTapSourceKind::kVoicePost;
-
-            audioEngine_.configureConnectionWaveformTap(
-                key, tapKind, source.voiceIndex);
-        }
-    }
 
     // Inform the audio engine whether there is any module currently
     // carrying audible audio so that it can avoid running the full

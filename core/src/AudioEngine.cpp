@@ -30,17 +30,17 @@ AudioEngine::AudioEngine()
     }
 
     // Prepare SampleplaySynth instance; the actual SoundFont and
-    // sample rate will be configured later from MainComponent and
-    // audioDeviceAboutToStart respectively.
+    // preset will be configured later from the UI thread.
     sampleplaySynth_ = std::make_unique<rectai::SampleplaySynth>();
 
-    // Lazily construct the logical audio graph container so that the
-    // engine can keep track of modules and typed connections once a
-    // Scene is provided.
+    // Initialise the logical audio graph so that callers can safely
+    // query it even before the Scene has been rebuilt for the first
+    // time. The initial graph is simply empty.
     audioGraph_ = std::make_unique<rectai::AudioGraph>();
 
-    // Register basic audio formats once; used for Loop module sample
-    // decoding (WAV/FLAC/Ogg/Opus, depending on JUCE configuration).
+    // Register basic audio formats once; used for Loop module
+    // sample decoding (WAV/FLAC/Ogg/Opus, depending on JUCE
+    // configuration).
     loopFormatManager_.registerBasicFormats();
 }
 
@@ -51,97 +51,40 @@ AudioEngine::~AudioEngine()
 
 void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 {
-    sampleRate_ = (device != nullptr && device->getCurrentSampleRate() > 0.0)
-                      ? device->getCurrentSampleRate()
-                      : 44100.0;
+    const double sr =
+        (device != nullptr) ? device->getCurrentSampleRate() : 44100.0;
+    sampleRate_ = sr > 0.0 ? sr : 44100.0;
+
+    visualVoices_.setSampleRate(sampleRate_);
+    visualVoices_.reset();
+
+    // Reset transport state so that loop alignment and beat-synced
+    // visuals start from a known position when the device starts.
     transportBeatsInternal_ = 0.0;
     transportBeatsAudio_.store(0.0, std::memory_order_relaxed);
-    // Reset phases for all voices.
-    for (double& phase : phases_) {
-        phase = 0.0;
-    }
-
-    // Reset per-voice envelope runtime state so that any stale
-    // ADSR phases from a previous device configuration do not leak
-    // into the new session.
-    for (int v = 0; v < kMaxVoices; ++v) {
-        voiceEnvPhase_[v] = EnvelopePhase::kIdle;
-        voiceEnvValue_[v] = 0.0;
-        voiceEnvTimeInPhase_[v] = 0.0;
-        voicePrevTargetLevel_[v] = 0.0;
-        voiceEnvBaseLevel_[v] = 0.0;
-    }
-
-    const juce::uint32 maxBlockSize =
-        (device != nullptr && device->getCurrentBufferSizeSamples() > 0)
-            ? static_cast<juce::uint32>(
-                  device->getCurrentBufferSizeSamples())
-            : 512U;
-
-    juce::dsp::ProcessSpec spec{sampleRate_, maxBlockSize, 1U};
-
-    for (int v = 0; v < kMaxVoices; ++v) {
-        filters_[v].reset();
-        filters_[v].prepare(spec);
-        voices_[v].filterMode.store(0, std::memory_order_relaxed);
-        voices_[v].filterCutoffHz.store(0.0, std::memory_order_relaxed);
-        voices_[v].filterQ.store(0.7071F, std::memory_order_relaxed);
-        voices_[v].waveform.store(0, std::memory_order_relaxed);
-        noiseState_[v] = 0x1234567u + static_cast<std::uint32_t>(v) *
-                                         0x01010101u;
-    }
-
-    // Prepare generic stereo filter buses (Sampleplay, Loop, and
-    // any future sound-producing paths that are modelled as
-    // buses rather than individual voices).
-    for (int i = 0; i < kNumBusFilters; ++i) {
-        auto& bus = busFilters_[i];
-        bus.filterL.reset();
-        bus.filterR.reset();
-        bus.filterL.prepare(spec);
-        bus.filterR.prepare(spec);
-        bus.mode.store(0, std::memory_order_relaxed);
-        bus.cutoffHz.store(0.0, std::memory_order_relaxed);
-        bus.q.store(0.7071F, std::memory_order_relaxed);
-    }
-
-    // Resize Sampleplay scratch buffers to fit the maximum expected
-    // block size and inform the internal synth about the current
-    // sample rate.
-    sampleplayLeft_.assign(static_cast<std::size_t>(maxBlockSize), 0.0F);
-    sampleplayRight_.assign(static_cast<std::size_t>(maxBlockSize), 0.0F);
-
-    if (sampleplaySynth_ != nullptr) {
-        sampleplaySynth_->setSampleRate(sampleRate_);
-    }
+    hasPendingOutput_.store(false, std::memory_order_relaxed);
 }
 
 void AudioEngine::audioDeviceStopped()
 {
-    for (double& phase : phases_) {
-        phase = 0.0;
-    }
-
-    for (int v = 0; v < kMaxVoices; ++v) {
-        filters_[v].reset();
-    }
-
-    for (int i = 0; i < kNumBusFilters; ++i) {
-        busFilters_[i].filterL.reset();
-        busFilters_[i].filterR.reset();
-    }
+    hasPendingOutput_.store(false, std::memory_order_relaxed);
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext(
-    const float* const* /*inputChannelData*/,
-    const int /*numInputChannels*/,
+    const float* const* inputChannelData,
+    const int numInputChannels,
     float* const* outputChannelData,
     const int numOutputChannels,
     const int numSamples,
-    const juce::AudioIODeviceCallbackContext& /*context*/)
+    const juce::AudioIODeviceCallbackContext& context)
 {
+    juce::ignoreUnused(inputChannelData, numInputChannels, context);
+
+    // If the device has not been started properly yet, clear the
+    // outputs and bail out early. This protects against divide-by-
+    // zero when computing time deltas and keeps the engine quiet
+    // while the device is being reconfigured.
     if (sampleRate_ <= 0.0) {
-        // Clear outputs if the device is not properly started yet.
         for (int channel = 0; channel < numOutputChannels; ++channel) {
             if (auto* buffer = outputChannelData[channel]) {
                 std::fill(buffer, buffer + numSamples, 0.0F);
@@ -151,36 +94,31 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     }
 
     // Advance the global transport position in beats using the
-    // current BPM and sample rate. This must happen BEFORE the early
-    // return check so that the tempo and beat counter continue to
-    // advance even when no audio is being actively produced (for
-    // example, when all modules are muted or docked). This ensures
-    // that the visual beat pulses, sequencer timing, and loop
-    // alignment remain locked to a continuous master clock
-    // regardless of whether audio is actually being synthesised.
-    const float bpm = loopGlobalBpm_.load(std::memory_order_relaxed);
-    const double beatsPerSecond =
-        (bpm > 0.0F) ? (static_cast<double>(bpm) / 60.0) : 0.0;
-    const double blockDurationSeconds =
-        (sampleRate_ > 0.0)
-            ? (static_cast<double>(numSamples) / sampleRate_)
-            : 0.0;
-    const double blockBeats = beatsPerSecond * blockDurationSeconds;
-    transportBeatsInternal_ += blockBeats;
+    // current BPM and sample rate. This must happen before the
+    // early-return path below so that tempo-synchronised visuals
+    // and loop alignment keep progressing even when the scene is
+    // effectively silent (for example, when all modules are docked
+    // or muted but the device is still running).
+    const double bpmForTransport = static_cast<double>(
+        loopGlobalBpm_.load(std::memory_order_relaxed));
+    if (bpmForTransport > 0.0) {
+        const double secondsPerBeat = 60.0 / bpmForTransport;
+        if (secondsPerBeat > 0.0) {
+            const double blockSeconds = static_cast<double>(numSamples) /
+                                        sampleRate_;
+            const double beatDelta = blockSeconds / secondsPerBeat;
+            transportBeatsInternal_ += beatDelta;
+        }
+    }
+
     transportBeatsAudio_.store(transportBeatsInternal_,
                                std::memory_order_relaxed);
 
-    // Fast-path exit when there is no active audio requested by the
-    // scene and the previous callback block also produced silence.
-    // This keeps the audio device initialised but avoids running the
-    // heavier synthesis/sampling path while the table is completely
-    // idle (for example, when no modules are inside the musical
-    // area). The transport counter has already been advanced above so
-    // visual timing remains continuous.
-    const bool shouldProcess =
-        processingRequested_.load(std::memory_order_relaxed);
     const bool hadPendingOutput =
         hasPendingOutput_.load(std::memory_order_relaxed);
+    const bool shouldProcess =
+        processingRequested_.load(std::memory_order_relaxed) ||
+        hadPendingOutput;
 
     if (!shouldProcess && !hadPendingOutput) {
         for (int channel = 0; channel < numOutputChannels; ++channel) {
@@ -194,22 +132,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     const double twoPiOverFs =
         juce::MathConstants<double>::twoPi / sampleRate_;
 
-    const int historySize = kWaveformHistorySize;
     const int voiceCount =
         std::min(numVoices_.load(std::memory_order_relaxed), kMaxVoices);
-
-    // Number of active connection-level taps to update for this
-    // callback. This value is stable for the duration of the
-    // callback even if the UI thread reconfigures taps concurrently;
-    // newly added taps will start receiving data on the next block.
-    const int tapCount = std::min(
-        numConnectionTaps_.load(std::memory_order_relaxed),
-        kMaxConnectionTaps);
-
-    // Reserve a contiguous block of indices in the circular history
-    // buffer for this callback.
-    const int baseWriteIndex =
-        waveformWriteIndex_.fetch_add(numSamples, std::memory_order_relaxed);
 
     // Pull any active Sampleplay voices from the FluidSynth-backed
     // synthesiser into scratch buffers. If the buffers are smaller
@@ -263,20 +187,33 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         }
     }
 
+    static bool loggedLoopSnapshotOnce = false;
+    if (!loggedLoopSnapshotOnce && loopSnapshot && !loopSnapshot->empty()) {
+        loggedLoopSnapshotOnce = true;
+        juce::String msg("[rectai-core] Loop: snapshot contains ");
+        msg += juce::String(static_cast<int>(loopSnapshot->size()));
+        msg += " instances:";
+        for (const auto& pair : *loopSnapshot) {
+            msg += " ";
+            msg += juce::String(pair.first);
+        }
+        juce::Logger::writeToLog(msg);
+    }
+
     // Use the audio-driven transport position (already updated at the
     // start of this callback) for Loop alignment so that Loop
     // playback stays in phase with the same master clock used by
     // Sequencer timing and beat pulses.
     const double loopBeats = transportBeatsInternal_;
 
+    // Current global BPM used for tempo-synchronised Loop playback.
+    const double bpm = static_cast<double>(
+        loopGlobalBpm_.load(std::memory_order_relaxed));
+
     bool blockHasNonZeroOutput = false;
 
     for (int sample = 0; sample < numSamples; ++sample) {
         float oscMixed = 0.0F;
-
-        const int writeIndex = baseWriteIndex + sample;
-        const int bufIndex =
-            historySize > 0 ? (writeIndex % historySize) : 0;
 
         // Optionally run the Sampleplay stereo path through a
         // StateVariableTPTFilter so that downstream Filter modules
@@ -680,57 +617,21 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         ? baseLevel
                         : targetLevelNow;
 
-                // Compute per-voice audio samples before and after
-                // the per-voice filter, including both envelope and
-                // level. These are used both for visualisation
-                // buffers and for the actual mono mix.
-                const float voiceSamplePre =
-                    static_cast<float>(levelForMix * envAmp) * raw;
+                // Compute the per-voice audio sample after the
+                // per-voice filter, including both envelope and
+                // level. This value feeds both the visualisation
+                // backend (Voices) and the actual mono mix.
                 const float voiceSamplePost =
                     static_cast<float>(levelForMix * envAmp) * s;
 
-                // Store both pre- and post-filter waveforms for
-                // visualisation so that connections from generators
-                // (Osc  Filter) can reflect the actual audio
-                // leaving the Oscillator (including envelope/volume)
-                // while filters/FX and master visuals can reflect the
-                // processed signal.
-                voicePreFilterWaveformBuffer_[v][bufIndex] =
-                    voiceSamplePre;
-                voicePostFilterWaveformBuffer_[v][bufIndex] =
-                    voiceSamplePost;
-
-                // Update any connection taps that monitor this
-                // voice. Taps can either observe the pre-filter
-                // oscillator signal or the post-filter processed
-                // signal, both already scaled by the current
-                // envelope and level so that visuals remain in sync
-                // with the audible audio.
-                for (int t = 0; t < tapCount; ++t) {
-                    const int tapKind =
-                        connectionTaps_[t].kind.load(
-                            std::memory_order_relaxed);
-                    if (tapKind == 0) {
-                        continue;
-                    }
-
-                    const int tapVoice =
-                        connectionTaps_[t].voiceIndex.load(
-                            std::memory_order_relaxed);
-                    if (tapVoice != v) {
-                        continue;
-                    }
-
-                    if (tapKind == static_cast<int>(
-                                      ConnectionTapSourceKind::kVoicePre)) {
-                        connectionWaveformBuffers_[t][bufIndex] =
-                            voiceSamplePre;
-                    } else if (tapKind == static_cast<int>(
-                                         ConnectionTapSourceKind::kVoicePost)) {
-                        connectionWaveformBuffers_[t][bufIndex] =
-                            voiceSamplePost;
-                    }
-                }
+                // Mirror the per-voice post-filter signal into the
+                // unified visual Voices container so that each
+                // oscillator voice has its own history buffer. Voice
+                // ids [0, kMaxVoices) are reserved for oscillator
+                // voices; Loop modules and otros productores se
+                // sitúan a partir de kMaxVoices.
+                const float visualSample = voiceSamplePost;
+                visualVoices_.writeSamples(v, &visualSample, 1);
 
                 // Mix the post-filter, envelope- and level-shaped
                 // voice signal into the global oscillator mono bus.
@@ -743,24 +644,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // already well behaved; we clip after mixing both.
             oscMixed = juce::jlimit(-0.9F, 0.9F, oscMixed);
 
-            // Update any connection taps attached to the Sampleplay
-            // path using the **original** (pre-filter) mono
-            // waveform so that all Sampleplay-based connections
-            // share a single time-aligned source. This avoids
-            // maintaining a second set of global Sampleplay
-            // history buffers and keeps visualisation based solely
-            // on per-connection taps.
             const float sampleplayMonoRaw = rawSampleplayL;
-            for (int t = 0; t < tapCount; ++t) {
-                const int tapKind =
-                    connectionTaps_[t].kind.load(
-                        std::memory_order_relaxed);
-                if (tapKind == static_cast<int>(
-                                   ConnectionTapSourceKind::kSampleplay)) {
-                    connectionWaveformBuffers_[t][bufIndex] =
-                        sampleplayMonoRaw;
-                }
-            }
+
+            // Mirror the global Sampleplay mono path into a
+            // dedicated visual voice so that Sampleplay-based
+            // modules have a stable waveform source in the unified
+            // Voices container. Per-module Sampleplay visuals will
+            // map onto this shared voice in later phases.
+            visualVoices_.writeSamples(kVisualVoiceIdSampleplayRaw,
+                                       &sampleplayMonoRaw, 1);
 
             float leftOut = filteredSampleplayL + oscMixed;
             float rightOut = filteredSampleplayR + oscMixed;
@@ -934,11 +826,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
                             instance.prevTargetGain = tgt;
 
-                            const double sr =
+                            const double srLocal =
                                 sampleRate_ > 0.0 ? sampleRate_
                                                   : 44100.0;
                             const double dt =
-                                (sr > 0.0) ? (1.0 / sr) : 0.0;
+                                (srLocal > 0.0) ? (1.0 / srLocal)
+                                                : 0.0;
 
                             auto phase = instance.envPhase;
                             double value = instance.envValue;
@@ -1042,13 +935,21 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const int wfIndex = instance.visualWaveformIndex;
                         if (wfIndex >= 0 &&
                             wfIndex < kMaxLoopWaveforms) {
-                            // Store the dry mono loop signal for
-                            // visualisation so that UI effects such
-                            // as mute-on-hold can silence the audio
-                            // path without flattening the waveform
-                            // history.
-                            loopWaveformBuffers_[wfIndex][bufIndex] =
-                                monoDry;
+                            // Expose a per-LoopModule visual voice so
+                            // that each Loop has its own independent
+                            // buffer in the unified Voices structure.
+                            // We reserve the range
+                            // [kMaxVoices, kMaxVoices+kMaxLoopWaveforms)
+                            // for loops, reusing `wfIndex` as the
+                            // local offset. The visual signal mirrors
+                            // the post-gain/envelope mono loop output
+                            // so that waveforms match perceived loudness.
+                            const int loopVoiceId =
+                                kMaxVoices + wfIndex;
+                            const float loopVisualSample = monoWithGain;
+                            visualVoices_.writeSamples(loopVoiceId,
+                                                        &loopVisualSample,
+                                                        1);
                         }
 
                         pos += step;
@@ -1079,15 +980,18 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     loopBus.filterR.processSample(0, loopFilteredR);
             }
 
+            // Expose the post-filter Loop bus output as a dedicated
+            // visual voice. This represents the signal leaving the
+            // Loop → Filter chain and will be used by FX/module
+            // visuals where Loop audio is upstream.
+            visualVoices_.writeSamples(kVisualVoiceIdLoopBus,
+                                       &loopFilteredL, 1);
+
             leftOut += loopFilteredL;
             rightOut += loopFilteredR;
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
             rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
-
-            // Store the mixed mono signal (left channel) for
-            // waveform visualisation.
-            waveformBuffer_[bufIndex] = leftOut;
 
             if (!blockHasNonZeroOutput &&
                 (leftOut != 0.0F || rightOut != 0.0F)) {
@@ -1120,26 +1024,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             float loopMixedR = 0.0F;
             const float sampleplayMonoRaw = rawSampleplayL;
 
-            // No oscillator voices are active: clear per-voice
-            // histories so that visualisation for generator-based
-            // modules decays gracefully.
-            for (int v = 0; v < kMaxVoices; ++v) {
-                voicePreFilterWaveformBuffer_[v][bufIndex] = 0.0F;
-                voicePostFilterWaveformBuffer_[v][bufIndex] = 0.0F;
-            }
-
-            // Update any connection taps attached to the Sampleplay
-            // path usando la señal original (pre-filter).
-            for (int t = 0; t < tapCount; ++t) {
-                const int tapKind =
-                    connectionTaps_[t].kind.load(
-                        std::memory_order_relaxed);
-                if (tapKind == static_cast<int>(
-                                   ConnectionTapSourceKind::kSampleplay)) {
-                    connectionWaveformBuffers_[t][bufIndex] =
-                        sampleplayMonoRaw;
-                }
-            }
+            // Mirror the global Sampleplay mono path into the
+            // dedicated visual voice even in scenes without active
+            // oscillator voices so that Sampleplay-only patches have
+            // a consistent waveform history in the Voices container.
+            visualVoices_.writeSamples(kVisualVoiceIdSampleplayRaw,
+                                       &sampleplayMonoRaw, 1);
 
             // Mix Loop modules even when there are no oscillator
             // voices so that scenes consisting only of LoopModule
@@ -1298,11 +1188,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
                             instance.prevTargetGain = tgt;
 
-                            const double sr =
+                            const double srLocal =
                                 sampleRate_ > 0.0 ? sampleRate_
                                                   : 44100.0;
                             const double dt =
-                                (sr > 0.0) ? (1.0 / sr) : 0.0;
+                                (srLocal > 0.0) ? (1.0 / srLocal)
+                                                : 0.0;
 
                             auto phase = instance.envPhase;
                             double value = instance.envValue;
@@ -1404,13 +1295,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const int wfIndex = instance.visualWaveformIndex;
                         if (wfIndex >= 0 &&
                             wfIndex < kMaxLoopWaveforms) {
-                            // Store the dry mono loop signal for
-                            // visualisation so that UI effects such
-                            // as mute-on-hold can silence the audio
-                            // path without flattening the waveform
-                            // history.
-                            loopWaveformBuffers_[wfIndex][bufIndex] =
-                                monoDry;
+                            const int loopVoiceId =
+                                kMaxVoices + wfIndex;
+                            const float loopVisualSample = monoWithGain;
+                            visualVoices_.writeSamples(loopVoiceId,
+                                                        &loopVisualSample,
+                                                        1);
                         }
 
                         pos += step;
@@ -1441,17 +1331,17 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     loopBus.filterR.processSample(0, loopFilteredR);
             }
 
+            // Keep a dedicated visual voice for the Loop bus output
+            // so that Loop-only scenes and Loop→Filter chains have a
+            // stable post-filter waveform source.
+            visualVoices_.writeSamples(kVisualVoiceIdLoopBus,
+                                       &loopFilteredL, 1);
+
             leftOut += loopFilteredL;
             rightOut += loopFilteredR;
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
             rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
-
-            // Store the mixed mono signal (left channel) for
-            // waveform visualisation so that the global
-            // waveform history reflects both Sampleplay and
-            // Loop-only scenes.
-            waveformBuffer_[bufIndex] = leftOut;
 
             if (!blockHasNonZeroOutput &&
                 (leftOut != 0.0F || rightOut != 0.0F)) {
@@ -1708,6 +1598,16 @@ bool AudioEngine::loadLoopSampleFromFile(const std::string& moduleId,
     loopModulesSnapshot_ =
         std::make_shared<std::unordered_map<std::string, LoopInstance>>(
             loopModules_);
+
+    juce::Logger::writeToLog(
+        juce::String("[rectai-core] Loop: loaded sample for module=") +
+        juce::String(moduleId) + " slot=" + juce::String(slotIndex) +
+        " frames=" +
+        juce::String(instance.slots[static_cast<std::size_t>(slotIndex)]
+                         .buffer->numFrames) +
+        " beats=" +
+        juce::String(instance.slots[static_cast<std::size_t>(slotIndex)]
+                         .beats));
 
     if (outError != nullptr) {
         outError->clear();
@@ -2014,161 +1914,19 @@ void AudioEngine::setVoiceEnvelope(const int index,
                                       std::memory_order_relaxed);
 }
 
-void AudioEngine::clearAllConnectionWaveformTaps()
-{
-    numConnectionTaps_.store(0, std::memory_order_relaxed);
-    connectionKeyToTapIndex_.clear();
-
-    for (int i = 0; i < kMaxConnectionTaps; ++i) {
-        connectionTaps_[i].kind.store(0, std::memory_order_relaxed);
-        connectionTaps_[i].voiceIndex.store(-1,
-                                            std::memory_order_relaxed);
-    }
-}
-
-void AudioEngine::configureConnectionWaveformTap(
-    const std::string& connectionKey, const ConnectionTapSourceKind kind,
-    const int voiceIndex)
-{
-    if (kind == ConnectionTapSourceKind::kNone) {
-        return;
-    }
-
-    if ((kind == ConnectionTapSourceKind::kVoicePre ||
-         kind == ConnectionTapSourceKind::kVoicePost) &&
-        (voiceIndex < 0 || voiceIndex >= kMaxVoices)) {
-        return;
-    }
-
-    int index = -1;
-    const auto it = connectionKeyToTapIndex_.find(connectionKey);
-    if (it != connectionKeyToTapIndex_.end()) {
-        index = it->second;
-    } else {
-        const int current =
-            numConnectionTaps_.load(std::memory_order_relaxed);
-        if (current >= kMaxConnectionTaps) {
-            return;
-        }
-        index = current;
-        numConnectionTaps_.store(current + 1,
-                                 std::memory_order_relaxed);
-        connectionKeyToTapIndex_.emplace(connectionKey, index);
-    }
-
-    connectionTaps_[index].voiceIndex.store(voiceIndex,
-                                            std::memory_order_relaxed);
-    connectionTaps_[index].kind.store(
-        static_cast<int>(kind), std::memory_order_relaxed);
-}
-
-void AudioEngine::getWaveformSnapshot(float* dst, const int numPoints,
-                                      const double windowSeconds)
+void AudioEngine::getSampleplayBusWaveformSnapshot(float* dst,
+                                                   const int numPoints,
+                                                   const double windowSeconds)
 {
     if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0) {
         return;
     }
 
-    const int historySize = kWaveformHistorySize;
-    const int writeIndex =
-        waveformWriteIndex_.load(std::memory_order_relaxed);
-    const int availableSamples =
-        std::min(historySize, std::max(writeIndex, 0));
-
-    if (availableSamples <= 0) {
-        std::fill(dst, dst + numPoints, 0.0F);
-        return;
-    }
-
-    double window = windowSeconds;
-    if (window <= 0.0) {
-        window = 0.05;  // Default to ~50 ms.
-    }
-
-    int windowSamples = static_cast<int>(window * sampleRate_);
-    windowSamples = std::max(1, std::min(windowSamples, availableSamples));
-
-    const int startIndex =
-        (writeIndex - windowSamples + historySize * 4) % historySize;
-
-    // Downsample the requested window into `numPoints` evenly spaced
-    // samples. The UI can then normalise and map these to screen-space.
-    const int points = std::min(numPoints, windowSamples);
-    const float denom = static_cast<float>(std::max(points - 1, 1));
-
-    for (int i = 0; i < points; ++i) {
-        const float t = static_cast<float>(i) / denom;
-        const int offset = static_cast<int>(t * static_cast<float>(windowSamples - 1));
-        const int bufIndex =
-            (startIndex + offset + historySize) % historySize;
-        dst[i] = waveformBuffer_[bufIndex];
-    }
-
-    // If numPoints > points (e.g. extremely small window), pad the
-    // remainder with the last value to keep the curve continuous.
-    for (int i = points; i < numPoints; ++i) {
-        dst[i] = dst[points - 1];
-    }
-}
-
-void AudioEngine::getConnectionWaveformSnapshot(
-    const std::string& connectionKey, float* dst, const int numPoints,
-    const double windowSeconds)
-{
-    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0) {
-        return;
-    }
-
-    const auto it = connectionKeyToTapIndex_.find(connectionKey);
-    if (it == connectionKeyToTapIndex_.end()) {
-        std::fill(dst, dst + numPoints, 0.0F);
-        return;
-    }
-
-    const int tapIndex = it->second;
-    if (tapIndex < 0 || tapIndex >= kMaxConnectionTaps) {
-        std::fill(dst, dst + numPoints, 0.0F);
-        return;
-    }
-
-    const int historySize = kWaveformHistorySize;
-    const int writeIndex =
-        waveformWriteIndex_.load(std::memory_order_relaxed);
-    const int availableSamples =
-        std::min(historySize, std::max(writeIndex, 0));
-
-    if (availableSamples <= 0) {
-        std::fill(dst, dst + numPoints, 0.0F);
-        return;
-    }
-
-    double window = windowSeconds;
-    if (window <= 0.0) {
-        window = 0.05;  // Default to ~50 ms.
-    }
-
-    int windowSamples = static_cast<int>(window * sampleRate_);
-    windowSamples =
-        std::max(1, std::min(windowSamples, availableSamples));
-
-    const int startIndex =
-        (writeIndex - windowSamples + historySize * 4) % historySize;
-
-    const int points = std::min(numPoints, windowSamples);
-    const float denom = static_cast<float>(std::max(points - 1, 1));
-
-    for (int i = 0; i < points; ++i) {
-        const float t = static_cast<float>(i) / denom;
-        const int offset = static_cast<int>(
-            t * static_cast<float>(windowSamples - 1));
-        const int bufIndex =
-            (startIndex + offset + historySize) % historySize;
-        dst[i] = connectionWaveformBuffers_[tapIndex][bufIndex];
-    }
-
-    for (int i = points; i < numPoints; ++i) {
-        dst[i] = dst[points - 1];
-    }
+    // Delegate to the unified visual Voices container using the
+    // dedicated Sampleplay mono voice id. This keeps the UI path
+    // independent from the legacy connection tap buffers.
+    visualVoices_.getSnapshot(kVisualVoiceIdSampleplayRaw, dst,
+                              numPoints, windowSeconds);
 }
 
 void AudioEngine::getLoopModuleWaveformSnapshot(
@@ -2190,45 +1948,25 @@ void AudioEngine::getLoopModuleWaveformSnapshot(
         std::fill(dst, dst + numPoints, 0.0F);
         return;
     }
+    // Loop per-module waveforms are now sourced from the unified
+    // visual Voices container rather than the legacy
+    // `loopWaveformBuffers_`. Each LoopModule with a visual slot
+    // reserves a voice id in the range
+    // [kMaxVoices, kMaxVoices + kMaxLoopWaveforms).
+    const int voiceId = kMaxVoices + wfIndex;
+    visualVoices_.getSnapshot(voiceId, dst, numPoints, windowSeconds);
+}
 
-    const int historySize = kWaveformHistorySize;
-    const int writeIndex =
-        waveformWriteIndex_.load(std::memory_order_relaxed);
-    const int availableSamples =
-        std::min(historySize, std::max(writeIndex, 0));
-
-    if (availableSamples <= 0) {
-        std::fill(dst, dst + numPoints, 0.0F);
+void AudioEngine::getLoopBusWaveformSnapshot(float* dst,
+                                             const int numPoints,
+                                             const double windowSeconds)
+{
+    if (dst == nullptr || numPoints <= 0 || sampleRate_ <= 0.0) {
         return;
     }
 
-    double window = windowSeconds;
-    if (window <= 0.0) {
-        window = 0.05;  // Default to ~50 ms.
-    }
-
-    int windowSamples = static_cast<int>(window * sampleRate_);
-    windowSamples =
-        std::max(1, std::min(windowSamples, availableSamples));
-
-    const int startIndex =
-        (writeIndex - windowSamples + historySize * 4) % historySize;
-
-    const int points = std::min(numPoints, windowSamples);
-    const float denom = static_cast<float>(std::max(points - 1, 1));
-
-    for (int i = 0; i < points; ++i) {
-        const float t = static_cast<float>(i) / denom;
-        const int offset = static_cast<int>(
-            t * static_cast<float>(windowSamples - 1));
-        const int bufIndex =
-            (startIndex + offset + historySize) % historySize;
-        dst[i] = loopWaveformBuffers_[wfIndex][bufIndex];
-    }
-
-    for (int i = points; i < numPoints; ++i) {
-        dst[i] = dst[points - 1];
-    }
+    visualVoices_.getSnapshot(kVisualVoiceIdLoopBus, dst, numPoints,
+                              windowSeconds);
 }
 
 void AudioEngine::rebuildAudioGraphFromScene(const rectai::Scene& scene)
@@ -2309,45 +2047,9 @@ void AudioEngine::getVoiceWaveformSnapshot(const int voiceIndex,
         voiceIndex < 0 || voiceIndex >= kMaxVoices) {
         return;
     }
-
-    const int historySize = kWaveformHistorySize;
-    const int writeIndex =
-        waveformWriteIndex_.load(std::memory_order_relaxed);
-    const int availableSamples =
-        std::min(historySize, std::max(writeIndex, 0));
-
-    if (availableSamples <= 0) {
-        std::fill(dst, dst + numPoints, 0.0F);
-        return;
-    }
-
-    double window = windowSeconds;
-    if (window <= 0.0) {
-        window = 0.05;  // Default to ~50 ms.
-    }
-
-    int windowSamples = static_cast<int>(window * sampleRate_);
-    windowSamples = std::max(1, std::min(windowSamples, availableSamples));
-
-    const int startIndex =
-        (writeIndex - windowSamples + historySize * 4) % historySize;
-
-    const int points = std::min(numPoints, windowSamples);
-    const float denom = static_cast<float>(std::max(points - 1, 1));
-
-    for (int i = 0; i < points; ++i) {
-        const float t = static_cast<float>(i) / denom;
-        const int offset = static_cast<int>(
-            t * static_cast<float>(windowSamples - 1));
-        const int bufIndex =
-            (startIndex + offset + historySize) % historySize;
-        dst[i] =
-            voicePreFilterWaveformBuffer_[voiceIndex][bufIndex];
-    }
-
-    for (int i = points; i < numPoints; ++i) {
-        dst[i] = dst[points - 1];
-    }
+    // Delegate to the unified visual Voices container, using the
+    // per-voice oscillator ids [0, kMaxVoices).
+    visualVoices_.getSnapshot(voiceIndex, dst, numPoints, windowSeconds);
 }
 
 void AudioEngine::getVoiceFilteredWaveformSnapshot(const int voiceIndex,
@@ -2359,43 +2061,8 @@ void AudioEngine::getVoiceFilteredWaveformSnapshot(const int voiceIndex,
         voiceIndex < 0 || voiceIndex >= kMaxVoices) {
         return;
     }
-
-    const int historySize = kWaveformHistorySize;
-    const int writeIndex =
-        waveformWriteIndex_.load(std::memory_order_relaxed);
-    const int availableSamples =
-        std::min(historySize, std::max(writeIndex, 0));
-
-    if (availableSamples <= 0) {
-        std::fill(dst, dst + numPoints, 0.0F);
-        return;
-    }
-
-    double window = windowSeconds;
-    if (window <= 0.0) {
-        window = 0.05;  // Default to ~50 ms.
-    }
-
-    int windowSamples = static_cast<int>(window * sampleRate_);
-    windowSamples = std::max(1, std::min(windowSamples, availableSamples));
-
-    const int startIndex =
-        (writeIndex - windowSamples + historySize * 4) % historySize;
-
-    const int points = std::min(numPoints, windowSamples);
-    const float denom = static_cast<float>(std::max(points - 1, 1));
-
-    for (int i = 0; i < points; ++i) {
-        const float t = static_cast<float>(i) / denom;
-        const int offset = static_cast<int>(
-            t * static_cast<float>(windowSamples - 1));
-        const int bufIndex =
-            (startIndex + offset + historySize) % historySize;
-        dst[i] =
-            voicePostFilterWaveformBuffer_[voiceIndex][bufIndex];
-    }
-
-    for (int i = points; i < numPoints; ++i) {
-        dst[i] = dst[points - 1];
-    }
+    // For filtered per-voice visuals we also read from the unified
+    // Voices container, which stores the post-filter oscillator
+    // signal written in the audio callback for ids [0, kMaxVoices).
+    visualVoices_.getSnapshot(voiceIndex, dst, numPoints, windowSeconds);
 }

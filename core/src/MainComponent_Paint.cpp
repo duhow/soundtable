@@ -138,6 +138,44 @@ struct VisualFrameState {
 
 }  // namespace
 
+namespace {
+
+// Helper to fetch and normalise the per-module Loop waveform used
+// for radials and Loop-only segments. The function fills `samples`
+// with a recent mono history window and computes a peak-based
+// normalisation factor. It returns true when a non-silent waveform
+// was available.
+[[nodiscard]] bool fetchNormalisedLoopWaveform(AudioEngine& audioEngine,
+                                               const std::string& moduleId,
+                                               float* samples,
+                                               int numSamples,
+                                               double windowSeconds,
+                                               float& outNorm)
+{
+    if (samples == nullptr || numSamples <= 0) {
+        outNorm = 0.0F;
+        return false;
+    }
+
+    audioEngine.getLoopModuleWaveformSnapshot(moduleId, samples,
+                                               numSamples, windowSeconds);
+
+    float maxAbs = 0.0F;
+    for (int i = 0; i < numSamples; ++i) {
+        maxAbs = std::max(maxAbs, std::abs(samples[i]));
+    }
+
+    if (maxAbs <= 1.0e-4F) {
+        outNorm = 0.0F;
+        return false;
+    }
+
+    outNorm = 1.0F / maxAbs;
+    return true;
+}
+
+}  // namespace
+
 bool MainComponent::isInsideMusicArea(
     const rectai::ObjectInstance& obj) const
 {
@@ -720,8 +758,10 @@ void MainComponent::paint(juce::Graphics& g)
 
                 // First segment: object to split (with waveform even if muted).
                 // We support three families here:
-                //  - Sampleplay modules: waveform from the corresponding
-                //    audio connection tap.
+                //  - Sampleplay modules: waveform from the global
+                //    Sampleplay bus (mono pre-filter) so that the
+                //    hold-mute radial matches other Sampleplay
+                //    visuals backed by the unified Voices container.
                 //  - Loop modules: per-module loop waveform history.
                 //  - Procedural generators (e.g. Oscillator): per-voice
                 //    post-filter waveform buffer.
@@ -729,7 +769,12 @@ void MainComponent::paint(juce::Graphics& g)
                     float sampleplayRadialWave[kWaveformPoints]{};
                     float sampleplayRadialNorm = 0.0F;
 
-                    std::string radialConnKey;
+                    // Only draw the radial waveform when there is an
+                    // actual audio connection from this Sampleplay
+                    // module to the master output, mirroring the
+                    // previous tap-based behaviour but now sourcing the
+                    // waveform from the Sampleplay bus voice.
+                    bool hasConnectionToMaster = false;
                     for (const auto& conn : scene_.connections()) {
                         if (conn.from_module_id != object.logical_id() ||
                             conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
@@ -740,17 +785,13 @@ void MainComponent::paint(juce::Graphics& g)
                             continue;
                         }
 
-                        // For hold-mute we always tap the connection,
-                        // regardless of its persistent mute state; the
-                        // audio path itself is gated separately.
-                        radialConnKey = makeConnectionKey(conn);
+                        hasConnectionToMaster = true;
                         break;
                     }
 
-                    if (!radialConnKey.empty()) {
-                        audioEngine_.getConnectionWaveformSnapshot(
-                            radialConnKey, sampleplayRadialWave,
-                            kWaveformPoints, 0.05);
+                    if (hasConnectionToMaster) {
+                        audioEngine_.getSampleplayBusWaveformSnapshot(
+                            sampleplayRadialWave, kWaveformPoints, 0.05);
 
                         float maxAbs = 0.0F;
                         for (int i = 0; i < kWaveformPoints; ++i) {
@@ -792,21 +833,12 @@ void MainComponent::paint(juce::Graphics& g)
                     float loopRadialWave[kWaveformPoints]{};
                     float loopRadialNorm = 0.0F;
 
-                    audioEngine_.getLoopModuleWaveformSnapshot(
-                        object.logical_id(), loopRadialWave,
-                        kWaveformPoints, 0.05);
+                    const bool haveWave = fetchNormalisedLoopWaveform(
+                        audioEngine_, object.logical_id(),
+                        loopRadialWave, kWaveformPoints, 0.05,
+                        loopRadialNorm);
 
-                    float maxAbs = 0.0F;
-                    for (int i = 0; i < kWaveformPoints; ++i) {
-                        maxAbs = std::max(maxAbs,
-                                          std::abs(loopRadialWave[i]));
-                    }
-
-                    if (maxAbs > 1.0e-4F) {
-                        loopRadialNorm = 1.0F / maxAbs;
-                    }
-
-                    if (loopRadialNorm > 0.0F) {
+                    if (haveWave) {
                         g.setColour(
                             juce::Colours::white.withAlpha(baseAlpha));
                         const float amplitudeLevel = visualLevel;
@@ -1072,10 +1104,7 @@ void MainComponent::paint(juce::Graphics& g)
 
                     // For incoming audio from Loop modules, reuse
                     // the per-module Loop waveform history instead
-                    // of requiring a dedicated connection tap. This
-                    // allows filters and FX fed only by Loop
-                    // modules to display a meaningful radial
-                    // waveform.
+                    // of requiring a dedicated connection tap.
                     const auto fromModuleIt =
                         modules.find(conn.from_module_id);
                     if (fromModuleIt != modules.end() &&
@@ -1087,23 +1116,40 @@ void MainComponent::paint(juce::Graphics& g)
                             kWaveformPoints, 0.05);
                         haveWave = true;
                     } else {
-                        // Sólo consideramos conexiones que tienen un
-                        // tap configurado en el motor; esto evita
-                        // pedir snapshots para claves que no se
-                        // están actualizando en audio.
+                        // Use the UI-side ConnectionVisualSource map
+                        // to resolve a Voices-backed source for this
+                        // connection instead of relying on legacy
+                        // connection taps.
                         const auto* vsMap =
                             static_cast<const std::unordered_map<
                                 std::string,
                                 MainComponent::ConnectionVisualSource>*>(
                                 audioFrame.connectionVisualSources);
-                        if (vsMap == nullptr ||
-                            vsMap->find(key) == vsMap->end()) {
+                        if (vsMap == nullptr) {
                             continue;
                         }
 
-                        audioEngine_.getConnectionWaveformSnapshot(
-                            key, temp, kWaveformPoints, 0.05);
-                        haveWave = true;
+                        const auto vsIt = vsMap->find(key);
+                        if (vsIt == vsMap->end()) {
+                            continue;
+                        }
+
+                        const auto& source = vsIt->second;
+                        if (source.kind ==
+                            MainComponent::ConnectionVisualSource::Kind::kSampleplay) {
+                            audioEngine_.getSampleplayBusWaveformSnapshot(
+                                temp, kWaveformPoints, 0.05);
+                            haveWave = true;
+                        } else if (source.voiceIndex >= 0 &&
+                                   source.voiceIndex <
+                                       AudioEngine::kMaxVoices) {
+                            audioEngine_.getVoiceFilteredWaveformSnapshot(
+                                source.voiceIndex, temp,
+                                kWaveformPoints, 0.05);
+                            haveWave = true;
+                        } else {
+                            continue;
+                        }
                     }
 
                     if (!haveWave) {
@@ -1159,11 +1205,14 @@ void MainComponent::paint(juce::Graphics& g)
             if (!isRadialMuted &&
                 (isSampleplayModule ||
                  (isFilterModule && hasSampleplayUpstream))) {
-                std::string radialConnKey;
+                bool hasConnectionForRadial = false;
 
                 if (isSampleplayModule) {
                     // Use the implicit Sampleplay → Output (-1)
-                    // audio connection for this module.
+                    // audio connection for this module to decide
+                    // whether we should render a waveform, but
+                    // always source the waveform itself from the
+                    // Sampleplay bus voice.
                     for (const auto& conn : scene_.connections()) {
                         if (conn.from_module_id !=
                                 object.logical_id() ||
@@ -1182,22 +1231,22 @@ void MainComponent::paint(juce::Graphics& g)
                             continue;
                         }
 
-                        radialConnKey = key;
+                        hasConnectionForRadial = true;
                         break;
                     }
                 } else if (isFilterModule && hasSampleplayUpstream &&
                            !sampleplayUpstreamConnKey.empty()) {
-                    // For filters driven directly by Sampleplay,
-                    // reuse the upstream Sampleplay → Filter
-                    // connection tap so that the filter radial
-                    // reflects the same waveform as that edge.
-                    radialConnKey = sampleplayUpstreamConnKey;
+                    // For filters driven directamente por Sampleplay,
+                    // reutilizamos la existencia de una conexión
+                    // Sampleplay → Filter para decidir si hay radial,
+                    // pero el waveform se toma del bus global de
+                    // Sampleplay.
+                    hasConnectionForRadial = true;
                 }
 
-                if (!radialConnKey.empty()) {
-                    audioEngine_.getConnectionWaveformSnapshot(
-                        radialConnKey, sampleplayRadialWave,
-                        kWaveformPoints, 0.05);
+                if (hasConnectionForRadial) {
+                    audioEngine_.getSampleplayBusWaveformSnapshot(
+                        sampleplayRadialWave, kWaveformPoints, 0.05);
 
                     float maxAbs = 0.0F;
                     for (int i = 0; i < kWaveformPoints; ++i) {
@@ -1240,6 +1289,62 @@ void MainComponent::paint(juce::Graphics& g)
                 continue;
             }
 
+            // For the Filter module currently driving the Loop bus,
+            // derive its radial waveform from the summed, post-filter
+            // Loop bus Voice. This lets FX radials reflect the
+            // processed loop output instead of only the raw incoming
+            // loops.
+            float loopBusRadialWave[kWaveformPoints]{};
+            float loopBusRadialNorm = 0.0F;
+
+            const bool isCurrentLoopBusFilter =
+                isFilterModule && !isRadialMuted &&
+                object.logical_id() == currentLoopFilterModuleId_;
+
+            if (isCurrentLoopBusFilter) {
+                audioEngine_.getLoopBusWaveformSnapshot(
+                    loopBusRadialWave, kWaveformPoints, 0.05);
+
+                float maxAbs = 0.0F;
+                for (int i = 0; i < kWaveformPoints; ++i) {
+                    maxAbs = std::max(
+                        maxAbs, std::abs(loopBusRadialWave[i]));
+                }
+
+                if (maxAbs > 1.0e-4F) {
+                    loopBusRadialNorm = 1.0F / maxAbs;
+                }
+            }
+
+            const bool loopBusRadialActive =
+                isCurrentLoopBusFilter && loopBusRadialNorm > 0.0F;
+
+            if (loopBusRadialActive) {
+                const auto baseColour = hasHardlinkToMaster
+                                            ? juce::Colours::red
+                                            : juce::Colours::white;
+                const auto radialColour =
+                    isMarkedForCut
+                        ? juce::Colours::yellow.withAlpha(0.9F)
+                        : baseColour.withAlpha(baseAlpha);
+                g.setColour(radialColour);
+
+                // FX radials for the Loop bus always draw at full
+                // visual amplitude so that filtered loops remain
+                // clearly visible even at low signal levels.
+                const float amplitudeLevel = 1.0F;
+                const float waveformAmplitude =
+                    kWaveformAmplitudeScale * amplitudeLevel;
+                const float waveformThickness = 1.4F;
+                drawWaveformOnLine(
+                    line.getEnd(), line.getStart(),
+                    waveformAmplitude, waveformThickness,
+                    loopBusRadialWave, kWaveformPoints,
+                    loopBusRadialNorm, segmentsForWaveform,
+                    /*tiled=*/false);
+                continue;
+            }
+
             // For Loop modules, derive the radial waveform from a
             // per-module history buffer maintained by the
             // AudioEngine. This allows each Loop radial to display
@@ -1249,25 +1354,12 @@ void MainComponent::paint(juce::Graphics& g)
             float loopRadialWave[kWaveformPoints]{};
             float loopRadialNorm = 0.0F;
 
-            if (!isRadialMuted && isLoopModule && lineCarriesAudio) {
-                audioEngine_.getLoopModuleWaveformSnapshot(
-                    object.logical_id(), loopRadialWave,
-                    kWaveformPoints, 0.05);
-
-                float maxAbs = 0.0F;
-                for (int i = 0; i < kWaveformPoints; ++i) {
-                    maxAbs = std::max(maxAbs,
-                                      std::abs(loopRadialWave[i]));
-                }
-
-                if (maxAbs > 1.0e-4F) {
-                    loopRadialNorm = 1.0F / maxAbs;
-                }
-            }
-
             const bool loopRadialActive =
-                loopRadialNorm > 0.0F && !isRadialMuted &&
-                isLoopModule && lineCarriesAudio;
+                !isRadialMuted && isLoopModule && lineCarriesAudio &&
+                fetchNormalisedLoopWaveform(
+                    audioEngine_, object.logical_id(),
+                    loopRadialWave, kWaveformPoints, 0.05,
+                    loopRadialNorm);
 
             if (loopRadialActive) {
                 const auto baseColour = hasHardlinkToMaster
@@ -2179,28 +2271,51 @@ void MainComponent::paintModuleConnections(
             norm = 0.0F;
             rms = 0.0F;
 
-            audioEngine_.getConnectionWaveformSnapshot(
-                key, dst, kWaveformPoints, 0.05);
+            // First attempt: resolve this connection through the
+            // UI-side ConnectionVisualSource map and fetch a
+            // Voices-backed snapshot (per-voice or Sampleplay bus).
+            const auto* vsMap =
+                static_cast<const std::unordered_map<
+                    std::string,
+                    MainComponent::ConnectionVisualSource>*>(
+                    audioFrame.connectionVisualSources);
+            if (vsMap != nullptr) {
+                const auto vsIt = vsMap->find(key);
+                if (vsIt != vsMap->end()) {
+                    const auto& source = vsIt->second;
+                    if (source.kind ==
+                        MainComponent::ConnectionVisualSource::Kind::kSampleplay) {
+                        audioEngine_.getSampleplayBusWaveformSnapshot(
+                            dst, kWaveformPoints, 0.05);
+                    } else if (source.voiceIndex >= 0 &&
+                               source.voiceIndex <
+                                   AudioEngine::kMaxVoices) {
+                        audioEngine_.getVoiceFilteredWaveformSnapshot(
+                            source.voiceIndex, dst,
+                            kWaveformPoints, 0.05);
+                    }
 
-            float maxAbs = 0.0F;
-            float sumSquares = 0.0F;
-            for (int i = 0; i < kWaveformPoints; ++i) {
-                const float v = dst[i];
-                maxAbs = std::max(maxAbs, std::abs(v));
-                sumSquares += v * v;
-            }
+                    float maxAbs = 0.0F;
+                    float sumSquares = 0.0F;
+                    for (int i = 0; i < kWaveformPoints; ++i) {
+                        const float v = dst[i];
+                        maxAbs = std::max(maxAbs, std::abs(v));
+                        sumSquares += v * v;
+                    }
 
-            if (maxAbs > 1.0e-4F) {
-                norm = 1.0F / maxAbs;
-                if (kWaveformPoints > 0) {
-                    const float meanSquare =
-                        sumSquares /
-                        static_cast<float>(kWaveformPoints);
-                    rms = meanSquare > 0.0F
-                              ? std::sqrt(meanSquare)
-                              : 0.0F;
+                    if (maxAbs > 1.0e-4F) {
+                        norm = 1.0F / maxAbs;
+                        if (kWaveformPoints > 0) {
+                            const float meanSquare =
+                                sumSquares /
+                                static_cast<float>(kWaveformPoints);
+                            rms = meanSquare > 0.0F
+                                      ? std::sqrt(meanSquare)
+                                      : 0.0F;
+                        }
+                        return true;
+                    }
                 }
-                return true;
             }
 
             // Fallback for Loop sources: when there is no
@@ -2279,18 +2394,34 @@ void MainComponent::paintModuleConnections(
                     continue;
                 }
 
-                const auto* vsMap =
+                const auto* vsMapAgg =
                     static_cast<const std::unordered_map<
                         std::string,
                         MainComponent::ConnectionVisualSource>*>(
                         audioFrame.connectionVisualSources);
-                if (vsMap == nullptr ||
-                    vsMap->find(upstreamKey) == vsMap->end()) {
+                if (vsMapAgg == nullptr) {
                     continue;
                 }
 
-                audioEngine_.getConnectionWaveformSnapshot(
-                    upstreamKey, temp, kWaveformPoints, 0.05);
+                const auto vsIt = vsMapAgg->find(upstreamKey);
+                if (vsIt == vsMapAgg->end()) {
+                    continue;
+                }
+
+                const auto& source = vsIt->second;
+                if (source.kind ==
+                    MainComponent::ConnectionVisualSource::Kind::kSampleplay) {
+                    audioEngine_.getSampleplayBusWaveformSnapshot(
+                        temp, kWaveformPoints, 0.05);
+                } else if (source.voiceIndex >= 0 &&
+                           source.voiceIndex <
+                               AudioEngine::kMaxVoices) {
+                    audioEngine_.getVoiceFilteredWaveformSnapshot(
+                        source.voiceIndex, temp, kWaveformPoints,
+                        0.05);
+                } else {
+                    continue;
+                }
 
                 for (int i = 0; i < kWaveformPoints; ++i) {
                     dst[i] += temp[i];

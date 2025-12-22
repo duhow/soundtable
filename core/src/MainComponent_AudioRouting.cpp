@@ -604,6 +604,12 @@ void MainComponent::updateAudioRoutingAndVoices(
                                loopFilterCutoffHz,
                                loopFilterQ);
 
+    // Expose the currently selected bus filters to the visual layer
+    // so that Filter modules driving Sampleplay/Loop can render
+    // their radials from the corresponding bus Voices.
+    currentSampleplayFilterModuleId_ = sampleplayFilterModuleId;
+    currentLoopFilterModuleId_ = loopFilterModuleId;
+
     // Emit a compact log line with the effective bus filter
     // configuration so that routing issues can be diagnosed from
     // the console even in Release builds while this path is

@@ -368,6 +368,14 @@ private:
     // waveform instead of relying on the global mix only.
     std::unordered_map<std::string, int> moduleVoiceIndex_;
 
+    // Ids of the Filter modules currently driving the global
+    // Sampleplay and Loop buses, as resolved by the audio routing
+    // step. Used by the paint layer to decide when a Filter radial
+    // should reflect the corresponding bus waveform (FX output)
+    // instead of only aggregating its raw inputs.
+    std::string currentSampleplayFilterModuleId_{};
+    std::string currentLoopFilterModuleId_{};
+
     // Visual source mapping per audio connection. This is the first
     // step towards conceptual "per-connection buffers": rather than
     // deciding ad-hoc in the paint code whether a connection should
