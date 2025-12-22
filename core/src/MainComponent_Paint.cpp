@@ -581,10 +581,16 @@ void MainComponent::paint(juce::Graphics& g)
                 moduleForConnection = modForConnectionIt->second.get();
             }
 
+            // Treat Oscillator and Loop modules as "generator-like"
+            // for radial routing: when they feed another audio
+            // module through an active connection, their direct
+            // radial to the master is hidden so that only the
+            // downstream module keeps the visible path.
             const bool isGeneratorLike =
                 moduleForConnection != nullptr &&
-                moduleForConnection->type() ==
-                    rectai::ModuleType::kGenerator;
+                (moduleForConnection->type() ==
+                     rectai::ModuleType::kGenerator ||
+                 moduleForConnection->is<rectai::LoopModule>());
             const bool isGlobalController =
                 moduleForConnection != nullptr &&
                 moduleForConnection->is_global_controller();
@@ -1062,22 +1068,47 @@ void MainComponent::paint(juce::Graphics& g)
                         continue;
                     }
 
-                    // Sólo consideramos conexiones que tienen un
-                    // tap configurado en el motor; esto evita pedir
-                    // snapshots para claves que no se están
-                    // actualizando en audio.
-                    const auto* vsMap =
-                        static_cast<const std::unordered_map<
-                            std::string,
-                            MainComponent::ConnectionVisualSource>*>(
-                            audioFrame.connectionVisualSources);
-                    if (vsMap == nullptr ||
-                        vsMap->find(key) == vsMap->end()) {
-                        continue;
+                    bool haveWave = false;
+
+                    // For incoming audio from Loop modules, reuse
+                    // the per-module Loop waveform history instead
+                    // of requiring a dedicated connection tap. This
+                    // allows filters and FX fed only by Loop
+                    // modules to display a meaningful radial
+                    // waveform.
+                    const auto fromModuleIt =
+                        modules.find(conn.from_module_id);
+                    if (fromModuleIt != modules.end() &&
+                        fromModuleIt->second != nullptr &&
+                        fromModuleIt->second
+                             ->is<rectai::LoopModule>()) {
+                        audioEngine_.getLoopModuleWaveformSnapshot(
+                            conn.from_module_id, temp,
+                            kWaveformPoints, 0.05);
+                        haveWave = true;
+                    } else {
+                        // Sólo consideramos conexiones que tienen un
+                        // tap configurado en el motor; esto evita
+                        // pedir snapshots para claves que no se
+                        // están actualizando en audio.
+                        const auto* vsMap =
+                            static_cast<const std::unordered_map<
+                                std::string,
+                                MainComponent::ConnectionVisualSource>*>(
+                                audioFrame.connectionVisualSources);
+                        if (vsMap == nullptr ||
+                            vsMap->find(key) == vsMap->end()) {
+                            continue;
+                        }
+
+                        audioEngine_.getConnectionWaveformSnapshot(
+                            key, temp, kWaveformPoints, 0.05);
+                        haveWave = true;
                     }
 
-                    audioEngine_.getConnectionWaveformSnapshot(
-                        key, temp, kWaveformPoints, 0.05);
+                    if (!haveWave) {
+                        continue;
+                    }
 
                     for (int i = 0; i < kWaveformPoints; ++i) {
                         dst[i] += temp[i];
@@ -1263,7 +1294,7 @@ void MainComponent::paint(juce::Graphics& g)
                 continue;
             }
 
-            if (lineCarriesAudio && !isRadialMuted && isAudioModule) {
+            if (!isRadialMuted && isAudioModule) {
                 bool drewRadial = false;
 
                 // Para módulos consumidores de audio sin barra de
@@ -2106,6 +2137,41 @@ void MainComponent::paintModuleConnections(
                               : 0.0F;
                 }
                 return true;
+            }
+
+            // Fallback for Loop sources: when there is no
+            // dedicated connection tap (typical for Loop → Filter
+            // chains), derive the edge waveform directly from the
+            // per-module Loop history so that Loop→X connections
+            // still display audio activity.
+            if (const auto loopIt = modules.find(fromModuleId);
+                loopIt != modules.end() &&
+                loopIt->second != nullptr &&
+                loopIt->second->is<rectai::LoopModule>()) {
+                audioEngine_.getLoopModuleWaveformSnapshot(
+                    fromModuleId, dst, kWaveformPoints, 0.05);
+
+                float maxAbsLoop = 0.0F;
+                float sumSquaresLoop = 0.0F;
+                for (int i = 0; i < kWaveformPoints; ++i) {
+                    const float v = dst[i];
+                    maxAbsLoop = std::max(maxAbsLoop,
+                                           std::abs(v));
+                    sumSquaresLoop += v * v;
+                }
+
+                if (maxAbsLoop > 1.0e-4F) {
+                    norm = 1.0F / maxAbsLoop;
+                    if (kWaveformPoints > 0) {
+                        const float meanSquare =
+                            sumSquaresLoop /
+                            static_cast<float>(kWaveformPoints);
+                        rms = meanSquare > 0.0F
+                                  ? std::sqrt(meanSquare)
+                                  : 0.0F;
+                    }
+                    return true;
+                }
             }
 
             float temp[kWaveformPoints]{};
