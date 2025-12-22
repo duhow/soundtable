@@ -1317,13 +1317,22 @@ void MainComponent::paint(juce::Graphics& g)
                                 ? juce::Colours::yellow.withAlpha(0.9F)
                                 : baseColour.withAlpha(baseAlpha);
                         g.setColour(waveformColour);
-
-                        float amplitudeLevel = 0.0F;
-                        if (aggRms > 0.0F) {
-                            amplitudeLevel = juce::jlimit(
-                                0.0F, 1.0F, aggRms / 0.7071F);
+                        if (aggRms <= 1.0e-4F || aggNorm <= 0.0F) {
+                            // No meaningful energy; fall back later
+                            // to per-voice history or a plain line.
+                            continue;
                         }
 
+                        // For consumer modules (typically Filter/FX)
+                        // the aggregated radial should clearly show
+                        // incoming activity regardless of the raw
+                        // signal level. Normalise the summed
+                        // waveform by its own peak and drive the
+                        // visual amplitude at full-scale so that
+                        // Filter → Master radials fed only by Loop
+                        // look as strong as the Loop → Master
+                        // radial itself.
+                        const float amplitudeLevel = 1.0F;
                         const float waveformAmplitude =
                             kWaveformAmplitudeScale * amplitudeLevel;
                         const float waveformThickness = 1.4F;
@@ -1331,7 +1340,7 @@ void MainComponent::paint(juce::Graphics& g)
                             line.getEnd(), line.getStart(),
                             waveformAmplitude, waveformThickness,
                             aggWave, kWaveformPoints,
-                            /*normalisation=*/1.0F,
+                            /*normalisation=*/aggNorm,
                             segmentsForWaveform,
                             /*tiled=*/false);
                         drewRadial = true;
@@ -2095,10 +2104,18 @@ void MainComponent::paintModuleConnections(
         const float fromLevel = getModuleVisualLevel(fromModulePtr);
         const float toLevel = getModuleVisualLevel(toModulePtr);
 
-        juce::ignoreUnused(fromLevel, toLevel);
+        juce::ignoreUnused(toLevel);
 
         const bool isConnectionMarkedForCut =
             derivedState.isMarkedForCut;
+
+        const bool fromIsLoop =
+            (fromModulePtr != nullptr &&
+             fromModulePtr->is<rectai::LoopModule>());
+        const bool fromIsGenerator =
+            (fromModulePtr != nullptr &&
+             fromModulePtr->type() ==
+                 rectai::ModuleType::kGenerator);
 
         const juce::Colour activeColour =
             isConnectionMarkedForCut
@@ -2106,6 +2123,53 @@ void MainComponent::paintModuleConnections(
                 : (conn.is_hardlink
                        ? juce::Colours::red.withAlpha(0.8F)
                        : juce::Colours::white.withAlpha(0.7F));
+
+        auto drawLoopConnectionWaveform =
+            [&](const juce::Point<float>& start,
+                const juce::Point<float>& end) -> bool {
+            if (!audioConn || !fromIsLoop || fromModulePtr == nullptr) {
+                return false;
+            }
+
+            float loopWave[kWaveformPoints]{};
+            audioEngine_.getLoopModuleWaveformSnapshot(
+                conn.from_module_id, loopWave, kWaveformPoints, 0.05);
+
+            float maxAbs = 0.0F;
+            for (int i = 0; i < kWaveformPoints; ++i) {
+                maxAbs = std::max(maxAbs, std::abs(loopWave[i]));
+            }
+
+            if (maxAbs <= 1.0e-4F) {
+                return false;
+            }
+
+            const float norm = 1.0F / maxAbs;
+            const float amplitudeLevel = fromLevel;
+            const float waveformAmplitude =
+                kWaveformAmplitudeScale * amplitudeLevel;
+            const float waveformThickness = 1.2F;
+
+            const juce::Point<float> delta = end - start;
+            const float lineLength = std::sqrt(
+                delta.x * delta.x + delta.y * delta.y);
+            const int segmentsForWaveform = juce::jmax(
+                32, static_cast<int>(lineLength / 4.0F));
+            const int periodSamples = kWaveformPoints;
+
+            // Match Loop → Master visual behaviour: use the Loop
+            // per-module history, normalised by its own peak, and
+            // map amplitude directly from the module visual level
+            // so that Loop → Filter shares the same waveform
+            // shape and height as the standalone Loop radial.
+            const bool tiled = false;
+            drawWaveformOnLine(start, end, waveformAmplitude,
+                               waveformThickness, loopWave,
+                               periodSamples, norm,
+                               segmentsForWaveform, tiled);
+            return true;
+        };
+
 
         auto fetchConnectionWaveformOrAggregate =
             [&](const std::string& key,
@@ -2140,10 +2204,12 @@ void MainComponent::paintModuleConnections(
             }
 
             // Fallback for Loop sources: when there is no
-            // dedicated connection tap (typical for Loop → Filter
+            // dedicated connection tap (typical for LoopFilter
             // chains), derive the edge waveform directly from the
-            // per-module Loop history so that Loop→X connections
-            // still display audio activity.
+            // per-module Loop history so that LoopX connections
+            // still display audio activity. For visual clarity we
+            // force a "near full-scale" RMS so the waveform height
+            // matches the Loopmaster radial.
             if (const auto loopIt = modules.find(fromModuleId);
                 loopIt != modules.end() &&
                 loopIt->second != nullptr &&
@@ -2152,24 +2218,16 @@ void MainComponent::paintModuleConnections(
                     fromModuleId, dst, kWaveformPoints, 0.05);
 
                 float maxAbsLoop = 0.0F;
-                float sumSquaresLoop = 0.0F;
                 for (int i = 0; i < kWaveformPoints; ++i) {
-                    const float v = dst[i];
                     maxAbsLoop = std::max(maxAbsLoop,
-                                           std::abs(v));
-                    sumSquaresLoop += v * v;
+                                           std::abs(dst[i]));
                 }
 
                 if (maxAbsLoop > 1.0e-4F) {
                     norm = 1.0F / maxAbsLoop;
-                    if (kWaveformPoints > 0) {
-                        const float meanSquare =
-                            sumSquaresLoop /
-                            static_cast<float>(kWaveformPoints);
-                        rms = meanSquare > 0.0F
-                                  ? std::sqrt(meanSquare)
-                                  : 0.0F;
-                    }
+                    // Fake a RMS close to a full-scale sine so
+                    // that amplitudeLevel ~ 1.0 en el pintado.
+                    rms = 0.7F;
                     return true;
                 }
             }
@@ -2283,38 +2341,53 @@ void MainComponent::paintModuleConnections(
                 juce::jmap(splitT, 0.0F, 1.0F, p1.x, p2.x),
                 juce::jmap(splitT, 0.0F, 1.0F, p1.y, p2.y)};
 
-            float tempWave[kWaveformPoints]{};
-            float norm = 0.0F;
-            float rms = 0.0F;
-
-            const bool hasWave = fetchConnectionWaveformOrAggregate(
-                connKey, conn.from_module_id, tempWave, norm, rms);
-
             bool drewWave = false;
-            if (hasWave && rms > 0.0F) {
-                g.setColour(activeColour);
-                const float amplitudeLevel = juce::jlimit(
-                    0.0F, 1.0F, rms / 0.7071F);
-                const float waveformAmplitude =
-                    kWaveformAmplitudeScale * amplitudeLevel;
-                const float waveformThickness =
-                    conn.is_hardlink ? 1.2F : 1.2F;
-                const juce::Point<float> delta = splitPoint - p1;
-                const float lineLength = std::sqrt(
-                    delta.x * delta.x + delta.y * delta.y);
-                const int rawSegments =
-                    static_cast<int>(lineLength / 5.0F);
-                const int segmentsForWaveform =
-                    juce::jmax(1, juce::jmin(rawSegments, 80));
-                const int periodSamples = kWaveformPoints;
 
-                const bool tiled = !involvesSampleplay;
-                drawWaveformOnLine(
-                    p1, splitPoint, waveformAmplitude,
-                    waveformThickness, tempWave, periodSamples,
-                    /*normalisation=*/1.0F, segmentsForWaveform,
-                    /*tiled=*/tiled);
-                drewWave = true;
+            if (fromIsLoop && audioConn && !isMutedConnection) {
+                g.setColour(activeColour);
+                drewWave = drawLoopConnectionWaveform(p1, splitPoint);
+            }
+
+            if (!drewWave) {
+                float tempWave[kWaveformPoints]{};
+                float norm = 0.0F;
+                float rms = 0.0F;
+
+                const bool hasWave =
+                    fetchConnectionWaveformOrAggregate(
+                        connKey, conn.from_module_id, tempWave,
+                        norm, rms);
+
+                if (hasWave && rms > 0.0F) {
+                    g.setColour(activeColour);
+                    float amplitudeLevel = juce::jlimit(
+                        0.0F, 1.0F, rms / 0.7071F);
+                    if (fromIsGenerator) {
+                        amplitudeLevel = juce::jlimit(
+                            0.0F, 1.0F, fromLevel);
+                    }
+                    const float waveformAmplitude =
+                        kWaveformAmplitudeScale * amplitudeLevel;
+                    const float waveformThickness = 1.2F;
+                    const juce::Point<float> delta =
+                        splitPoint - p1;
+                    const float lineLength = std::sqrt(
+                        delta.x * delta.x + delta.y * delta.y);
+                    const int rawSegments =
+                        static_cast<int>(lineLength / 5.0F);
+                    const int segmentsForWaveform = juce::jmax(
+                        1, juce::jmin(rawSegments, 80));
+                    const int periodSamples = kWaveformPoints;
+
+                    const bool tiled = !involvesSampleplay;
+                    drawWaveformOnLine(
+                        p1, splitPoint, waveformAmplitude,
+                        waveformThickness, tempWave, periodSamples,
+                        /*normalisation=*/1.0F,
+                        segmentsForWaveform,
+                        /*tiled=*/tiled);
+                    drewWave = true;
+                }
             }
 
             if (!drewWave) {
@@ -2344,30 +2417,43 @@ void MainComponent::paintModuleConnections(
             bool drewWave = false;
 
             if (audioConn) {
-                float tempWave[kWaveformPoints]{};
-                float norm = 0.0F;
-                float rms = 0.0F;
+                if (fromIsLoop && !isMutedConnection) {
+                    drewWave = drawLoopConnectionWaveform(p1, p2);
+                }
 
-                const bool hasWave =
-                    fetchConnectionWaveformOrAggregate(
-                        connKey, conn.from_module_id, tempWave,
-                        norm, rms);
+                if (!drewWave) {
+                    float tempWave[kWaveformPoints]{};
+                    float norm = 0.0F;
+                    float rms = 0.0F;
 
-                if (hasWave && rms > 0.0F) {
-                    const float amplitudeLevel = juce::jlimit(
-                        0.0F, 1.0F, rms / 0.7071F);
-                    const float waveformAmplitude =
-                        kWaveformAmplitudeScale * amplitudeLevel;
-                    const float waveformThickness = 1.2F;
-                    const int periodSamples = kWaveformPoints;
+                    const bool hasWave =
+                        fetchConnectionWaveformOrAggregate(
+                            connKey, conn.from_module_id,
+                            tempWave, norm, rms);
 
-                    const bool tiled = !involvesSampleplay;
-                    drawWaveformOnLine(
-                        p1, p2, waveformAmplitude,
-                        waveformThickness, tempWave, periodSamples,
-                        /*normalisation=*/1.0F, 72,
-                        /*tiled=*/tiled);
-                    drewWave = true;
+                    if (hasWave && rms > 0.0F) {
+                        float amplitudeLevel = juce::jlimit(
+                            0.0F, 1.0F, rms / 0.7071F);
+                        if (fromIsGenerator) {
+                            amplitudeLevel = juce::jlimit(
+                                0.0F, 1.0F, fromLevel);
+                        }
+                        const float waveformAmplitude =
+                            kWaveformAmplitudeScale *
+                            amplitudeLevel;
+                        const float waveformThickness = 1.2F;
+                        const int periodSamples =
+                            kWaveformPoints;
+
+                        const bool tiled = !involvesSampleplay;
+                        drawWaveformOnLine(
+                            p1, p2, waveformAmplitude,
+                            waveformThickness, tempWave,
+                            periodSamples,
+                            /*normalisation=*/1.0F, 72,
+                            /*tiled=*/tiled);
+                        drewWave = true;
+                    }
                 }
             }
 
@@ -2381,29 +2467,44 @@ void MainComponent::paintModuleConnections(
             if (audioConn) {
                 const float waveformThickness = 1.2F;
 
-                float tempWave[kWaveformPoints]{};
-                float norm = 0.0F;
-                float rms = 0.0F;
-
-                const bool hasWave =
-                    fetchConnectionWaveformOrAggregate(
-                        connKey, conn.from_module_id, tempWave,
-                        norm, rms);
-
-                if (hasWave && rms > 0.0F) {
-                    const float amplitudeLevel = juce::jlimit(
-                        0.0F, 1.0F, rms / 0.7071F);
-                    const float waveformAmplitude =
-                        kWaveformAmplitudeScale * amplitudeLevel;
+                if (fromIsLoop && !isMutedConnection) {
                     g.setColour(activeColour);
-                    const int periodSamples = kWaveformPoints;
-                    const bool tiled = !involvesSampleplay;
-                    drawWaveformOnLine(
-                        p1, p2, waveformAmplitude,
-                        waveformThickness, tempWave, periodSamples,
-                        /*normalisation=*/1.0F, 72,
-                        /*tiled=*/tiled);
-                    drewWave = true;
+                    drewWave = drawLoopConnectionWaveform(p1, p2);
+                }
+
+                if (!drewWave) {
+                    float tempWave[kWaveformPoints]{};
+                    float norm = 0.0F;
+                    float rms = 0.0F;
+
+                    const bool hasWave =
+                        fetchConnectionWaveformOrAggregate(
+                            connKey, conn.from_module_id,
+                            tempWave, norm, rms);
+
+                    if (hasWave && rms > 0.0F) {
+                        float amplitudeLevel =
+                            juce::jlimit(0.0F, 1.0F,
+                                         rms / 0.7071F);
+                        if (fromIsGenerator) {
+                            amplitudeLevel = juce::jlimit(
+                                0.0F, 1.0F, fromLevel);
+                        }
+                        const float waveformAmplitude =
+                            kWaveformAmplitudeScale *
+                            amplitudeLevel;
+                        g.setColour(activeColour);
+                        const int periodSamples =
+                            kWaveformPoints;
+                        const bool tiled = !involvesSampleplay;
+                        drawWaveformOnLine(
+                            p1, p2, waveformAmplitude,
+                            waveformThickness, tempWave,
+                            periodSamples,
+                            /*normalisation=*/1.0F, 72,
+                            /*tiled=*/tiled);
+                        drewWave = true;
+                    }
                 }
             }
 
