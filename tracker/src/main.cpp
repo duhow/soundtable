@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include <argparse/argparse.hpp>
+
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/videoio.hpp>
@@ -42,247 +44,85 @@ enum class PixelFormat {
 	Yuyv
 };
 
-bool hasDisableAutofocusFlag(int argc, char** argv)
+std::optional<Resolution> parseResolutionString(const std::string& value)
 {
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		if (arg == "--no-autofocus") {
-			return true;
-		}
+	const auto xPos = value.find('x');
+	if (xPos == std::string::npos || xPos == 0 || xPos == value.size() - 1) {
+		return std::nullopt;
 	}
-	return false;
+
+	const std::string widthStr = value.substr(0, xPos);
+	const std::string heightStr = value.substr(xPos + 1);
+
+	try {
+		const int width = std::stoi(widthStr);
+		const int height = std::stoi(heightStr);
+		if (width <= 0 || height <= 0) {
+			return std::nullopt;
+		}
+		return Resolution{width, height};
+	} catch (const std::exception&) {
+		return std::nullopt;
+	}
 }
 
-std::optional<int> parseCameraIndexArg(int argc, char** argv)
+std::optional<PixelFormat> parseCameraFormatString(const std::string& input)
 {
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		constexpr std::string_view prefix{"--camera="};
-		if (arg.rfind(prefix.data(), 0) == 0) {
-			const std::string value = arg.substr(prefix.size());
-			try {
-				const int index = std::stoi(value);
-				if (index < 0) {
-					std::cerr << "[rectai-tracker] Invalid --camera index '" << value
-					          << "' (must be >= 0). Using default device 0." << std::endl;
-					return std::nullopt;
-				}
-				return index;
-			} catch (const std::exception&) {
-				std::cerr << "[rectai-tracker] Invalid --camera value '" << value
-				          << "'. Using default device 0." << std::endl;
-				return std::nullopt;
-			}
-		}
+	std::string value = input;
+	for (char& ch : value) {
+		ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 	}
 
+	if (value == "mjpg" || value == "mjpeg") {
+		return PixelFormat::Mjpg;
+	}
+	if (value == "yuyv" || value == "yuy2") {
+		return PixelFormat::Yuyv;
+	}
+	if (value.empty()) {
+		return std::nullopt;
+	}
+
+	std::cerr << "[rectai-tracker] Invalid --camera-format '" << value
+	          << "'. Supported values: mjpg, yuyv." << std::endl;
 	return std::nullopt;
 }
 
-RunMode parseMode(int argc, char** argv)
+std::optional<int> parseFilterIndexString(const std::string& input)
 {
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		if (arg == "--mode=live") {
-			return RunMode::Live;
-		}
-		if (arg == "--mode=synthetic") {
-			return RunMode::Synthetic;
-		}
+	if (input.empty()) {
+		return std::nullopt;
 	}
 
+	std::string value = input;
+	for (char& ch : value) {
+		ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+	}
+
+	if (value == "otsu" || value == "otsu-binary" || value == "otsu_binary") {
+		return 0;
+	}
+	if (value == "otsu-inv" || value == "otsu_inverse" || value == "otsu-binary-inv") {
+		return 1;
+	}
+	if (value == "adaptive" || value == "adaptive-binary" || value == "adaptive_binary") {
+		return 2;
+	}
+	if (value == "adaptive-inv" || value == "adaptive_inverse" || value == "adaptive-binary-inv") {
+		return 3;
+	}
+
+	std::cerr << "[rectai-tracker] Invalid --filter value '" << value
+	          << "'. Supported values: otsu, otsu-inv, adaptive, adaptive-inv." << std::endl;
+	return std::nullopt;
+}
+
+RunMode parseRunModeString(const std::string& mode)
+{
+	if (mode == "synthetic") {
+		return RunMode::Synthetic;
+	}
 	return RunMode::Live;
-}
-
-bool hasDebugViewFlag(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		if (arg == "--debug-view") {
-			return true;
-		}
-	}
-	return false;
-}
-
-bool hasNoDownscaleFlag(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		if (arg == "--no-downscale") {
-			return true;
-		}
-	}
-	return false;
-}
-
-bool hasOscFlag(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		if (arg == "--osc") {
-			return true;
-		}
-	}
-	return false;
-}
-
-std::optional<int> parseSingleFilterArg(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		constexpr std::string_view prefix{"--filter="};
-		if (arg.rfind(prefix.data(), 0) == 0) {
-			std::string value = arg.substr(prefix.size());
-			for (char& ch : value) {
-				ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-			}
-
-			if (value == "otsu" || value == "otsu-binary" || value == "otsu_binary") {
-				return 0;
-			}
-			if (value == "otsu-inv" || value == "otsu_inverse" || value == "otsu-binary-inv") {
-				return 1;
-			}
-			if (value == "adaptive" || value == "adaptive-binary" || value == "adaptive_binary") {
-				return 2;
-			}
-			if (value == "adaptive-inv" || value == "adaptive_inverse" || value == "adaptive-binary-inv") {
-				return 3;
-			}
-
-			std::cerr << "[rectai-tracker] Invalid --filter value '" << value
-			          << "'. Supported values: otsu, otsu-inv, adaptive, adaptive-inv." << std::endl;
-			return std::nullopt;
-		}
-	}
-
-	return std::nullopt;
-}
-
-bool hasOnlyFilterFlag(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		if (arg == "--only-filter") {
-			return true;
-		}
-	}
-	return false;
-}
-
-std::optional<Resolution> parseResolutionArg(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		constexpr std::string_view prefix{"--resolution="};
-		if (arg.rfind(prefix.data(), 0) == 0) {
-			const std::string value = arg.substr(prefix.size());
-			const auto xPos = value.find('x');
-			if (xPos == std::string::npos || xPos == 0 || xPos == value.size() - 1) {
-				return std::nullopt;
-			}
-
-			const std::string widthStr = value.substr(0, xPos);
-			const std::string heightStr = value.substr(xPos + 1);
-
-			try {
-				const int width = std::stoi(widthStr);
-				const int height = std::stoi(heightStr);
-				if (width <= 0 || height <= 0) {
-					return std::nullopt;
-				}
-				return Resolution{width, height};
-			} catch (const std::exception&) {
-				return std::nullopt;
-			}
-		}
-	}
-
-	return std::nullopt;
-}
-
-std::optional<PixelFormat> parseCameraFormatArg(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		constexpr std::string_view prefix{"--camera-format="};
-		if (arg.rfind(prefix.data(), 0) == 0) {
-			std::string value = arg.substr(prefix.size());
-			for (char& ch : value) {
-				ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-			}
-
-			if (value == "mjpg" || value == "mjpeg") {
-				return PixelFormat::Mjpg;
-			}
-			if (value == "yuyv" || value == "yuy2") {
-				return PixelFormat::Yuyv;
-			}
-
-			std::cerr << "[rectai-tracker] Invalid --camera-format '" << value
-			          << "'. Supported values: mjpg, yuyv." << std::endl;
-			return std::nullopt;
-		}
-	}
-
-	return std::nullopt;
-}
-
-std::optional<int> parseFpsArg(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		constexpr std::string_view prefix{"--fps="};
-		if (arg.rfind(prefix.data(), 0) == 0) {
-			const std::string value = arg.substr(prefix.size());
-			try {
-				const int fps = std::stoi(value);
-				if (fps <= 0) {
-					std::cerr << "[rectai-tracker] Invalid --fps '" << value
-					          << "' (must be > 0). Using camera default fps." << std::endl;
-					return std::nullopt;
-				}
-				return fps;
-			} catch (const std::exception&) {
-				std::cerr << "[rectai-tracker] Invalid --fps value '" << value
-				          << "'. Using camera default fps." << std::endl;
-				return std::nullopt;
-			}
-		}
-	}
-
-	return std::nullopt;
-}
-
-bool hasHelpFlag(int argc, char** argv)
-{
-	for (int i = 1; i < argc; ++i) {
-		const std::string arg{argv[i]};
-		if (arg == "--help" || arg == "-h") {
-			return true;
-		}
-	}
-	return false;
-}
-
-void printHelp()
-{
-	std::cout << "rectai-tracker usage:\n"
-	          << "  rectai-tracker [options]\n\n"
-	          << "Options:\n"
-	          << "  --help, -h                Show this help message and exit.\n"
-	          << "  --mode=live|synthetic    Select run mode (live tracking or synthetic object).\n"
-	          << "  --camera=N               Select camera index (default: 0).\n"
-	          << "  --camera-format=mjpg|yuyv  Request camera pixel format (Linux V4L2 backends).\n"
-	          << "  --resolution=WxH         Request capture resolution, e.g. 1280x720.\n"
-	          << "  --fps=N                  Request capture framerate in FPS.\n"
-	          << "  --no-autofocus           Disable continuous camera autofocus when supported.\n"
-	          << "  --debug-view             Show debug thresholded view from TrackerEngine.\n"
-	          << "  --no-downscale           Disable internal downscaling in TrackerEngine.\n"
-	          << "  --osc                    Force legacy OSC output instead of TUIO 1.1.\n"
-	          << "  --only-filter            Always run a single threshold filter (no adaptive multi-filter training).\n"
-	          << "  --filter=otsu|otsu-inv|adaptive|adaptive-inv  Select threshold filter (implies --only-filter).\n";
 }
 
 // Maps physical tracker marker IDs to logical module IDs used by the
@@ -318,23 +158,87 @@ std::string mapLogicalId(int markerId)
 
 int main(int argc, char** argv)
 {
-	if (hasHelpFlag(argc, argv)) {
-		printHelp();
-		return 0;
+	argparse::ArgumentParser program("rectai-tracker", "0.1.0", argparse::default_arguments::all, true);
+	program.add_description("rectai-tracker: camera fiducial tracker for RectaiTable.");
+	program.add_argument("-m", "--mode")
+	    .help("Select run mode (live tracking or synthetic object).")
+	    .default_value(std::string{"live"})
+	    .choices("live", "synthetic");
+	program.add_argument("-d", "--camera")
+	    .help("Select camera index (default: 0). Run v4l2-ctl --list-devices on Linux to see available cameras.")
+	    .scan<'i', int>()
+	    .default_value(0);
+	program.add_argument("-q", "--camera-format")
+	    .help("Request camera pixel format (Linux V4L2 backends). Supported: mjpg, yuyv.")
+	    .default_value(std::string{});
+	program.add_argument("-s", "--resolution")
+	    .help("Request capture resolution, e.g. 1280x720.")
+	    .default_value(std::string{});
+	program.add_argument("-f", "--fps")
+	    .help("Request capture framerate in FPS.")
+	    .scan<'i', int>()
+	    .default_value(0);
+	program.add_argument("-af", "--no-autofocus")
+	    .help("Disable continuous camera autofocus when supported.")
+	    .flag();
+	program.add_argument("-v", "--viewer")
+	    .help("Show debug thresholded view from TrackerEngine.")
+	    .flag();
+	program.add_argument("-ds", "--no-downscale")
+	    .help("Disable internal downscaling in TrackerEngine.")
+	    .flag();
+	program.add_argument("--osc")
+	    .help("Force legacy OSC output instead of TUIO 1.1.")
+	    .flag();
+	program.add_argument("--only-filter")
+	    .help("Always run a single threshold filter (no adaptive multi-filter training).")
+	    .flag();
+	program.add_argument("-f", "--filter")
+	    .help("Select threshold filter (implies --only-filter). Supported: otsu, otsu-inv, adaptive, adaptive-inv.")
+	    .default_value(std::string{});
+
+	try {
+		program.parse_args(argc, argv);
+	} catch (const std::exception& err) {
+		std::cerr << err.what() << std::endl;
+		std::cerr << program;
+		return 1;
 	}
 
-	const auto mode = parseMode(argc, argv);
-	const bool debugView = hasDebugViewFlag(argc, argv);
-	const bool noDownscale = hasNoDownscaleFlag(argc, argv);
-	const bool disableAutofocus = hasDisableAutofocusFlag(argc, argv);
-	const bool forceOsc = hasOscFlag(argc, argv);
-	const bool onlyFilter = hasOnlyFilterFlag(argc, argv);
-	const auto filterIndex = parseSingleFilterArg(argc, argv);
-	const auto requestedResolution = parseResolutionArg(argc, argv);
-	const auto requestedCameraFormat = parseCameraFormatArg(argc, argv);
-	const auto requestedFps = parseFpsArg(argc, argv);
-	const auto requestedCameraIndex = parseCameraIndexArg(argc, argv);
-	const int cameraIndex = requestedCameraIndex.value_or(0);
+	const auto mode = parseRunModeString(program.get<std::string>("--mode"));
+	const bool debugView = program.get<bool>("--viewer");
+	const bool noDownscale = program.get<bool>("--no-downscale");
+	const bool disableAutofocus = program.get<bool>("--no-autofocus");
+	const bool forceOsc = program.get<bool>("--osc");
+	const bool onlyFilter = program.get<bool>("--only-filter");
+	const int cameraIndex = program.get<int>("--camera");
+
+	std::optional<int> requestedFps;
+	{
+		const int fpsValue = program.get<int>("--fps");
+		if (fpsValue > 0) {
+			requestedFps = fpsValue;
+		} else if (fpsValue < 0) {
+			std::cerr << "[rectai-tracker] Invalid --fps '" << fpsValue
+			          << "' (must be > 0). Using camera default fps." << std::endl;
+		}
+	}
+
+	std::optional<Resolution> requestedResolution;
+	if (program.is_used("--resolution")) {
+		const auto resString = program.get<std::string>("--resolution");
+		requestedResolution = parseResolutionString(resString);
+	}
+
+	std::optional<PixelFormat> requestedCameraFormat;
+	if (program.is_used("--camera-format")) {
+		requestedCameraFormat = parseCameraFormatString(program.get<std::string>("--camera-format"));
+	}
+
+	std::optional<int> filterIndex;
+	if (program.is_used("--filter")) {
+		filterIndex = parseFilterIndexString(program.get<std::string>("--filter"));
+	}
 
 	cv::VideoCapture capture;
 #if defined(__linux__)
