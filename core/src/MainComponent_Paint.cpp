@@ -2290,9 +2290,22 @@ void MainComponent::paintModuleConnections(
                     } else if (source.voiceIndex >= 0 &&
                                source.voiceIndex <
                                    AudioEngine::kMaxVoices) {
-                        audioEngine_.getVoiceFilteredWaveformSnapshot(
-                            source.voiceIndex, dst,
-                            kWaveformPoints, 0.05);
+                        // Honour the pre/post distinction encoded
+                        // in ConnectionVisualSource so that segments
+                        // such as Oscillator → Filter display the
+                        // pre-filter generator waveform while
+                        // downstream paths use the post-filter
+                        // voice history.
+                        if (source.kind ==
+                            MainComponent::ConnectionVisualSource::Kind::kVoicePre) {
+                            audioEngine_.getVoiceWaveformSnapshot(
+                                source.voiceIndex, dst,
+                                kWaveformPoints, 0.05);
+                        } else {
+                            audioEngine_.getVoiceFilteredWaveformSnapshot(
+                                source.voiceIndex, dst,
+                                kWaveformPoints, 0.05);
+                        }
                     }
 
                     float maxAbs = 0.0F;
@@ -2416,9 +2429,20 @@ void MainComponent::paintModuleConnections(
                 } else if (source.voiceIndex >= 0 &&
                            source.voiceIndex <
                                AudioEngine::kMaxVoices) {
-                    audioEngine_.getVoiceFilteredWaveformSnapshot(
-                        source.voiceIndex, temp, kWaveformPoints,
-                        0.05);
+                    // For aggregated upstream connections, honour
+                    // the same pre/post distinction as the direct
+                    // fetch path so that generator segments can
+                    // still visualise the pre-filter waveform.
+                    if (source.kind ==
+                        MainComponent::ConnectionVisualSource::Kind::kVoicePre) {
+                        audioEngine_.getVoiceWaveformSnapshot(
+                            source.voiceIndex, temp,
+                            kWaveformPoints, 0.05);
+                    } else {
+                        audioEngine_.getVoiceFilteredWaveformSnapshot(
+                            source.voiceIndex, temp,
+                            kWaveformPoints, 0.05);
+                    }
                 } else {
                     continue;
                 }
@@ -2511,11 +2535,14 @@ void MainComponent::paintModuleConnections(
                     const int periodSamples = kWaveformPoints;
 
                     const bool tiled = !involvesSampleplay;
+                    const float normalisation =
+                        (fromIsGenerator && norm > 0.0F)
+                            ? norm
+                            : 1.0F;
                     drawWaveformOnLine(
                         p1, splitPoint, waveformAmplitude,
                         waveformThickness, tempWave, periodSamples,
-                        /*normalisation=*/1.0F,
-                        segmentsForWaveform,
+                        normalisation, segmentsForWaveform,
                         /*tiled=*/tiled);
                     drewWave = true;
                 }
@@ -2577,11 +2604,14 @@ void MainComponent::paintModuleConnections(
                             kWaveformPoints;
 
                         const bool tiled = !involvesSampleplay;
+                        const float normalisation =
+                            (fromIsGenerator && norm > 0.0F)
+                                ? norm
+                                : 1.0F;
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
                             waveformThickness, tempWave,
-                            periodSamples,
-                            /*normalisation=*/1.0F, 72,
+                            periodSamples, normalisation, 72,
                             /*tiled=*/tiled);
                         drewWave = true;
                     }
@@ -2628,11 +2658,14 @@ void MainComponent::paintModuleConnections(
                         const int periodSamples =
                             kWaveformPoints;
                         const bool tiled = !involvesSampleplay;
+                        const float normalisation =
+                            (fromIsGenerator && norm > 0.0F)
+                                ? norm
+                                : 1.0F;
                         drawWaveformOnLine(
                             p1, p2, waveformAmplitude,
                             waveformThickness, tempWave,
-                            periodSamples,
-                            /*normalisation=*/1.0F, 72,
+                            periodSamples, normalisation, 72,
                             /*tiled=*/tiled);
                         drewWave = true;
                     }

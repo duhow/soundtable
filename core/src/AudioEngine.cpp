@@ -58,6 +58,12 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     visualVoices_.setSampleRate(sampleRate_);
     visualVoices_.reset();
 
+    // Keep the pre-filter oscillator voices in sync with the same
+    // sample rate and reset their history so that pre/post snapshots
+    // start from a consistent state on device (re)start.
+    oscPreVoices_.setSampleRate(sampleRate_);
+    oscPreVoices_.reset();
+
     // Reset transport state so that loop alignment and beat-synced
     // visuals start from a known position when the device starts.
     transportBeatsInternal_ = 0.0;
@@ -617,21 +623,27 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         ? baseLevel
                         : targetLevelNow;
 
-                // Compute the per-voice audio sample after the
+                // Compute per-voice samples before and after the
                 // per-voice filter, including both envelope and
-                // level. This value feeds both the visualisation
-                // backend (Voices) and the actual mono mix.
+                // level. The pre-filter value feeds the dedicated
+                // oscillator pre-history used for Osc → Filter
+                // visuals, while the post-filter value feeds the
+                // unified visual Voices container and the actual
+                // mono mix.
+                const float voiceSamplePre =
+                    static_cast<float>(levelForMix * envAmp) * raw;
                 const float voiceSamplePost =
                     static_cast<float>(levelForMix * envAmp) * s;
 
-                // Mirror the per-voice post-filter signal into the
-                // unified visual Voices container so that each
-                // oscillator voice has its own history buffer. Voice
-                // ids [0, kMaxVoices) are reserved for oscillator
-                // voices; Loop modules and otros productores se
-                // sitúan a partir de kMaxVoices.
-                const float visualSample = voiceSamplePost;
-                visualVoices_.writeSamples(v, &visualSample, 1);
+                // Pre-filter visual history for Oscillator voices.
+                oscPreVoices_.writeSamples(v, &voiceSamplePre, 1);
+
+                // Post-filter visual history for Oscillator voices
+                // in the unified container. Voice ids
+                // [0, kMaxVoices) are reserved for oscillator
+                // voices; Loop modules and other producers are
+                // placed after that range.
+                visualVoices_.writeSamples(v, &voiceSamplePost, 1);
 
                 // Mix the post-filter, envelope- and level-shaped
                 // voice signal into the global oscillator mono bus.
@@ -928,8 +940,22 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const float monoDry = l;
                         const float monoWithGain = monoDry * finalGain;
                         if (finalGain > 0.0F) {
-                            loopMixedL += monoWithGain;
-                            loopMixedR += r * finalGain;
+                            const bool routeThroughFilter =
+                                instance.routeThroughFilter.load(
+                                    std::memory_order_relaxed);
+                            if (routeThroughFilter) {
+                                loopMixedL += monoWithGain;
+                                loopMixedR += r * finalGain;
+                            } else {
+                                // Loops without an active Loop →
+                                // Filter route bypass the Loop bus
+                                // filter and are mixed directly into
+                                // the master output so that they are
+                                // not affected by filters intended
+                                // only for specific Loop chains.
+                                leftOut += monoWithGain;
+                                rightOut += r * finalGain;
+                            }
                         }
 
                         const int wfIndex = instance.visualWaveformIndex;
@@ -1288,8 +1314,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const float monoDry = l;
                         const float monoWithGain = monoDry * finalGain;
                         if (finalGain > 0.0F) {
-                            loopMixedL += monoWithGain;
-                            loopMixedR += r * finalGain;
+                            const bool routeThroughFilter =
+                                instance.routeThroughFilter.load(
+                                    std::memory_order_relaxed);
+                            if (routeThroughFilter) {
+                                loopMixedL += monoWithGain;
+                                loopMixedR += r * finalGain;
+                            } else {
+                                leftOut += monoWithGain;
+                                rightOut += r * finalGain;
+                            }
                         }
 
                         const int wfIndex = instance.visualWaveformIndex;
@@ -1621,7 +1655,8 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
                                       const float attackMs,
                                       const float decayMs,
                                       const float durationMs,
-                                      const float releaseMs)
+                                      const float releaseMs,
+                                      const bool routeThroughFilter)
 {
     auto it = loopModules_.find(moduleId);
     if (it == loopModules_.end()) {
@@ -1654,6 +1689,9 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
     const float clampedGain = juce::jlimit(0.0F, 1.0F, linearGain);
     instance.gain.store(clampedGain, std::memory_order_relaxed);
 
+    instance.routeThroughFilter.store(routeThroughFilter,
+                                      std::memory_order_relaxed);
+
     instance.attackMs.store(attackMs, std::memory_order_relaxed);
     instance.decayMs.store(decayMs, std::memory_order_relaxed);
     instance.durationMs.store(durationMs, std::memory_order_relaxed);
@@ -1684,6 +1722,8 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
                                            std::memory_order_relaxed);
             snapIt->second.visualWaveformIndex =
                 instance.visualWaveformIndex;
+            snapIt->second.routeThroughFilter.store(
+                routeThroughFilter, std::memory_order_relaxed);
         }
     }
 }
@@ -2047,9 +2087,11 @@ void AudioEngine::getVoiceWaveformSnapshot(const int voiceIndex,
         voiceIndex < 0 || voiceIndex >= kMaxVoices) {
         return;
     }
-    // Delegate to the unified visual Voices container, using the
-    // per-voice oscillator ids [0, kMaxVoices).
-    visualVoices_.getSnapshot(voiceIndex, dst, numPoints, windowSeconds);
+    // Delegate to the dedicated pre-filter oscillator history so that
+    // callers can visualise the generator signal before the
+    // per-voice filter is applied (e.g. Osc → Filter connections).
+    oscPreVoices_.getSnapshot(voiceIndex, dst, numPoints,
+                              windowSeconds);
 }
 
 void AudioEngine::getVoiceFilteredWaveformSnapshot(const int voiceIndex,

@@ -230,7 +230,8 @@ public:
                              float attackMs,
                              float decayMs,
                              float durationMs,
-                             float releaseMs);
+                             float releaseMs,
+                             bool routeThroughFilter);
 
     // Sets the global tempo in beats per minute used to time-align
     // loop playback. Loops with a valid `beats` value will adjust
@@ -334,10 +335,18 @@ private:
         kVisualVoiceIdLoopBus + 1;
 
     // Visual voices container used to keep per-module (and bus-level)
-    // waveform history in a unified structure. The UI still relies on
-    // the legacy waveform buffers for now but will transition to this
-    // layout in posteriores fases del refactor.
+    // waveform history in a unified structure. The UI samples these
+    // histories via lightweight wrappers that expose per-voice and
+    // per-bus snapshots.
     rectai::Voices visualVoices_{kNumVisualVoices, kWaveformHistorySize};
+
+    // Separate pre-filter visual history for generator voices. This
+    // mirrors the per-voice signal after envelope/level but before the
+    // per-voice filter, allowing connections such as Oscillator →
+    // Filter to display the original generator waveform while
+    // downstream segments (Filter → Master) use the post-filter
+    // history stored in `visualVoices_`.
+    rectai::Voices oscPreVoices_{kMaxVoices, kWaveformHistorySize};
 
     struct Voice {
         std::atomic<double> frequency{0.0};
@@ -518,11 +527,19 @@ private:
         double envTimeInPhase{0.0};
         double prevTargetGain{0.0};
 
-        // Index into `loopWaveformBuffers_` used solely for
+        // Index into the visual loop waveform slots used solely for
         // visualisation. Managed from the UI thread when
         // `setLoopModuleParams` is called and consumed on the audio
         // thread via the snapshot map.
         int visualWaveformIndex{-1};
+
+        // When true, this Loop instance is considered upstream of the
+        // global Loop bus filter. Its audio contribution is routed
+        // through the Loop bus (and thus affected by the selected
+        // Filter module) instead of being mixed directly into the
+        // master output. Controlled from the UI thread according to
+        // active Loop → Filter connections.
+        std::atomic<bool> routeThroughFilter{false};
 
         LoopInstance() = default;
 
@@ -541,6 +558,10 @@ private:
             gain.store(other.gain.load(std::memory_order_relaxed),
                        std::memory_order_relaxed);
             visualWaveformIndex = other.visualWaveformIndex;
+            routeThroughFilter.store(
+                other.routeThroughFilter.load(
+                    std::memory_order_relaxed),
+                std::memory_order_relaxed);
         }
 
         LoopInstance& operator=(const LoopInstance& other)
@@ -557,6 +578,10 @@ private:
                     other.gain.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
                 visualWaveformIndex = other.visualWaveformIndex;
+                routeThroughFilter.store(
+                    other.routeThroughFilter.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
             }
             return *this;
         }
@@ -573,6 +598,10 @@ private:
             gain.store(other.gain.load(std::memory_order_relaxed),
                        std::memory_order_relaxed);
             visualWaveformIndex = other.visualWaveformIndex;
+            routeThroughFilter.store(
+                other.routeThroughFilter.load(
+                    std::memory_order_relaxed),
+                std::memory_order_relaxed);
         }
 
         LoopInstance& operator=(LoopInstance&& other) noexcept
@@ -589,6 +618,10 @@ private:
                     other.gain.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
                 visualWaveformIndex = other.visualWaveformIndex;
+                routeThroughFilter.store(
+                    other.routeThroughFilter.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
             }
             return *this;
         }

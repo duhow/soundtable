@@ -283,7 +283,8 @@ void MainComponent::updateAudioRoutingAndVoices(
                                              loopEnv.attack,
                                              loopEnv.decay,
                                              loopEnv.duration,
-                                             loopEnv.release);
+                                             loopEnv.release,
+                                             /*routeThroughFilter=*/false);
             continue;
         }
 
@@ -328,6 +329,72 @@ void MainComponent::updateAudioRoutingAndVoices(
             loopGain = 0.0F;
         }
 
+        // Determine whether this Loop module currently feeds at
+        // least one active Filter module via an audio edge that is
+        // inside the musical area, respects the geometric cone for
+        // dynamic links and is not muted at connection level. Only
+        // such loops should be processed by the global Loop bus
+        // filter; the rest bypass the bus and mix directly to the
+        // master so that connecting a single Loop → Filter does not
+        // unintentionally filter all Loop instances.
+        bool routeThroughLoopFilter = false;
+        for (const auto& edge : audioEdges) {
+            if (edge.from_module_id != loopModule->id() ||
+                edge.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                continue;
+            }
+
+            const auto destModIt = modules.find(edge.to_module_id);
+            if (destModIt == modules.end() ||
+                destModIt->second == nullptr) {
+                continue;
+            }
+
+            auto* candidateFilter =
+                dynamic_cast<rectai::FilterModule*>(
+                    destModIt->second.get());
+            if (candidateFilter == nullptr) {
+                continue;
+            }
+
+            const auto toObjIdIt =
+                moduleToObjectId.find(edge.to_module_id);
+            if (toObjIdIt == moduleToObjectId.end()) {
+                continue;
+            }
+
+            const auto objIt = objects.find(toObjIdIt->second);
+            if (objIt == objects.end()) {
+                continue;
+            }
+
+            const auto& destObj = objIt->second;
+            if (!isInsideMusicArea(destObj)) {
+                continue;
+            }
+
+            if (!edge.is_hardlink &&
+                !isConnectionGeometricallyActive(obj, destObj)) {
+                continue;
+            }
+
+            rectai::Connection tmpConn{edge.from_module_id,
+                                       edge.from_port_name,
+                                       edge.to_module_id,
+                                       edge.to_port_name,
+                                       edge.is_hardlink};
+            const std::string key = makeConnectionKey(tmpConn);
+            const bool connIsMuted =
+                mutedConnections_.find(key) !=
+                mutedConnections_.end();
+            if (connIsMuted) {
+                continue;
+            }
+
+            routeThroughLoopFilter = true;
+            break;
+        }
+
         // Derive selected slot index from the normalised "sample"
         // parameter in [0,1]. We quantise it to four segments.
         float sampleParam = loopModule->GetParameterOrDefault(
@@ -341,11 +408,12 @@ void MainComponent::updateAudioRoutingAndVoices(
         }
 
         audioEngine_.setLoopModuleParams(loopModule->id(),
-                         selectedIndex, loopGain,
-                         loopEnv.attack,
-                         loopEnv.decay,
-                         loopEnv.duration,
-                         loopEnv.release);
+                 selectedIndex, loopGain,
+                 loopEnv.attack,
+                 loopEnv.decay,
+                 loopEnv.duration,
+                 loopEnv.release,
+                 routeThroughLoopFilter);
 
         if (loopGain > 0.0F) {
             modulesWithActiveAudio_.insert(loopModule->id());
