@@ -38,6 +38,21 @@ AudioEngine::AudioEngine()
     // time. The initial graph is simply empty.
     audioGraph_ = std::make_unique<rectai::AudioGraph>();
 
+    // Initialise per-voice RNG state for noise waveforms. The
+    // xorshift32 algorithm used in the audio callback treats an
+    // all-zero state as a fixed point that would generate silence,
+    // so ensure that each voice starts from a distinct non-zero
+    // seed.
+    for (int v = 0; v < kMaxVoices; ++v) {
+        std::uint32_t seed = static_cast<std::uint32_t>(0x12345678u) +
+                             static_cast<std::uint32_t>(v) *
+                                 static_cast<std::uint32_t>(0x9E3779B9u);
+        if (seed == 0u) {
+            seed = 1u;
+        }
+        noiseState_[v] = seed;
+    }
+
     // Register basic audio formats once; used for Loop module
     // sample decoding (WAV/FLAC/Ogg/Opus, depending on JUCE
     // configuration).
