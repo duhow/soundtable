@@ -181,7 +181,7 @@ int main(int argc, char** argv)
 	program.add_argument("-af", "--no-autofocus")
 	    .help("Disable continuous camera autofocus when supported.")
 	    .flag();
-	program.add_argument("-v", "--viewer")
+	program.add_argument("-w", "--viewer")
 	    .help("Show debug thresholded view from TrackerEngine.")
 	    .flag();
 	program.add_argument("-ds", "--no-downscale")
@@ -193,7 +193,7 @@ int main(int argc, char** argv)
 	program.add_argument("--only-filter")
 	    .help("Always run a single threshold filter (no adaptive multi-filter training).")
 	    .flag();
-	program.add_argument("-f", "--filter")
+	program.add_argument("-l", "--filter")
 	    .help("Select threshold filter (implies --only-filter). Supported: otsu, otsu-inv, adaptive, adaptive-inv.")
 	    .default_value(std::string{});
 
