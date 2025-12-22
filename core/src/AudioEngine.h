@@ -263,6 +263,20 @@ public:
     void advanceLoopBeatCounter();
     [[nodiscard]] unsigned int loopBeatCounter() const noexcept;
 
+    // Configures the global Delay / Reverb FX bus driven by
+    // DelayModule instances in the Scene. `mode` selects the
+    // processing variant: 0 = bypass, 1 = feedback delay, 2 =
+    // reverb. `delayNormalised` is the normalised delay parameter in
+    // [0,1] as stored in the Scene (mapped to musical beat lengths on
+    // the audio thread), `feedback` controls the feedback amount in
+    // [0,1] for the feedback delay mode, `reverbAmount` controls the
+    // overall wetness of the reverb mode in [0,1], and `wetGain`
+    // applies an additional linear gain to the delayed/reverberated
+    // signal before it is mixed with the dry input.
+    void setDelayFxParams(int mode, float delayNormalised,
+                          float feedback, float reverbAmount,
+                          float wetGain);
+
     // Returns the current global transport position in beats as
     // driven by the audio callback using the configured BPM and
     // sample rate. This serves as the master clock for Sequencer
@@ -348,6 +362,18 @@ private:
     // history stored in `visualVoices_`.
     rectai::Voices oscPreVoices_{kMaxVoices, kWaveformHistorySize};
 
+    // Maximum delay time supported by the global Delay FX bus, in
+    // seconds. This is intentionally conservative to keep memory
+    // usage bounded while still covering typical musical delay
+    // lengths (up to ~4 bars at moderate tempos).
+    static constexpr double kMaxDelaySeconds = 4.0;
+
+    // Corresponding maximum number of samples in the delay ring
+    // buffers. We size the buffers for the worst-case combination of
+    // sample rate and maximum delay time we expect to support (for
+    // example, 48 kHz * 4 seconds).
+    static constexpr int kMaxDelaySamples = 192000;
+
     struct Voice {
         std::atomic<double> frequency{0.0};
         std::atomic<float> level{0.0F};
@@ -409,6 +435,32 @@ private:
     // Per-voice state-variable filters implemented using JUCE's DSP
     // module for improved stability and sound quality.
     juce::dsp::StateVariableTPTFilter<float> filters_[kMaxVoices]{};
+
+    // Global Delay / Reverb FX bus state. A single instance is
+    // applied to the final stereo mix when a DelayModule tangible is
+    // active and connected to the master Output. Parameters are
+    // driven from the UI thread via `setDelayFxParams` and consumed
+    // atomically on the audio thread.
+    struct DelayFxState {
+        std::atomic<int> mode{0};           // 0=bypass,1=delay,2=reverb
+        std::atomic<float> delayNormalised{0.66F};
+        std::atomic<float> feedback{0.5F};
+        std::atomic<float> reverbAmount{0.5F};
+        std::atomic<float> wetGain{1.0F};
+    };
+
+    DelayFxState delayFx_{};
+
+    // Simple stereo ring buffers used to implement the feedback
+    // delay line for the Delay FX mode. Accessed exclusively on the
+    // audio thread.
+    std::vector<float> delayBufferL_;
+    std::vector<float> delayBufferR_;
+    int delayWriteIndex_{0};
+
+    // Lightweight JUCE reverb instance used for the DelayModule
+    // "reverb" mode when the FX bus is active.
+    juce::Reverb reverb_{};
 
     // Global gain applied to the Sampleplay (SoundFont) path before it
     // is mixed with the procedural oscillators. This allows the UI to

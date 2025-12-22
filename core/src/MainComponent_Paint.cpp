@@ -2847,6 +2847,10 @@ void MainComponent::paintObjectsAndPanels(
             (moduleForObject != nullptr &&
              moduleForObject->is<rectai::TempoModule>());
 
+        const bool isDelayModule =
+            (moduleForObject != nullptr &&
+             moduleForObject->is<rectai::DelayModule>());
+
         float freqValue = 0.5F;
         float gainValue = 0.5F;
         bool showFreqControl = false;
@@ -2860,6 +2864,24 @@ void MainComponent::paintObjectsAndPanels(
                 // "sample" parameter.
                 freqValue = moduleForObject->GetParameterOrDefault(
                     "sample", 0.0F);
+            } else if (isDelayModule) {
+                // For Delay modules the left bar represents either
+                // the normalised delay time (feedback mode) or the
+                // effect amount (reverb mode).
+                const auto* mode = moduleForObject->current_mode();
+                const bool isFeedbackMode =
+                    (mode != nullptr && mode->type == "feedback");
+
+                if (isFeedbackMode) {
+                    freqValue = moduleForObject->GetParameterOrDefault(
+                        "delay", 0.66F);
+                } else {
+                    // In reverb mode, reuse the feedback parameter
+                    // as an intuitive "amount" control for the
+                    // effect on the side bar.
+                    freqValue = moduleForObject->GetParameterOrDefault(
+                        "fb", 0.5F);
+                }
             } else if (!moduleForObject->uses_pitch_control()) {
                 freqValue = moduleForObject->GetParameterOrDefault(
                     "freq",
@@ -2893,7 +2915,8 @@ void MainComponent::paintObjectsAndPanels(
                 moduleForObject->uses_frequency_control() ||
                 moduleForObject->uses_pitch_control() ||
                 isTempoModule ||
-                moduleForObject->is<rectai::LoopModule>();
+                moduleForObject->is<rectai::LoopModule>() ||
+                isDelayModule;
             showGainControl = moduleForObject->uses_gain_control();
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
@@ -3116,6 +3139,96 @@ void MainComponent::paintNodeSideControls(
         const juce::Colour freqForegroundColour =
             juce::Colours::white.withAlpha(1.0F * modeMenuAlpha);
 
+        auto paintGenericFreqArc = [&](float value) {
+            juce::Path freqArc;
+            const int arcSegments = 40;
+            for (int i = 0; i <= arcSegments; ++i) {
+                const float t = static_cast<float>(i) /
+                                static_cast<float>(arcSegments);
+                const float y = juce::jmap(t, 0.0F, 1.0F,
+                                           sliderTop, sliderBottom);
+                const float dy = y - cy;
+                const float inside =
+                    ringRadius * ringRadius - dy * dy;
+                if (inside < 0.0F) {
+                    continue;
+                }
+                const float dx = std::sqrt(inside);
+                const float x = cx - dx;
+                if (i == 0) {
+                    freqArc.startNewSubPath(x, y);
+                } else {
+                    freqArc.lineTo(x, y);
+                }
+            }
+
+            const bool freqIsFull = (value >= 0.999F);
+            const bool freqIsEmpty = (value <= 0.001F);
+
+            if (freqIsEmpty) {
+                g.setColour(freqBackgroundColour);
+                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+            } else {
+                const float handleY = juce::jmap(value, 0.0F, 1.0F,
+                                                 sliderBottom,
+                                                 sliderTop);
+
+                juce::Colour effectiveFreqBackground =
+                    freqBackgroundColour;
+                juce::Colour effectiveFreqForeground =
+                    freqForegroundColour;
+
+                if (freqIsFull) {
+                    effectiveFreqBackground = freqForegroundColour;
+                }
+
+                g.setColour(effectiveFreqBackground);
+                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+
+                const float handleT = juce::jmap(handleY,
+                                                 sliderTop,
+                                                 sliderBottom,
+                                                 0.0F,
+                                                 1.0F);
+
+                juce::Path filledArc;
+                const int segments = 64;
+                bool started = false;
+                for (int i = 0; i <= segments; ++i) {
+                    const float t = static_cast<float>(i) /
+                                    static_cast<float>(segments);
+                    if (t < handleT) {
+                        continue;
+                    }
+
+                    const float y = juce::jmap(t, 0.0F, 1.0F,
+                                               sliderTop,
+                                               sliderBottom);
+                    const float dy = y - cy;
+                    const float inside =
+                        ringRadius * ringRadius - dy * dy;
+                    if (inside < 0.0F) {
+                        continue;
+                    }
+                    const float dx = std::sqrt(inside);
+                    const float x = cx - dx;
+
+                    if (!started) {
+                        filledArc.startNewSubPath(x, y);
+                        started = true;
+                    } else {
+                        filledArc.lineTo(x, y);
+                    }
+                }
+
+                if (!filledArc.isEmpty()) {
+                    g.setColour(effectiveFreqForeground);
+                    g.strokePath(filledArc,
+                                 juce::PathStrokeType(5.0F));
+                }
+            }
+        };
+
         if (moduleForObject != nullptr &&
             moduleForObject->uses_pitch_control()) {
             const float midiNote = moduleForObject->GetParameterOrDefault(
@@ -3283,7 +3396,7 @@ void MainComponent::paintNodeSideControls(
             g.setColour(freqForegroundColour);
             g.fillPath(tri);
         } else if (moduleForObject != nullptr &&
-                   moduleForObject->is<rectai::LoopModule>()) {
+               moduleForObject->is<rectai::LoopModule>()) {
             const int segmentsCount = 4;
             const float gap = 1.0F;
 
@@ -3389,71 +3502,37 @@ void MainComponent::paintNodeSideControls(
                 g.setColour(freqForegroundColour);
                 g.fillPath(tri);
             }
-        } else {
-            juce::Path freqArc;
-            const int arcSegments = 40;
-            for (int i = 0; i <= arcSegments; ++i) {
-                const float t = static_cast<float>(i) /
-                                static_cast<float>(arcSegments);
-                const float y = juce::jmap(t, 0.0F, 1.0F,
-                                           sliderTop, sliderBottom);
-                const float dy = y - cy;
-                const float inside =
-                    ringRadius * ringRadius - dy * dy;
-                if (inside < 0.0F) {
-                    continue;
-                }
-                const float dx = std::sqrt(inside);
-                const float x = cx - dx;
-                if (i == 0) {
-                    freqArc.startNewSubPath(x, y);
-                } else {
-                    freqArc.lineTo(x, y);
-                }
-            }
+             } else if (moduleForObject != nullptr &&
+                  moduleForObject->is<rectai::DelayModule>()) {
+            const auto* mode = moduleForObject->current_mode();
+            const bool isFeedbackMode =
+                (mode != nullptr && mode->type == "feedback");
 
-            const bool freqIsFull = (freqValue >= 0.999F);
-            const bool freqIsEmpty = (freqValue <= 0.001F);
-
-            if (freqIsEmpty) {
-                g.setColour(freqBackgroundColour);
-                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
+            if (!isFeedbackMode) {
+                // For non-feedback modes (e.g. reverb), fall back to
+                // the generic freq arc, using the mapped value.
+                paintGenericFreqArc(freqValue);
             } else {
-                const float handleY = juce::jmap(freqValue, 0.0F, 1.0F,
-                                                 sliderBottom,
-                                                 sliderTop);
+                // Feedback mode: draw a two-part delay bar where the
+                // lower half is a continuous bar and the upper half
+                // is split into 8 equal-sized segments. The control
+                // value `freqValue` runs from 0–1: in the lower half
+                // it behaves as a standard filled bar, and in the
+                // upper half it selects one of the 8 small segments.
+                const float value = juce::jlimit(0.0F, 1.0F, freqValue);
 
-                juce::Colour effectiveFreqBackground =
-                    freqBackgroundColour;
-                juce::Colour effectiveFreqForeground =
-                    freqForegroundColour;
+                const float splitT = 0.5F;
 
-                if (freqIsFull) {
-                    effectiveFreqBackground = freqForegroundColour;
-                }
-
-                g.setColour(effectiveFreqBackground);
-                g.strokePath(freqArc, juce::PathStrokeType(5.0F));
-
-                const float handleT = juce::jmap(handleY,
-                                                 sliderTop,
-                                                 sliderBottom,
-                                                 0.0F,
-                                                 1.0F);
-
-                juce::Path filledArc;
-                const int segments = 64;
-                bool started = false;
-                for (int i = 0; i <= segments; ++i) {
-                    const float t = static_cast<float>(i) /
-                                    static_cast<float>(segments);
-                    if (t < handleT) {
-                        continue;
-                    }
-
+                // Bottom continuous bar geometry (lower half).
+                juce::Path bottomPath;
+                const int bottomSteps = 32;
+                for (int i = 0; i <= bottomSteps; ++i) {
+                    const float localT = static_cast<float>(i) /
+                                         static_cast<float>(bottomSteps);
+                    const float t = juce::jmap(localT, 0.0F, 1.0F,
+                                               splitT, 1.0F);
                     const float y = juce::jmap(t, 0.0F, 1.0F,
-                                               sliderTop,
-                                               sliderBottom);
+                                               sliderTop, sliderBottom);
                     const float dy = y - cy;
                     const float inside =
                         ringRadius * ringRadius - dy * dy;
@@ -3462,21 +3541,203 @@ void MainComponent::paintNodeSideControls(
                     }
                     const float dx = std::sqrt(inside);
                     const float x = cx - dx;
-
-                    if (!started) {
-                        filledArc.startNewSubPath(x, y);
-                        started = true;
+                    if (i == 0) {
+                        bottomPath.startNewSubPath(x, y);
                     } else {
-                        filledArc.lineTo(x, y);
+                        bottomPath.lineTo(x, y);
                     }
                 }
 
-                if (!filledArc.isEmpty()) {
-                    g.setColour(effectiveFreqForeground);
-                    g.strokePath(filledArc,
-                                 juce::PathStrokeType(5.0F));
+                // Background for the bottom bar is always visible.
+                g.setColour(freqBackgroundColour);
+                g.strokePath(bottomPath, juce::PathStrokeType(5.0F));
+
+                // Filled portion of the large bottom segment. Values
+                // in [0, splitT] progressively fill the bar; above
+                // splitT the bar remains fully filled.
+                const float bottomFill01 =
+                    juce::jlimit(0.0F, 1.0F, value / splitT);
+                if (bottomFill01 > 0.001F) {
+                    juce::Path bottomFilled;
+                    const float threshold = 1.0F - bottomFill01;
+                    bool started = false;
+                    for (int i = 0; i <= bottomSteps; ++i) {
+                        const float localT = static_cast<float>(i) /
+                                             static_cast<float>(bottomSteps);
+                        if (localT < threshold) {
+                            continue;
+                        }
+                        const float t = juce::jmap(localT, 0.0F, 1.0F,
+                                                   splitT, 1.0F);
+                        const float y = juce::jmap(t, 0.0F, 1.0F,
+                                                   sliderTop,
+                                                   sliderBottom);
+                        const float dy = y - cy;
+                        const float inside =
+                            ringRadius * ringRadius - dy * dy;
+                        if (inside < 0.0F) {
+                            continue;
+                        }
+                        const float dx = std::sqrt(inside);
+                        const float x = cx - dx;
+                        if (!started) {
+                            bottomFilled.startNewSubPath(x, y);
+                            started = true;
+                        } else {
+                            bottomFilled.lineTo(x, y);
+                        }
+                    }
+
+                    if (!bottomFilled.isEmpty()) {
+                        g.setColour(freqForegroundColour);
+                        g.strokePath(bottomFilled,
+                                     juce::PathStrokeType(5.0F));
+                    }
+                }
+
+                constexpr int kSegments = 8;
+
+                // Active small segment in the upper half when the
+                // control is above the split.
+                int activeIndex = -1;
+                if (value > splitT) {
+                    const float topNorm = juce::jlimit(
+                        0.0F, 1.0F,
+                        (value - splitT) / (1.0F - splitT));
+                    activeIndex = static_cast<int>(topNorm *
+                                                   static_cast<float>(kSegments));
+                    if (activeIndex < 0) {
+                        activeIndex = 0;
+                    } else if (activeIndex >= kSegments) {
+                        activeIndex = kSegments - 1;
+                    }
+                }
+
+                // Place eight equal-sized segments in the upper half
+                // of the side arc (0 → splitT), from bottom (near
+                // splitT) to top (near 0), with a small gap between
+                // each one.
+                for (int i = 0; i < kSegments; ++i) {
+                    const float segStartNorm = static_cast<float>(i) /
+                                               static_cast<float>(kSegments);
+                    const float segEndNorm = static_cast<float>(i + 1) /
+                                             static_cast<float>(kSegments);
+
+                    float segStartT = juce::jmap(segStartNorm,
+                                                 0.0F, 1.0F,
+                                                 splitT, 0.0F);
+                    float segEndT = juce::jmap(segEndNorm,
+                                               0.0F, 1.0F,
+                                               splitT, 0.0F);
+
+                    // Approximate 1 px separation between segments.
+                    const float segmentGapPixels = 1.0F;
+                    const float shrink = segmentGapPixels / ringRadius;
+                    if (segEndT - segStartT > 2.0F * shrink) {
+                        segStartT += shrink;
+                        segEndT -= shrink;
+                    }
+
+                    juce::Path segPath;
+                    const int segSteps = 16;
+                    for (int s = 0; s <= segSteps; ++s) {
+                        const float tt = static_cast<float>(s) /
+                                         static_cast<float>(segSteps);
+                        const float t = juce::jmap(tt, 0.0F, 1.0F,
+                                                   segStartT, segEndT);
+                        const float y = juce::jmap(t, 0.0F, 1.0F,
+                                                   sliderTop,
+                                                   sliderBottom);
+                        const float dy = y - cy;
+                        const float inside =
+                            ringRadius * ringRadius - dy * dy;
+                        if (inside < 0.0F) {
+                            continue;
+                        }
+                        const float dx = std::sqrt(inside);
+                        const float x = cx - dx;
+                        if (s == 0) {
+                            segPath.startNewSubPath(x, y);
+                        } else {
+                            segPath.lineTo(x, y);
+                        }
+                    }
+
+                    // Background for all upper segments.
+                    g.setColour(freqBackgroundColour);
+                    g.strokePath(segPath, juce::PathStrokeType(5.0F));
+
+                    // Only the active segment is drawn in the
+                    // foreground colour.
+                    if (i == activeIndex) {
+                        g.setColour(freqForegroundColour);
+                        g.strokePath(segPath,
+                                     juce::PathStrokeType(5.0F));
+                    }
+                }
+
+                // Pointer: in the lower half it follows the
+                // continuous fill; in the upper half it points to
+                // the centre of the active small segment.
+                float pointerT = splitT;
+                if (value <= splitT) {
+                    const float frac =
+                        juce::jlimit(0.0F, 1.0F, value / splitT);
+                    pointerT = juce::jmap(frac, 1.0F, splitT,
+                                          splitT, 1.0F);
+                } else if (activeIndex >= 0) {
+                    const float segCenterNorm =
+                        (static_cast<float>(activeIndex) + 0.5F) /
+                        static_cast<float>(kSegments);
+                    pointerT = juce::jmap(segCenterNorm,
+                                           0.0F, 1.0F,
+                                           splitT, 0.0F);
+                }
+
+                const float pointerY = juce::jmap(pointerT,
+                                                  0.0F, 1.0F,
+                                                  sliderTop,
+                                                  sliderBottom);
+                const float dy = pointerY - cy;
+                const float inside =
+                    ringRadius * ringRadius - dy * dy;
+                if (inside > 0.0F) {
+                    const float dx = std::sqrt(inside);
+                    const float barX = cx - dx;
+
+                    const float ux = (barX - cx) / ringRadius;
+                    const float uy = (pointerY - cy) / ringRadius;
+
+                    const float triHeight = 7.0F;
+                    const float halfWidth = 4.5F;
+
+                    const juce::Point<float> tip(barX, pointerY);
+                    const juce::Point<float> baseCenter(
+                        tip.x + ux * triHeight,
+                        tip.y + uy * triHeight);
+
+                    const float tx = -uy;
+                    const float ty = ux;
+
+                    const juce::Point<float> base1(
+                        baseCenter.x + tx * halfWidth,
+                        baseCenter.y + ty * halfWidth);
+                    const juce::Point<float> base2(
+                        baseCenter.x - tx * halfWidth,
+                        baseCenter.y - ty * halfWidth);
+
+                    juce::Path tri;
+                    tri.startNewSubPath(tip);
+                    tri.lineTo(base1);
+                    tri.lineTo(base2);
+                    tri.closeSubPath();
+
+                    g.setColour(freqForegroundColour);
+                    g.fillPath(tri);
                 }
             }
+        } else {
+            paintGenericFreqArc(freqValue);
         }
     }
 

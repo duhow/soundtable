@@ -577,6 +577,9 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
         const bool isTempoModule =
             (moduleForObject != nullptr &&
              moduleForObject->is<rectai::TempoModule>());
+        const bool isDelayModule =
+            (moduleForObject != nullptr &&
+             moduleForObject->is<rectai::DelayModule>());
         bool freqEnabled = false;
         bool gainEnabled = false;
         float freqValue = 0.5F;
@@ -590,6 +593,22 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                 // parameter.
                 freqValue = moduleForObject->GetParameterOrDefault(
                     "sample", 0.0F);
+            } else if (isDelayModule) {
+                // Delay modules reuse the left bar to control either
+                // delay time (feedback mode) or effect amount
+                // (reverb mode), mirroring the visual mapping in
+                // MainComponent_Paint.
+                const auto* mode = moduleForObject->current_mode();
+                const bool isFeedbackMode =
+                    (mode != nullptr && mode->type == "feedback");
+
+                if (isFeedbackMode) {
+                    freqValue = moduleForObject->GetParameterOrDefault(
+                        "delay", 0.66F);
+                } else {
+                    freqValue = moduleForObject->GetParameterOrDefault(
+                        "fb", 0.5F);
+                }
             } else {
                 freqValue = moduleForObject->GetParameterOrDefault(
                     "freq",
@@ -619,7 +638,8 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                 moduleForObject->uses_frequency_control() ||
                 moduleForObject->uses_pitch_control() ||
                 isTempoModule ||
-                moduleForObject->is<rectai::LoopModule>();
+                moduleForObject->is<rectai::LoopModule>() ||
+                isDelayModule;
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
         gainValue = juce::jlimit(0.0F, 1.0F, gainValue);
@@ -848,6 +868,30 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                     owner_.scene_.SetModuleParameter(object.logical_id(),
                                               "sample", sampleValue);
                     owner_.markLoopSampleLabelActive(loopModule->id());
+                } else if (auto* delayModule =
+                               dynamic_cast<rectai::DelayModule*>(
+                                   moduleForFreq)) {
+                    // Map click position on the delay side bar to a
+                    // continuous delay value in [0,1] (feedback
+                    // mode) or a continuous effect amount (reverb
+                    // mode). The DSP sigue cuantizando internamente
+                    // a 8 divisiones rítmicas, pero la UI mantiene
+                    // una barra llena 0–1 donde la mitad inferior
+                    // (0–0.5) corresponde al gran segmento base.
+                    const auto* mode = delayModule->current_mode();
+                    const bool isFeedbackMode =
+                        (mode != nullptr && mode->type == "feedback");
+
+                    const float clamped =
+                        juce::jlimit(0.0F, 1.0F, value);
+
+                    if (isFeedbackMode) {
+                        owner_.scene_.SetModuleParameter(
+                            object.logical_id(), "delay", clamped);
+                    } else {
+                        owner_.scene_.SetModuleParameter(
+                            object.logical_id(), "fb", clamped);
+                    }
                 } else {
                     float previousFreq = 0.0F;
                     if (moduleForFreq != nullptr) {
@@ -2210,8 +2254,8 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 return;
             }
 
-            if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
-                    moduleForFreq)) {
+                    if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
+                        moduleForFreq)) {
                 // Map drag position to one of four discrete
                 // sample slots and update the "sample"
                 // parameter. Also mark the loop label as
@@ -2233,6 +2277,31 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 owner_.scene_.SetModuleParameter(object.logical_id(),
                                           "sample", sampleValue);
                 owner_.markLoopSampleLabelActive(loopModule->id());
+                owner_.repaintWithRateLimit();
+                return;
+            }
+
+            if (auto* delayModule = dynamic_cast<rectai::DelayModule*>(
+                    moduleForFreq)) {
+                // Drag on Delay mirrors the click mapping: delay is
+                // a continuous 0–1 control in feedback mode (barra
+                // llena con mitad inferior 0–0.5 para el segmento
+                // grande) y fb es continuo en modo reverb.
+                const auto* mode = delayModule->current_mode();
+                const bool isFeedbackMode =
+                    (mode != nullptr && mode->type == "feedback");
+
+                const float clamped =
+                    juce::jlimit(0.0F, 1.0F, value);
+
+                if (isFeedbackMode) {
+                    owner_.scene_.SetModuleParameter(
+                        object.logical_id(), "delay", clamped);
+                } else {
+                    owner_.scene_.SetModuleParameter(
+                        object.logical_id(), "fb", clamped);
+                }
+
                 owner_.repaintWithRateLimit();
                 return;
             }

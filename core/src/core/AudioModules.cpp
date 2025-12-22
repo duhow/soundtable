@@ -505,6 +505,8 @@ DelayModule::DelayModule(const std::string& id)
   set_label("Delay");
   set_description("Delay / echo effect.");
   set_mode("feedback");
+  enable_gain_control(true);
+  set_level_mapping(0.0F, 1.0F);
 
   AddInputPort("in", PortSignalKind::kAudio);
   AddOutputPort("out", PortSignalKind::kAudio);
@@ -512,6 +514,27 @@ DelayModule::DelayModule(const std::string& id)
   SetParameter("delay", 0.66F);
   SetParameter("fb", 0.5F);
   SetParameter("sweep", 0.0F);
+  // Per-module wet level applied to the global Delay / Reverb FX
+  // bus when this DelayModule is active.
+  SetParameter("gain", 1.0F);
+}
+
+float DelayModule::default_parameter_value(const std::string& name) const
+{
+  if (name == "delay") {
+    return 0.66F;
+  }
+  if (name == "fb") {
+    return 0.5F;
+  }
+  if (name == "sweep") {
+    return 0.0F;
+  }
+  if (name == "gain") {
+    return 1.0F;
+  }
+
+  return AudioModuleWithEnvelope::default_parameter_value(name);
 }
 
 const AudioModuleModes& DelayModule::supported_modes() const

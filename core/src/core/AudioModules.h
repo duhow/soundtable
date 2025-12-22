@@ -428,6 +428,7 @@ class SequencerModule : public AudioModule {
 class DelayModule : public AudioModuleWithEnvelope {
  public:
         explicit DelayModule(const std::string& id);
+        [[nodiscard]] float default_parameter_value(const std::string& name) const override;
 
         [[nodiscard]] const AudioModuleModes& supported_modes() const override;
 

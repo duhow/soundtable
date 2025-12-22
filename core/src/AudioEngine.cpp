@@ -53,6 +53,11 @@ AudioEngine::AudioEngine()
         noiseState_[v] = seed;
     }
 
+    // Initialise delay line buffers for the global Delay FX bus.
+    delayBufferL_.assign(static_cast<std::size_t>(kMaxDelaySamples), 0.0F);
+    delayBufferR_.assign(static_cast<std::size_t>(kMaxDelaySamples), 0.0F);
+    delayWriteIndex_ = 0;
+
     // Register basic audio formats once; used for Loop module
     // sample decoding (WAV/FLAC/Ogg/Opus, depending on JUCE
     // configuration).
@@ -78,6 +83,13 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     // start from a consistent state on device (re)start.
     oscPreVoices_.setSampleRate(sampleRate_);
     oscPreVoices_.reset();
+
+    // Reset the global Delay / Reverb FX state so that delay lines
+    // and reverb tails start from silence on device (re)start.
+    std::fill(delayBufferL_.begin(), delayBufferL_.end(), 0.0F);
+    std::fill(delayBufferR_.begin(), delayBufferR_.end(), 0.0F);
+    delayWriteIndex_ = 0;
+    reverb_.reset();
 
     // Reset transport state so that loop alignment and beat-synced
     // visuals start from a known position when the device starts.
@@ -232,6 +244,161 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         loopGlobalBpm_.load(std::memory_order_relaxed));
 
     bool blockHasNonZeroOutput = false;
+
+    // Precompute Delay / Reverb FX parameters for this block. These
+    // values are derived from atomics once per callback and then
+    // reused per-sample inside the processing loop to keep the audio
+    // path tight.
+    const int delayFxMode =
+        delayFx_.mode.load(std::memory_order_relaxed);
+    const float delayNormRaw =
+        delayFx_.delayNormalised.load(std::memory_order_relaxed);
+    const float delayFeedbackRaw =
+        delayFx_.feedback.load(std::memory_order_relaxed);
+    const float reverbAmountRaw =
+        delayFx_.reverbAmount.load(std::memory_order_relaxed);
+    const float wetGainRaw =
+        delayFx_.wetGain.load(std::memory_order_relaxed);
+
+    int delaySamplesForBlock = 0;
+    float feedbackForBlock = 0.0F;
+    float reverbAmountForBlock = 0.0F;
+    float wetGainForBlock = 1.0F;
+
+    if (delayFxMode == 1) {  // Feedback delay mode
+        const float clampedNorm =
+            juce::jlimit(0.0F, 1.0F, delayNormRaw);
+        int segment = static_cast<int>(clampedNorm * 8.0F);
+        if (segment < 0) {
+            segment = 0;
+        } else if (segment > 7) {
+            segment = 7;
+        }
+
+        // Musical beat multipliers for the eight discrete delay
+        // segments, ordered from fastest (bottom) to slowest (top):
+        // 1/32, 1/16, 1/8, 1/4, 3/8, 2/4, 4/4, 8/4.
+        static constexpr float kBeatMultipliers[8] = {
+            1.0F / 32.0F,  // 1/32
+            1.0F / 16.0F,  // 1/16
+            1.0F / 8.0F,   // 1/8
+            1.0F / 4.0F,   // 1/4
+            3.0F / 8.0F,   // 3/8
+            2.0F / 4.0F,   // 2/4
+            4.0F / 4.0F,   // 4/4
+            8.0F / 4.0F};  // 8/4
+
+        const float bpmDelay =
+            loopGlobalBpm_.load(std::memory_order_relaxed);
+        double secondsPerBeat = 0.0;
+        if (bpmDelay > 0.0F) {
+            secondsPerBeat =
+                60.0 / static_cast<double>(bpmDelay);
+        }
+        if (secondsPerBeat <= 0.0) {
+            // Fallback to a sensible default (~120 BPM) when no
+            // tempo is configured so that delay times remain
+            // musically usable instead of collapsing to zero.
+            secondsPerBeat = 0.5;
+        }
+
+        const double delaySeconds = std::max(
+            0.01,
+            static_cast<double>(kBeatMultipliers[segment]) *
+                secondsPerBeat);
+
+        const double maxSamples =
+            static_cast<double>(kMaxDelaySamples - 1);
+        const int computedSamples = static_cast<int>(
+            std::round(delaySeconds * sampleRate_));
+        delaySamplesForBlock =
+            juce::jlimit(1, static_cast<int>(maxSamples),
+                         computedSamples);
+
+        feedbackForBlock =
+            juce::jlimit(0.0F, 0.95F, delayFeedbackRaw);
+        wetGainForBlock =
+            juce::jlimit(0.0F, 1.0F, wetGainRaw);
+    } else if (delayFxMode == 2) {  // Reverb mode
+        reverbAmountForBlock =
+            juce::jlimit(0.0F, 1.0F, reverbAmountRaw);
+        wetGainForBlock =
+            juce::jlimit(0.0F, 1.0F, wetGainRaw);
+
+        juce::Reverb::Parameters params;
+        params.roomSize = 0.5F + 0.5F * reverbAmountForBlock;
+        params.damping = 0.2F + 0.6F * reverbAmountForBlock;
+        params.wetLevel = reverbAmountForBlock;
+        params.dryLevel = 1.0F - 0.5F * reverbAmountForBlock;
+        params.width = 1.0F;
+        params.freezeMode = 0.0F;
+        reverb_.setParameters(params);
+    }
+
+    auto applyDelayFxSample =
+        [this, delayFxMode, delaySamplesForBlock, feedbackForBlock,
+         reverbAmountForBlock, wetGainForBlock](float& left, float& right) {
+            if (delayFxMode == 1) {
+                if (delaySamplesForBlock <= 0 ||
+                    delayBufferL_.empty() || delayBufferR_.empty()) {
+                    return;
+                }
+
+                const int bufferSize =
+                    static_cast<int>(delayBufferL_.size());
+                const int writeIndex = delayWriteIndex_;
+                int readIndex = writeIndex - delaySamplesForBlock;
+                if (readIndex < 0) {
+                    readIndex += bufferSize;
+                }
+
+                const float delayedL = delayBufferL_[static_cast<std::size_t>(readIndex)];
+                const float delayedR = delayBufferR_[static_cast<std::size_t>(readIndex)];
+
+                const float fb = feedbackForBlock;
+
+                // Simple feedback delay: delayed signal is fed back
+                // into the buffer scaled by `feedback`, and mixed
+                // with the dry input on output.
+                const float inputL = left;
+                const float inputR = right;
+
+                const float wetL = delayedL * wetGainForBlock;
+                const float wetR = delayedR * wetGainForBlock;
+
+                const float outL = inputL + wetL;
+                const float outR = inputR + wetR;
+
+                const float writeL = inputL + delayedL * fb;
+                const float writeR = inputR + delayedR * fb;
+
+                delayBufferL_[static_cast<std::size_t>(writeIndex)] =
+                    writeL;
+                delayBufferR_[static_cast<std::size_t>(writeIndex)] =
+                    writeR;
+
+                int nextWrite = writeIndex + 1;
+                if (nextWrite >= bufferSize) {
+                    nextWrite = 0;
+                }
+                delayWriteIndex_ = nextWrite;
+
+                left = outL;
+                right = outR;
+            } else if (delayFxMode == 2) {
+                // Use JUCE's built-in Reverb for the reverb mode,
+                // with parameters already configured for this
+                // block. The reverb instance maintains its own
+                // internal state across samples.
+                float l = left;
+                float r = right;
+                reverb_.processStereo(&l, &r, 1);
+                l *= wetGainForBlock;
+                r *= wetGainForBlock;
+                left = l;
+                right = r;
+            }
+        };
 
     for (int sample = 0; sample < numSamples; ++sample) {
         float oscMixed = 0.0F;
@@ -1031,6 +1198,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             leftOut += loopFilteredL;
             rightOut += loopFilteredR;
 
+            // Apply global Delay / Reverb FX when configured.
+            if (delayFxMode != 0) {
+                applyDelayFxSample(leftOut, rightOut);
+            }
+
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
             rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
 
@@ -1388,6 +1560,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
             leftOut += loopFilteredL;
             rightOut += loopFilteredR;
+
+            // Apply global Delay / Reverb FX when configured.
+            if (delayFxMode != 0) {
+                applyDelayFxSample(leftOut, rightOut);
+            }
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
             rightOut = juce::jlimit(-0.9F, 0.9F, rightOut);
@@ -1747,6 +1924,31 @@ void AudioEngine::setLoopGlobalTempo(const float bpm)
 {
     const float clamped = bpm > 0.0F ? bpm : 0.0F;
     loopGlobalBpm_.store(clamped, std::memory_order_relaxed);
+}
+
+void AudioEngine::setDelayFxParams(const int mode,
+                                   const float delayNormalised,
+                                   const float feedback,
+                                   const float reverbAmount,
+                                   const float wetGain)
+{
+    const int clampedMode = juce::jlimit(0, 2, mode);
+    delayFx_.mode.store(clampedMode, std::memory_order_relaxed);
+
+    const float dNorm =
+        juce::jlimit(0.0F, 1.0F, delayNormalised);
+    const float fbClamped = juce::jlimit(0.0F, 1.0F, feedback);
+    const float revClamped =
+        juce::jlimit(0.0F, 1.0F, reverbAmount);
+    const float wetClamped =
+        juce::jlimit(0.0F, 1.0F, wetGain);
+
+    delayFx_.delayNormalised.store(dNorm, std::memory_order_relaxed);
+    delayFx_.feedback.store(fbClamped, std::memory_order_relaxed);
+    delayFx_.reverbAmount.store(revClamped,
+                                std::memory_order_relaxed);
+    delayFx_.wetGain.store(wetClamped,
+                           std::memory_order_relaxed);
 }
 
 void AudioEngine::setLoopBeatPhase(const double beatPhase01)

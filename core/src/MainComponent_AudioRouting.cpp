@@ -220,6 +220,107 @@ void MainComponent::updateAudioRoutingAndVoices(
 
     audioEngine_.setSampleplayOutputGain(sampleplayOutputGain);
 
+    // Configure an optional global Delay / Reverb FX bus based on
+    // active DelayModule instances. For now we approximate the
+    // desired routing by selecting a single Delay module that is
+    // inside the musical area and has an unmuted route to the master
+    // Output, and apply its parameters to a stereo FX stage on the
+    // final mix.
+    int delayFxMode = 0;        // 0=bypass,1=delay,2=reverb
+    float delayParam = 0.0F;    // Normalised delay in [0,1]
+    float fbParam = 0.0F;       // Feedback / reverb amount in [0,1]
+    float reverbAmount = 0.0F;  // Wetness for reverb mode
+    float delayWetGain = 1.0F;  // Per-module wet gain for Delay FX
+
+    {
+        const rectai::DelayModule* activeDelay = nullptr;
+
+        for (const auto& [objId, obj] : objects) {
+            juce::ignoreUnused(objId);
+
+            const auto modIt = modules.find(obj.logical_id());
+            if (modIt == modules.end() || modIt->second == nullptr) {
+                continue;
+            }
+
+            auto* module = modIt->second.get();
+            auto* delayModule =
+                dynamic_cast<rectai::DelayModule*>(module);
+            if (delayModule == nullptr) {
+                continue;
+            }
+
+            if (!isInsideMusicArea(obj)) {
+                continue;
+            }
+
+            // Require at least one unmuted audio route from the
+            // Delay module to the invisible master Output
+            // (MASTER_OUTPUT_ID) so that parked or muted Delay
+            // tangibles do not enable the FX bus.
+            bool hasMasterRoute = false;
+            bool masterRouteMuted = true;
+
+            for (const auto& edge : audioEdges) {
+                if (edge.from_module_id != delayModule->id() ||
+                    edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                    continue;
+                }
+
+                hasMasterRoute = true;
+
+                rectai::Connection tmpConn{
+                    edge.from_module_id,
+                    edge.from_port_name,
+                    edge.to_module_id,
+                    edge.to_port_name,
+                    edge.is_hardlink};
+                const std::string key = makeConnectionKey(tmpConn);
+                const bool connIsMuted =
+                    mutedConnections_.find(key) !=
+                    mutedConnections_.end();
+                if (!connIsMuted) {
+                    masterRouteMuted = false;
+                    break;
+                }
+            }
+
+            if (!hasMasterRoute || masterRouteMuted) {
+                continue;
+            }
+
+            activeDelay = delayModule;
+            break;  // Use the first matching Delay module for now.
+        }
+
+        if (activeDelay != nullptr) {
+            const auto* mode = activeDelay->current_mode();
+            const std::string modeType =
+                (mode != nullptr) ? mode->type : std::string();
+
+            delayParam = activeDelay->GetParameterOrDefault(
+                "delay", 0.66F);
+            fbParam = activeDelay->GetParameterOrDefault(
+                "fb", 0.5F);
+            delayWetGain = activeDelay->GetParameterOrDefault(
+                "gain", activeDelay->default_parameter_value("gain"));
+
+            if (modeType == "feedback") {
+                delayFxMode = 1;
+                reverbAmount = 0.0F;
+            } else if (modeType == "reverb") {
+                delayFxMode = 2;
+                reverbAmount = fbParam;
+            }
+        }
+    }
+
+    audioEngine_.setDelayFxParams(delayFxMode,
+                                  delayParam,
+                                  fbParam,
+                                  reverbAmount,
+                                  delayWetGain);
+
     // Configure per-module Loop parameters (selected slot and gain)
     // based on the current Scene and routing. Loops keep running
     // even when their radial to the master is muted; here we only
