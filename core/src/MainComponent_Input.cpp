@@ -23,6 +23,13 @@ void MainComponent::mouseMove(const juce::MouseEvent& event)
 
 void MainComponent::mouseDoubleClick(const juce::MouseEvent& event)
 {
+    // Ignore right-button double-clicks so that only left-button
+    // double-clicks open the per-module detail panel.
+    if (event.mods.isRightButtonDown()) {
+        juce::Component::mouseDoubleClick(event);
+        return;
+    }
+
     const auto bounds = getLocalBounds().toFloat();
     const auto& objects = scene_.objects();
     const auto& modules = scene_.modules();
@@ -182,63 +189,6 @@ void MainComponent::maybeRetriggerOscillatorOnFreqChange(
         return;
     }
 
-    auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(module);
-    if (oscModule == nullptr) {
-        return;
-    }
-
-    // For Oscillator modules that use a one-shot style envelope
-    // (no sustain plateau), pitch/frequency changes should restart
-    // the envelope so that the updated note is audible after the
-    // previous tail has faded out. For sustaining ADSR-style
-    // envelopes with a clear plateau, changes are treated as
-    // legato pitch bends and do not retrigger, avoiding audible
-    // clicks on every note change.
-    const auto& env = oscModule->envelope();
-
-    bool hasSustainPlateau = false;
-    const auto& xs = env.points_x;
-    const auto& ys = env.points_y;
-    const std::size_t n = ys.size();
-
-    if (n > 0 && xs.size() == n) {
-        constexpr float kMinPlateauWidth = 0.15F;
-
-        float bestLevel = 1.0F;
-        float bestWidth = 0.0F;
-
-        for (std::size_t i = 1; i + 1 < n;) {
-            const float y = ys[i];
-            if (y <= 0.0F) {
-                ++i;
-                continue;
-            }
-
-            std::size_t j = i + 1;
-            while (j + 1 < n && std::abs(ys[j] - y) < 1.0e-3F) {
-                ++j;
-            }
-
-            const float width =
-                static_cast<float>(xs[j - 1] - xs[i]);
-            if (width > bestWidth) {
-                bestWidth = width;
-                bestLevel = y;
-            }
-
-            i = j;
-        }
-
-        if (bestWidth >= kMinPlateauWidth && bestLevel > 0.0F) {
-            hasSustainPlateau = true;
-        }
-    }
-
-    const bool isOneShotEnvelope = !hasSustainPlateau && env.duration > 0.0F;
-    if (!isOneShotEnvelope) {
-        return;
-    }
-
     const auto it = moduleVoiceIndex_.find(moduleId);
     if (it == moduleVoiceIndex_.end()) {
         return;
@@ -249,11 +199,11 @@ void MainComponent::maybeRetriggerOscillatorOnFreqChange(
         return;
     }
 
-    // Treat any pitch/frequency change as a new note event for
-    // Oscillators that behave like one-shot generators so that the
-    // envelope restarts and the updated settings
-    // (attack/decay/sustain/release) are applied consistently,
-    // while sustaining ADSR-style envelopes keep changes legato.
+    // Treat any effective pitch/frequency change as a new MIDI-style
+    // note event for this Oscillator voice so that the envelope
+    // restarts from its attack phase and the updated ADSR settings
+    // are always applied, regardless of whether the visual envelope
+    // has a sustain plateau or behaves like a one-shot shape.
     audioEngine_.triggerVoiceEnvelope(voiceIndex);
 }
 
