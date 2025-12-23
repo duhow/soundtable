@@ -712,7 +712,9 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     //    to load it and validate that it is a proper Reactable
     //    .rtp project.
     if (initialSessionPath.isNotEmpty()) {
-        const juce::File userFile(initialSessionPath);
+        const juce::File userFile =
+            juce::File::getCurrentWorkingDirectory().getChildFile(
+                initialSessionPath);
         if (!userFile.existsAsFile()) {
             juce::Logger::writeToLog(
                 juce::String("[rectai-core] Session file not found: ") +
