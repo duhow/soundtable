@@ -34,6 +34,15 @@ public:
     AudioEngine();
     ~AudioEngine() override;
 
+    // Explicitly shuts down the underlying audio device and detaches
+    // this instance from the JUCE AudioDeviceManager. This can be
+    // called from the main (UI) thread during application shutdown
+    // to ensure that the ALSA audio thread is stopped and the device
+    // handle is closed in a well-defined order before other
+    // resources are torn down. The method is idempotent and safe to
+    // call multiple times.
+    void shutdown();
+
     // Maximum number of independent generator voices mixed by the engine.
     static constexpr int kMaxVoices = 16;
 
@@ -327,6 +336,12 @@ public:
 
 private:
     juce::AudioDeviceManager deviceManager_;
+
+    // Guards the one-time shutdown path so that both an explicit
+    // call from RectaiApplication::shutdown and the AudioEngine
+    // destructor can safely trigger the cleanup sequence without
+    // double-closing the underlying device.
+    bool isShutdown_{false};
 
     double sampleRate_{44100.0};
 

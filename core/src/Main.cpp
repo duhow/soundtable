@@ -157,7 +157,18 @@ public:
     void shutdown() override
     {
         juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+        // Destroy the main window (and its MainComponent) before
+        // shutting down the audio engine so that no UI code keeps
+        // interacting with the engine while the underlying ALSA
+        // device is being closed.
         mainWindow_.reset();
+
+        // Proactively stop the audio engine and close the JUCE
+        // AudioDeviceManager device while the application is still
+        // alive. This gives the ALSA backend time to stop its
+        // internal thread and close the snd_pcm handle in a
+        // well-defined order before global teardown.
+        audioEngine_.shutdown();
     }
 
 private:

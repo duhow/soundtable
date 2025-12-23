@@ -66,6 +66,21 @@ AudioEngine::AudioEngine()
 
 AudioEngine::~AudioEngine()
 {
+    shutdown();
+}
+
+void AudioEngine::shutdown()
+{
+    if (isShutdown_) {
+        return;
+    }
+
+    isShutdown_ = true;
+
+    // Detach this callback from the AudioDeviceManager so that no
+    // further audio callbacks are issued while the engine is being
+    // torn down. The AudioDeviceManager (owned by AudioEngine) will
+    // close the underlying device in its own destructor.
     deviceManager_.removeAudioCallback(this);
 }
 
