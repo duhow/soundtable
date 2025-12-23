@@ -780,10 +780,45 @@ void MainComponent::updateAudioRoutingAndVoices(
     currentLoopFilterModuleId_ = loopFilterModuleId;
 
     // Emit a compact log line with the effective bus filter
-    // configuration so that routing issues can be diagnosed from
-    // the console even in Release builds while this path is
-    // stabilised.
-    {
+    // configuration when it changes so routing issues can be
+    // diagnosed from the console without spamming identical lines.
+    const BusFilterLogState filterLogState{sampleplayFilterModuleId,
+                                           sampleplayFilterMode,
+                                           sampleplayFilterCutoffHz,
+                                           sampleplayFilterQ,
+                                           loopFilterModuleId,
+                                           loopFilterMode,
+                                           loopFilterCutoffHz,
+                                           loopFilterQ};
+
+    bool emitBusFilterLog = !lastBusFilterLogState_.has_value();
+    if (lastBusFilterLogState_.has_value()) {
+        constexpr double kCutoffTolerance = 1.0e-3;
+        constexpr double kQTolerance = 1.0e-4;
+        const auto& prev = *lastBusFilterLogState_;
+
+        emitBusFilterLog =
+            prev.sampleplayFilterModuleId !=
+                filterLogState.sampleplayFilterModuleId ||
+            prev.sampleplayFilterMode !=
+                filterLogState.sampleplayFilterMode ||
+            std::abs(prev.sampleplayFilterCutoffHz -
+                     filterLogState.sampleplayFilterCutoffHz) >
+                kCutoffTolerance ||
+            std::abs(static_cast<double>(prev.sampleplayFilterQ) -
+                     static_cast<double>(filterLogState.sampleplayFilterQ)) >
+                kQTolerance ||
+            prev.loopFilterModuleId !=
+                filterLogState.loopFilterModuleId ||
+            prev.loopFilterMode != filterLogState.loopFilterMode ||
+            std::abs(prev.loopFilterCutoffHz -
+                     filterLogState.loopFilterCutoffHz) > kCutoffTolerance ||
+            std::abs(static_cast<double>(prev.loopFilterQ) -
+                     static_cast<double>(filterLogState.loopFilterQ)) >
+                kQTolerance;
+    }
+
+    if (emitBusFilterLog) {
         juce::String msg("[rectai-core][filter-routing] spModule=");
         if (!sampleplayFilterModuleId.empty()) {
             msg << sampleplayFilterModuleId.c_str();
@@ -804,6 +839,8 @@ void MainComponent::updateAudioRoutingAndVoices(
             << " loopQ=" << loopFilterQ;
         juce::Logger::writeToLog(msg);
     }
+
+    lastBusFilterLogState_ = filterLogState;
 
     struct VoiceParams {
         double frequency{0.0};

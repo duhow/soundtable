@@ -390,6 +390,19 @@ private:
     std::string currentSampleplayFilterModuleId_{};
     std::string currentLoopFilterModuleId_{};
 
+    struct BusFilterLogState {
+        std::string sampleplayFilterModuleId;
+        int sampleplayFilterMode{0};
+        double sampleplayFilterCutoffHz{0.0};
+        float sampleplayFilterQ{0.7071F};
+        std::string loopFilterModuleId;
+        int loopFilterMode{0};
+        double loopFilterCutoffHz{0.0};
+        float loopFilterQ{0.7071F};
+    };
+
+    std::optional<BusFilterLogState> lastBusFilterLogState_{};
+
     // Visual source mapping per audio connection. This is the first
     // step towards conceptual "per-connection buffers": rather than
     // deciding ad-hoc in the paint code whether a connection should
