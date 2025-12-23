@@ -107,15 +107,17 @@ void MainComponent::updateAudioRoutingAndVoices(
     float sampleplayOutputGain = globalVolumeGain;
 
     struct DelaySelection {
-        int mode{0};
+        bool active{false};
         float delayParam{0.0F};
         float feedback{0.0F};
         float reverbAmount{0.0F};
         float wetGain{1.0F};
         bool includeSampleplay{false};
+        std::unordered_set<std::string> voiceModuleIdSet;
+        std::unordered_set<std::string> loopModuleIdSet;
         std::vector<std::string> voiceModuleIds;
         std::vector<std::string> loopModuleIds;
-    } delaySelection;
+    } delaySelectionFeedback, delaySelectionReverb;
 
     // Temporary hold-mute: if the user is holding down either the
     // Sampleplay radial to the master or one of its direct audio
@@ -232,14 +234,103 @@ void MainComponent::updateAudioRoutingAndVoices(
 
     audioEngine_.setSampleplayOutputGain(sampleplayOutputGain);
 
-    // Configure an optional Delay / Reverb FX bus based on active
-    // DelayModule instances. We select the first Delay module inside
-    // the music area with an unmuted route to the master Output and
-    // capture its parameters so they can be applied after mapping
-    // generators to voices.
+    // Configure optional Delay / Reverb FX buses based on all active
+    // DelayModule instances inside the musical area. Each Delay module
+    // contributes the sources connected to it, and the first instance
+    // per mode (feedback / reverb) defines the parameters applied by
+    // the audio engine.
     {
-        const rectai::DelayModule* activeDelay = nullptr;
-        const rectai::ObjectInstance* activeDelayObj = nullptr;
+        auto maybeInitialiseSelection =
+            [](DelaySelection& selection,
+               const rectai::DelayModule& module,
+               const bool isReverb) {
+                if (selection.active) {
+                    return;
+                }
+
+                selection.active = true;
+                selection.delayParam =
+                    module.GetParameterOrDefault("delay", 0.66F);
+                selection.feedback =
+                    module.GetParameterOrDefault("fb", 0.5F);
+                selection.reverbAmount = selection.feedback;
+                selection.wetGain =
+                    module.GetParameterOrDefault(
+                        "gain", module.default_parameter_value("gain"));
+                if (!isReverb) {
+                    selection.reverbAmount = 0.0F;
+                }
+            };
+
+        auto accumulateDelaySources =
+            [&](rectai::DelayModule* delayModule,
+                const rectai::ObjectInstance& delayObj,
+                DelaySelection& selection) {
+                for (const auto& edge : audioEdges) {
+                    if (edge.to_module_id != delayModule->id()) {
+                        continue;
+                    }
+
+                    const auto srcModIt = modules.find(edge.from_module_id);
+                    if (srcModIt == modules.end() ||
+                        srcModIt->second == nullptr) {
+                        continue;
+                    }
+
+                    const auto srcObjIdIt =
+                        moduleToObjectId.find(edge.from_module_id);
+                    if (srcObjIdIt == moduleToObjectId.end()) {
+                        continue;
+                    }
+
+                    const auto srcObjIt = objects.find(srcObjIdIt->second);
+                    if (srcObjIt == objects.end()) {
+                        continue;
+                    }
+
+                    const auto& srcObj = srcObjIt->second;
+                    if (!isInsideMusicArea(srcObj)) {
+                        continue;
+                    }
+
+                    if (!edge.is_hardlink) {
+                        if (!isConnectionGeometricallyActive(srcObj, delayObj)) {
+                            continue;
+                        }
+                    }
+
+                    rectai::Connection tmpConn{
+                        edge.from_module_id,
+                        edge.from_port_name,
+                        edge.to_module_id,
+                        edge.to_port_name,
+                        edge.is_hardlink};
+                    const std::string key = makeConnectionKey(tmpConn);
+                    if (mutedConnections_.find(key) !=
+                        mutedConnections_.end()) {
+                        continue;
+                    }
+
+                    auto* sourceModule = srcModIt->second.get();
+                    if (sourceModule->is<rectai::LoopModule>()) {
+                        if (selection.loopModuleIdSet
+                                .insert(sourceModule->id())
+                                .second) {
+                            selection.loopModuleIds.push_back(
+                                sourceModule->id());
+                        }
+                    } else if (sourceModule->is<rectai::SampleplayModule>()) {
+                        selection.includeSampleplay = true;
+                    } else {
+                        if (selection.voiceModuleIdSet
+                                .insert(sourceModule->id())
+                                .second) {
+                            selection.voiceModuleIds.push_back(
+                                sourceModule->id());
+                        }
+                    }
+                }
+            };
 
         for (const auto& [objId, obj] : objects) {
             juce::ignoreUnused(objId);
@@ -291,110 +382,22 @@ void MainComponent::updateAudioRoutingAndVoices(
                 continue;
             }
 
-            activeDelay = delayModule;
-            activeDelayObj = &obj;
-            break;
-        }
-
-        if (activeDelay != nullptr) {
-            const auto* mode = activeDelay->current_mode();
+            const auto* mode = delayModule->current_mode();
             const std::string modeType =
                 (mode != nullptr) ? mode->type : std::string();
 
-            delaySelection.delayParam =
-                activeDelay->GetParameterOrDefault("delay", 0.66F);
-            delaySelection.feedback =
-                activeDelay->GetParameterOrDefault("fb", 0.5F);
-            delaySelection.wetGain =
-                activeDelay->GetParameterOrDefault(
-                    "gain",
-                    activeDelay->default_parameter_value("gain"));
-
-            if (modeType == "feedback") {
-                delaySelection.mode = 1;
-                delaySelection.reverbAmount = 0.0F;
+            DelaySelection* selection = nullptr;
+            if (modeType == "feedback" || modeType == "delay") {
+                selection = &delaySelectionFeedback;
             } else if (modeType == "reverb") {
-                delaySelection.mode = 2;
-                delaySelection.reverbAmount = delaySelection.feedback;
+                selection = &delaySelectionReverb;
+            } else {
+                continue;
             }
 
-            if (activeDelayObj != nullptr) {
-                std::unordered_set<std::string> delayVoiceSources;
-                std::unordered_set<std::string> delayLoopSources;
-                const auto delayObjIt = moduleToObjectId.find(
-                    activeDelay->id());
-                const auto delayObjSceneIt =
-                    (delayObjIt != moduleToObjectId.end())
-                        ? objects.find(delayObjIt->second)
-                        : objects.end();
-
-                for (const auto& edge : audioEdges) {
-                    if (edge.to_module_id != activeDelay->id()) {
-                        continue;
-                    }
-
-                    const auto srcModIt = modules.find(edge.from_module_id);
-                    if (srcModIt == modules.end() ||
-                        srcModIt->second == nullptr) {
-                        continue;
-                    }
-
-                    const auto srcObjIdIt =
-                        moduleToObjectId.find(edge.from_module_id);
-                    if (srcObjIdIt == moduleToObjectId.end()) {
-                        continue;
-                    }
-
-                    const auto srcObjIt = objects.find(srcObjIdIt->second);
-                    if (srcObjIt == objects.end()) {
-                        continue;
-                    }
-
-                    const auto& srcObj = srcObjIt->second;
-                    if (!isInsideMusicArea(srcObj)) {
-                        continue;
-                    }
-
-                    if (!edge.is_hardlink && delayObjSceneIt != objects.end()) {
-                        if (!isConnectionGeometricallyActive(
-                                srcObj, delayObjSceneIt->second)) {
-                            continue;
-                        }
-                    }
-
-                    rectai::Connection tmpConn{
-                        edge.from_module_id,
-                        edge.from_port_name,
-                        edge.to_module_id,
-                        edge.to_port_name,
-                        edge.is_hardlink};
-                    const std::string key = makeConnectionKey(tmpConn);
-                    if (mutedConnections_.find(key) !=
-                        mutedConnections_.end()) {
-                        continue;
-                    }
-
-                    auto* sourceModule = srcModIt->second.get();
-
-                    if (sourceModule->is<rectai::LoopModule>()) {
-                        if (delayLoopSources
-                                .insert(sourceModule->id())
-                                .second) {
-                            delaySelection.loopModuleIds.push_back(
-                                sourceModule->id());
-                        }
-                    } else if (sourceModule->is<rectai::SampleplayModule>()) {
-                        delaySelection.includeSampleplay = true;
-                    } else {
-                        if (delayVoiceSources
-                                .insert(sourceModule->id())
-                                .second) {
-                            delaySelection.voiceModuleIds.push_back(
-                                sourceModule->id());
-                        }
-                    }
-                }
-            }
+            maybeInitialiseSelection(*selection, *delayModule,
+                                     selection == &delaySelectionReverb);
+            accumulateDelaySources(delayModule, obj, *selection);
         }
     }
 
@@ -1380,47 +1383,79 @@ void MainComponent::updateAudioRoutingAndVoices(
     // routing heuristics based on module types.
     updateConnectionVisualSources();
 
-    AudioEngine::DelayTargetConfig delayTargetConfig;
-    int delayModeToApply = delaySelection.mode;
-
-    if (delayModeToApply != 0) {
-        delayTargetConfig.includeSampleplayBus =
-            delaySelection.includeSampleplay;
-
-        for (const auto& moduleId : delaySelection.voiceModuleIds) {
-            const auto voiceIt = moduleVoiceIndex_.find(moduleId);
-            if (voiceIt == moduleVoiceIndex_.end()) {
-                continue;
+    auto populateDelayTargetConfig =
+        [&](const DelaySelection& selection,
+            AudioEngine::DelayTargetConfig& config) {
+            config = {};
+            config.keepFxAlive = selection.active;
+            if (!selection.active) {
+                return false;
             }
 
-            const int resolvedVoice = voiceIt->second;
-            if (resolvedVoice < 0 ||
-                resolvedVoice >= AudioEngine::kMaxVoices ||
-                resolvedVoice >= 32) {
-                continue;
+            config.includeSampleplayBus = selection.includeSampleplay;
+
+            for (const auto& moduleId : selection.voiceModuleIds) {
+                const auto voiceIt = moduleVoiceIndex_.find(moduleId);
+                if (voiceIt == moduleVoiceIndex_.end()) {
+                    continue;
+                }
+
+                const int resolvedVoice = voiceIt->second;
+                if (resolvedVoice < 0 ||
+                    resolvedVoice >= AudioEngine::kMaxVoices ||
+                    resolvedVoice >= 32) {
+                    continue;
+                }
+
+                config.voiceMask |=
+                    (1u << static_cast<unsigned int>(resolvedVoice));
             }
 
-            delayTargetConfig.voiceMask |=
-                (1u << static_cast<unsigned int>(resolvedVoice));
-        }
+            for (const auto& loopId : selection.loopModuleIds) {
+                if (config.loopTargetCount >=
+                    AudioEngine::DelayTargetConfig::kMaxLoopTargets) {
+                    break;
+                }
 
-        for (const auto& loopId : delaySelection.loopModuleIds) {
-            if (delayTargetConfig.loopTargetCount >=
-                AudioEngine::DelayTargetConfig::kMaxLoopTargets) {
-                break;
-            }
-
-            delayTargetConfig.loopHashes
-                [delayTargetConfig.loopTargetCount] =
+                config.loopHashes[config.loopTargetCount] =
                     rectai::HashModuleId(loopId);
-            ++delayTargetConfig.loopTargetCount;
-        }
-    }
+                ++config.loopTargetCount;
+            }
 
-    audioEngine_.setDelayFxParams(delayModeToApply,
-                                  delaySelection.delayParam,
-                                  delaySelection.feedback,
-                                  delaySelection.reverbAmount,
-                                  delaySelection.wetGain,
-                                  delayTargetConfig);
+                 return config.includeSampleplayBus || config.voiceMask != 0 ||
+                     config.loopTargetCount > 0 || config.applyToGlobalMix;
+        };
+
+    auto applyDelayBusFromSelection =
+        [&](int mode, const DelaySelection& selection) {
+            AudioEngine::DelayTargetConfig targetConfig;
+            const bool hasTargets =
+                populateDelayTargetConfig(selection, targetConfig);
+
+            if (!selection.active && !hasTargets) {
+                audioEngine_.setDelayFxParams(
+                    mode, 0.0F, 0.0F, 0.0F, 0.0F, targetConfig);
+                return;
+            }
+
+            if (mode == 1) {
+                audioEngine_.setDelayFxParams(
+                    1, selection.delayParam,
+                    selection.feedback,
+                    /*reverbAmount=*/0.0F,
+                    selection.wetGain,
+                    targetConfig);
+            } else {
+                audioEngine_.setDelayFxParams(
+                    2,
+                    /*delayNormalised=*/0.0F,
+                    /*feedback=*/0.0F,
+                    selection.reverbAmount,
+                    selection.wetGain,
+                    targetConfig);
+            }
+        };
+
+    applyDelayBusFromSelection(1, delaySelectionFeedback);
+    applyDelayBusFromSelection(2, delaySelectionReverb);
 }

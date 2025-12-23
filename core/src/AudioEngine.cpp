@@ -106,6 +106,7 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     delayWriteIndex_ = 0;
     reverb_.reset();
     delayTailSamplesRemaining_.store(0, std::memory_order_relaxed);
+    reverbTailSamplesRemaining_.store(0, std::memory_order_relaxed);
 
     // Reset transport state so that loop alignment and beat-synced
     // visuals start from a known position when the device starts.
@@ -261,52 +262,84 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
     bool blockHasNonZeroOutput = false;
 
-    // Precompute Delay / Reverb FX parameters for this block. These
-    // values are derived from atomics once per callback and then
-    // reused per-sample inside the processing loop to keep the audio
-    // path tight.
-    const int delayFxMode =
-        delayFx_.mode.load(std::memory_order_relaxed);
+    // Precompute Delay / Reverb FX buses for this block.
+    const bool delayBusActive =
+        delayBus_.active.load(std::memory_order_relaxed) != 0;
+    const bool reverbBusActive =
+        reverbBus_.active.load(std::memory_order_relaxed) != 0;
+
     const float delayNormRaw =
-        delayFx_.delayNormalised.load(std::memory_order_relaxed);
+        delayBus_.delayNormalised.load(std::memory_order_relaxed);
     const float delayFeedbackRaw =
-        delayFx_.feedback.load(std::memory_order_relaxed);
+        delayBus_.feedback.load(std::memory_order_relaxed);
+    const float delayWetRaw =
+        delayBus_.wetGain.load(std::memory_order_relaxed);
+
     const float reverbAmountRaw =
-        delayFx_.reverbAmount.load(std::memory_order_relaxed);
-    const float wetGainRaw =
-        delayFx_.wetGain.load(std::memory_order_relaxed);
+        reverbBus_.reverbAmount.load(std::memory_order_relaxed);
+    const float reverbWetRaw =
+        reverbBus_.wetGain.load(std::memory_order_relaxed);
 
     int delaySamplesForBlock = 0;
-    float feedbackForBlock = 0.0F;
+    float delayFeedbackForBlock = 0.0F;
+    float delayWetGainForBlock = 0.0F;
+
     float reverbAmountForBlock = 0.0F;
-    float wetGainForBlock = 1.0F;
+    float reverbWetGainForBlock = 0.0F;
 
-    const bool applyDelayGlobally =
-        delayFxMode != 0 &&
-        delayFx_.applyGlobal.load(std::memory_order_relaxed) != 0;
+    const bool delayApplyGlobal =
+        delayBusActive &&
+        delayBus_.applyGlobal.load(std::memory_order_relaxed) != 0;
+    const bool reverbApplyGlobal =
+        reverbBusActive &&
+        reverbBus_.applyGlobal.load(std::memory_order_relaxed) != 0;
+
     const bool delayTargetsSampleplay =
-        delayFxMode != 0 &&
-        delayFx_.includeSampleplay.load(std::memory_order_relaxed) != 0;
-    const std::uint32_t delayVoiceMask =
-        delayFx_.voiceMask.load(std::memory_order_relaxed);
-    const bool delayTargetsVoice =
-        delayFxMode != 0 && delayVoiceMask != 0u;
+        delayBusActive &&
+        delayBus_.includeSampleplay.load(std::memory_order_relaxed) != 0;
+    const bool reverbTargetsSampleplay =
+        reverbBusActive &&
+        reverbBus_.includeSampleplay.load(std::memory_order_relaxed) != 0;
 
-    const int configuredLoopTargets =
-        delayFx_.loopTargetCount.load(std::memory_order_relaxed);
+    const std::uint32_t delayVoiceMask =
+        delayBus_.voiceMask.load(std::memory_order_relaxed);
+    const std::uint32_t reverbVoiceMask =
+        reverbBus_.voiceMask.load(std::memory_order_relaxed);
+
+    const bool delayTargetsVoice =
+        delayBusActive && delayVoiceMask != 0u;
+    const bool reverbTargetsVoice =
+        reverbBusActive && reverbVoiceMask != 0u;
+
+    const int configuredDelayLoopTargets =
+        delayBus_.loopTargetCount.load(std::memory_order_relaxed);
     const int delayLoopTargetCount = juce::jlimit(
-        0, DelayTargetConfig::kMaxLoopTargets, configuredLoopTargets);
+        0, DelayTargetConfig::kMaxLoopTargets, configuredDelayLoopTargets);
     std::array<std::uint64_t, DelayTargetConfig::kMaxLoopTargets>
         delayLoopHashes{};
     for (int i = 0; i < delayLoopTargetCount; ++i) {
         delayLoopHashes[static_cast<std::size_t>(i)] =
-            delayFx_.loopTargetHashes[static_cast<std::size_t>(i)].load(
+            delayBus_.loopTargetHashes[static_cast<std::size_t>(i)].load(
                 std::memory_order_relaxed);
     }
     const bool delayTargetsLoop =
-        delayFxMode != 0 && delayLoopTargetCount > 0;
+        delayBusActive && delayLoopTargetCount > 0;
 
-    auto loopIsTargeted = [&](const std::string& moduleId) -> bool {
+    const int configuredReverbLoopTargets =
+        reverbBus_.loopTargetCount.load(std::memory_order_relaxed);
+    const int reverbLoopTargetCount = juce::jlimit(
+        0, DelayTargetConfig::kMaxLoopTargets, configuredReverbLoopTargets);
+    std::array<std::uint64_t, DelayTargetConfig::kMaxLoopTargets>
+        reverbLoopHashes{};
+    for (int i = 0; i < reverbLoopTargetCount; ++i) {
+        reverbLoopHashes[static_cast<std::size_t>(i)] =
+            reverbBus_.loopTargetHashes[static_cast<std::size_t>(i)].load(
+                std::memory_order_relaxed);
+    }
+    const bool reverbTargetsLoop =
+        reverbBusActive && reverbLoopTargetCount > 0;
+
+    auto loopMatchesDelay = [&](const std::string& moduleId) -> bool {
         if (!delayTargetsLoop) {
             return false;
         }
@@ -319,13 +352,32 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         return false;
     };
 
+    auto loopMatchesReverb = [&](const std::string& moduleId) -> bool {
+        if (!reverbTargetsLoop) {
+            return false;
+        }
+        const std::uint64_t hash = rectai::HashModuleId(moduleId);
+        for (int i = 0; i < reverbLoopTargetCount; ++i) {
+            if (reverbLoopHashes[static_cast<std::size_t>(i)] == hash) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     int delayTailSamples =
         delayTailSamplesRemaining_.load(std::memory_order_relaxed);
-    if (delayFxMode == 0) {
+    if (!delayBusActive) {
         delayTailSamples = 0;
     }
 
-    if (delayFxMode == 1) {  // Feedback delay mode
+    int reverbTailSamples =
+        reverbTailSamplesRemaining_.load(std::memory_order_relaxed);
+    if (!reverbBusActive) {
+        reverbTailSamples = 0;
+    }
+
+    if (delayBusActive) {
         const float clampedNorm =
             juce::jlimit(0.0F, 1.0F, delayNormRaw);
         int segment = static_cast<int>(clampedNorm * 8.0F);
@@ -335,18 +387,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             segment = 7;
         }
 
-        // Musical beat multipliers for the eight discrete delay
-        // segments, ordered from fastest (bottom) to slowest (top):
-        // 1/32, 1/16, 1/8, 1/4, 3/8, 2/4, 4/4, 8/4.
         static constexpr float kBeatMultipliers[8] = {
-            1.0F / 32.0F,  // 1/32
-            1.0F / 16.0F,  // 1/16
-            1.0F / 8.0F,   // 1/8
-            1.0F / 4.0F,   // 1/4
-            3.0F / 8.0F,   // 3/8
-            2.0F / 4.0F,   // 2/4
-            4.0F / 4.0F,   // 4/4
-            8.0F / 4.0F};  // 8/4
+            1.0F / 32.0F,
+            1.0F / 16.0F,
+            1.0F / 8.0F,
+            1.0F / 4.0F,
+            3.0F / 8.0F,
+            2.0F / 4.0F,
+            4.0F / 4.0F,
+            8.0F / 4.0F};
 
         const float bpmDelay =
             loopGlobalBpm_.load(std::memory_order_relaxed);
@@ -356,9 +405,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 60.0 / static_cast<double>(bpmDelay);
         }
         if (secondsPerBeat <= 0.0) {
-            // Fallback to a sensible default (~120 BPM) when no
-            // tempo is configured so that delay times remain
-            // musically usable instead of collapsing to zero.
             secondsPerBeat = 0.5;
         }
 
@@ -375,96 +421,110 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             juce::jlimit(1, static_cast<int>(maxSamples),
                          computedSamples);
 
-        feedbackForBlock =
+        delayFeedbackForBlock =
             juce::jlimit(0.0F, 0.95F, delayFeedbackRaw);
-        wetGainForBlock =
-            juce::jlimit(0.0F, 1.0F, wetGainRaw);
-    } else if (delayFxMode == 2) {  // Reverb mode
+        delayWetGainForBlock =
+            juce::jlimit(0.0F, 1.0F, delayWetRaw);
+    }
+
+    if (reverbBusActive) {
         reverbAmountForBlock =
             juce::jlimit(0.0F, 1.0F, reverbAmountRaw);
-        wetGainForBlock =
-            juce::jlimit(0.0F, 1.0F, wetGainRaw);
+        reverbWetGainForBlock =
+            juce::jlimit(0.0F, 1.0F, reverbWetRaw);
 
         juce::Reverb::Parameters params;
         params.roomSize = 0.5F + 0.5F * reverbAmountForBlock;
         params.damping = 0.2F + 0.6F * reverbAmountForBlock;
         params.wetLevel = reverbAmountForBlock;
-        params.dryLevel = 1.0F - 0.5F * reverbAmountForBlock;
+        params.dryLevel = 0.0F;
         params.width = 1.0F;
         params.freezeMode = 0.0F;
         reverb_.setParameters(params);
     }
 
-    auto applyDelayFxSample =
-        [this, delayFxMode, delaySamplesForBlock, feedbackForBlock,
-         reverbAmountForBlock, wetGainForBlock](float& left, float& right) {
-            if (delayFxMode == 1) {
-                if (delaySamplesForBlock <= 0 ||
-                    delayBufferL_.empty() || delayBufferR_.empty()) {
-                    return;
-                }
-
-                const int bufferSize =
-                    static_cast<int>(delayBufferL_.size());
-                const int writeIndex = delayWriteIndex_;
-                int readIndex = writeIndex - delaySamplesForBlock;
-                if (readIndex < 0) {
-                    readIndex += bufferSize;
-                }
-
-                const float delayedL = delayBufferL_[static_cast<std::size_t>(readIndex)];
-                const float delayedR = delayBufferR_[static_cast<std::size_t>(readIndex)];
-
-                const float fb = feedbackForBlock;
-
-                // Simple feedback delay: delayed signal is fed back
-                // into the buffer scaled by `feedback`, and mixed
-                // with the dry input on output.
-                const float inputL = left;
-                const float inputR = right;
-
-                const float wetL = delayedL * wetGainForBlock;
-                const float wetR = delayedR * wetGainForBlock;
-
-                const float outL = inputL + wetL;
-                const float outR = inputR + wetR;
-
-                const float writeL = inputL + delayedL * fb;
-                const float writeR = inputR + delayedR * fb;
-
-                delayBufferL_[static_cast<std::size_t>(writeIndex)] =
-                    writeL;
-                delayBufferR_[static_cast<std::size_t>(writeIndex)] =
-                    writeR;
-
-                int nextWrite = writeIndex + 1;
-                if (nextWrite >= bufferSize) {
-                    nextWrite = 0;
-                }
-                delayWriteIndex_ = nextWrite;
-
-                left = outL;
-                right = outR;
-            } else if (delayFxMode == 2) {
-                // Use JUCE's built-in Reverb for the reverb mode,
-                // with parameters already configured for this
-                // block. The reverb instance maintains its own
-                // internal state across samples.
-                float l = left;
-                float r = right;
-                reverb_.processStereo(&l, &r, 1);
-                l *= wetGainForBlock;
-                r *= wetGainForBlock;
-                left = l;
-                right = r;
+    auto processDelayBusSample =
+        [this, delayBusActive, delaySamplesForBlock,
+         delayFeedbackForBlock, delayWetGainForBlock](float& left,
+                                                      float& right) {
+            if (!delayBusActive) {
+                left = 0.0F;
+                right = 0.0F;
+                return;
             }
+
+            if (delaySamplesForBlock <= 0 || delayBufferL_.empty() ||
+                delayBufferR_.empty()) {
+                left = 0.0F;
+                right = 0.0F;
+                return;
+            }
+
+            const float inputL = left;
+            const float inputR = right;
+
+            const int bufferSize =
+                static_cast<int>(delayBufferL_.size());
+            const int writeIndex = delayWriteIndex_;
+            int readIndex = writeIndex - delaySamplesForBlock;
+            if (readIndex < 0) {
+                readIndex += bufferSize;
+            }
+
+            const float delayedL =
+                delayBufferL_[static_cast<std::size_t>(readIndex)];
+            const float delayedR =
+                delayBufferR_[static_cast<std::size_t>(readIndex)];
+
+            const float fb = delayFeedbackForBlock;
+
+            const float wetL = delayedL * delayWetGainForBlock;
+            const float wetR = delayedR * delayWetGainForBlock;
+
+            const float writeL = inputL + delayedL * fb;
+            const float writeR = inputR + delayedR * fb;
+
+            delayBufferL_[static_cast<std::size_t>(writeIndex)] =
+                writeL;
+            delayBufferR_[static_cast<std::size_t>(writeIndex)] =
+                writeR;
+
+            int nextWrite = writeIndex + 1;
+            if (nextWrite >= bufferSize) {
+                nextWrite = 0;
+            }
+            delayWriteIndex_ = nextWrite;
+
+            left = wetL;
+            right = wetR;
+        };
+
+    auto processReverbBusSample =
+        [this, reverbBusActive, reverbAmountForBlock,
+         reverbWetGainForBlock](float& left, float& right) {
+            if (!reverbBusActive) {
+                left = 0.0F;
+                right = 0.0F;
+                return;
+            }
+
+            float wetL = left;
+            float wetR = right;
+            reverb_.processStereo(&wetL, &wetR, 1);
+            wetL *= reverbWetGainForBlock;
+            wetR *= reverbWetGainForBlock;
+            left = wetL;
+            right = wetR;
         };
 
     for (int sample = 0; sample < numSamples; ++sample) {
         float oscMonoDry = 0.0F;
         float oscDelayL = 0.0F;
         float oscDelayR = 0.0F;
+        float oscReverbL = 0.0F;
+        float oscReverbR = 0.0F;
         bool delayHadSourceInputThisSample = false;
+        bool reverbHadSourceInputThisSample = false;
 
         // Optionally run the Sampleplay stereo path through a
         // StateVariableTPTFilter so that downstream Filter modules
@@ -898,19 +958,31 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 const bool voiceMatchesDelay =
                     delayTargetsVoice && voiceBit != 0u &&
                     ((delayVoiceMask & voiceBit) != 0u);
+                const bool voiceMatchesReverb =
+                    reverbTargetsVoice && voiceBit != 0u &&
+                    ((reverbVoiceMask & voiceBit) != 0u);
 
-                if (voiceMatchesDelay && delayFxMode != 0) {
+                if (voiceMatchesDelay) {
                     float delayL = voiceSamplePost;
                     float delayR = voiceSamplePost;
-                    applyDelayFxSample(delayL, delayR);
+                    processDelayBusSample(delayL, delayR);
                     delayHadSourceInputThisSample = true;
                     oscDelayL += delayL;
                     oscDelayR += delayR;
-                } else {
-                    // Mix the post-filter, envelope- and level-shaped
-                    // voice signal into the global oscillator mono bus.
-                    oscMonoDry += voiceSamplePost;
                 }
+
+                if (voiceMatchesReverb) {
+                    float reverbL = voiceSamplePost;
+                    float reverbR = voiceSamplePost;
+                    processReverbBusSample(reverbL, reverbR);
+                    reverbHadSourceInputThisSample = true;
+                    oscReverbL += reverbL;
+                    oscReverbR += reverbR;
+                }
+
+                // Always mix the post-filter signal into the dry bus so
+                // that delay/reverb operate as pure send effects.
+                oscMonoDry += voiceSamplePost;
             }
 
             float oscMixedLeft = oscMonoDry;
@@ -918,6 +990,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             if (delayTargetsVoice) {
                 oscMixedLeft += oscDelayL;
                 oscMixedRight += oscDelayR;
+            }
+            if (reverbTargetsVoice) {
+                oscMixedLeft += oscReverbL;
+                oscMixedRight += oscReverbR;
             }
 
             oscMixedLeft = juce::jlimit(-0.9F, 0.9F, oscMixedLeft);
@@ -933,19 +1009,42 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             visualVoices_.writeSamples(kVisualVoiceIdSampleplayRaw,
                                        &sampleplayMonoRaw, 1);
 
-            float sampleplayOutL = filteredSampleplayL;
-            float sampleplayOutR = filteredSampleplayR;
-            if (delayTargetsSampleplay && delayFxMode != 0) {
-                applyDelayFxSample(sampleplayOutL, sampleplayOutR);
-                delayHadSourceInputThisSample = true;
+            float sampleplayDelayWetL = 0.0F;
+            float sampleplayDelayWetR = 0.0F;
+            if (delayTargetsSampleplay) {
+                sampleplayDelayWetL = filteredSampleplayL;
+                sampleplayDelayWetR = filteredSampleplayR;
+                processDelayBusSample(sampleplayDelayWetL,
+                                      sampleplayDelayWetR);
+                if (delayBusActive) {
+                    delayHadSourceInputThisSample = true;
+                }
             }
 
-            float leftOut = sampleplayOutL + oscMixedLeft;
-            float rightOut = sampleplayOutR + oscMixedRight;
+            float sampleplayReverbWetL = 0.0F;
+            float sampleplayReverbWetR = 0.0F;
+            if (reverbTargetsSampleplay) {
+                sampleplayReverbWetL = filteredSampleplayL;
+                sampleplayReverbWetR = filteredSampleplayR;
+                processReverbBusSample(sampleplayReverbWetL,
+                                       sampleplayReverbWetR);
+                if (reverbBusActive) {
+                    reverbHadSourceInputThisSample = true;
+                }
+            }
+
+            float leftOut = filteredSampleplayL + oscMixedLeft +
+                            sampleplayDelayWetL +
+                            sampleplayReverbWetL;
+            float rightOut = filteredSampleplayR + oscMixedRight +
+                             sampleplayDelayWetR +
+                             sampleplayReverbWetR;
             float loopMixedL = 0.0F;
             float loopMixedR = 0.0F;
             float loopDelaySumL = 0.0F;
             float loopDelaySumR = 0.0F;
+            float loopReverbSumL = 0.0F;
+            float loopReverbSumR = 0.0F;
 
             // Mix Loop modules: sum the currently selected slot for
             // each instance. Playback phase for all slots advances
@@ -965,8 +1064,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const float loopGainTarget = instance.gain.load(
                         std::memory_order_relaxed);
                     const bool matchesDelayLoop =
-                        delayTargetsLoop &&
-                        loopIsTargeted(loopModuleId);
+                        loopMatchesDelay(loopModuleId);
+                    const bool matchesReverbLoop =
+                        loopMatchesReverb(loopModuleId);
 
                     if (slotIndex < 0 ||
                         slotIndex >= static_cast<int>(
@@ -1231,20 +1331,25 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         }
 
                         if (finalGain > 0.0F) {
-                            if (matchesDelayLoop && delayFxMode != 0) {
+                            const bool routeThroughFilter =
+                                instance.routeThroughFilter.load(
+                                    std::memory_order_relaxed);
+                            if (routeThroughFilter) {
+                                loopMixedL += monoWithGain;
+                                loopMixedR += r * finalGain;
+                            } else {
+                                leftOut += monoWithGain;
+                                rightOut += r * finalGain;
+                            }
+
+                            if (matchesDelayLoop && delayBusActive) {
                                 loopDelaySumL += monoWithGain;
                                 loopDelaySumR += r * finalGain;
-                            } else {
-                                const bool routeThroughFilter =
-                                    instance.routeThroughFilter.load(
-                                        std::memory_order_relaxed);
-                                if (routeThroughFilter) {
-                                    loopMixedL += monoWithGain;
-                                    loopMixedR += r * finalGain;
-                                } else {
-                                    leftOut += monoWithGain;
-                                    rightOut += r * finalGain;
-                                }
+                            }
+
+                            if (matchesReverbLoop && reverbBusActive) {
+                                loopReverbSumL += monoWithGain;
+                                loopReverbSumR += r * finalGain;
                             }
                         }
 
@@ -1286,29 +1391,69 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             leftOut += loopFilteredL;
             rightOut += loopFilteredR;
 
-            if (delayTargetsLoop && delayFxMode != 0 &&
+            if (delayTargetsLoop &&
                 (loopDelaySumL != 0.0F || loopDelaySumR != 0.0F)) {
                 float delayL = loopDelaySumL;
                 float delayR = loopDelaySumR;
-                applyDelayFxSample(delayL, delayR);
-                delayHadSourceInputThisSample = true;
+                processDelayBusSample(delayL, delayR);
+                if (delayBusActive) {
+                    delayHadSourceInputThisSample = true;
+                }
                 leftOut += delayL;
                 rightOut += delayR;
             }
 
-            // Apply global Delay / Reverb FX when configured.
-            if (applyDelayGlobally) {
-                applyDelayFxSample(leftOut, rightOut);
-                delayHadSourceInputThisSample = true;
+            if (reverbTargetsLoop &&
+                (loopReverbSumL != 0.0F || loopReverbSumR != 0.0F)) {
+                float reverbL = loopReverbSumL;
+                float reverbR = loopReverbSumR;
+                processReverbBusSample(reverbL, reverbR);
+                if (reverbBusActive) {
+                    reverbHadSourceInputThisSample = true;
+                }
+                leftOut += reverbL;
+                rightOut += reverbR;
             }
 
-            // Keep draining the delay line so that tails keep
-            // sounding even after connections are removed.
-            if (!delayHadSourceInputThisSample && delayFxMode != 0 &&
+            const float globalFxInputL = leftOut;
+            const float globalFxInputR = rightOut;
+
+            if (delayApplyGlobal) {
+                float delayL = globalFxInputL;
+                float delayR = globalFxInputR;
+                processDelayBusSample(delayL, delayR);
+                if (delayBusActive) {
+                    delayHadSourceInputThisSample = true;
+                }
+                leftOut += delayL;
+                rightOut += delayR;
+            }
+
+            if (reverbApplyGlobal) {
+                float reverbL = globalFxInputL;
+                float reverbR = globalFxInputR;
+                processReverbBusSample(reverbL, reverbR);
+                if (reverbBusActive) {
+                    reverbHadSourceInputThisSample = true;
+                }
+                leftOut += reverbL;
+                rightOut += reverbR;
+            }
+
+            if (!delayHadSourceInputThisSample && delayBusActive &&
                 delayTailSamples > 0) {
                 float tailL = 0.0F;
                 float tailR = 0.0F;
-                applyDelayFxSample(tailL, tailR);
+                processDelayBusSample(tailL, tailR);
+                leftOut += tailL;
+                rightOut += tailR;
+            }
+
+            if (!reverbHadSourceInputThisSample && reverbBusActive &&
+                reverbTailSamples > 0) {
+                float tailL = 0.0F;
+                float tailR = 0.0F;
+                processReverbBusSample(tailL, tailR);
                 leftOut += tailL;
                 rightOut += tailR;
             }
@@ -1317,6 +1462,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 delayTailSamples = kDelayTailHoldSamples;
             } else if (delayTailSamples > 0) {
                 --delayTailSamples;
+            }
+
+            if (reverbHadSourceInputThisSample) {
+                reverbTailSamples = kDelayTailHoldSamples;
+            } else if (reverbTailSamples > 0) {
+                --reverbTailSamples;
             }
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
@@ -1345,20 +1496,44 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // Sampleplay (SoundFont) audio and keep its waveform
             // history up to date so that Sampleplay-only scenes
             // both sound and render correctly.
-            float sampleplayOutL =
+            const float sampleplayDryL =
                 sampleplayLeft_[static_cast<std::size_t>(sample)];
-            float sampleplayOutR =
+            const float sampleplayDryR =
                 sampleplayRight_[static_cast<std::size_t>(sample)];
-            if (delayTargetsSampleplay && delayFxMode != 0) {
-                applyDelayFxSample(sampleplayOutL, sampleplayOutR);
+            float sampleplayDelayWetL = 0.0F;
+            float sampleplayDelayWetR = 0.0F;
+            if (delayTargetsSampleplay) {
+                sampleplayDelayWetL = sampleplayDryL;
+                sampleplayDelayWetR = sampleplayDryR;
+                processDelayBusSample(sampleplayDelayWetL,
+                                      sampleplayDelayWetR);
+                if (delayBusActive) {
+                    delayHadSourceInputThisSample = true;
+                }
             }
 
-            float leftOut = sampleplayOutL;
-            float rightOut = sampleplayOutR;
+            float sampleplayReverbWetL = 0.0F;
+            float sampleplayReverbWetR = 0.0F;
+            if (reverbTargetsSampleplay) {
+                sampleplayReverbWetL = sampleplayDryL;
+                sampleplayReverbWetR = sampleplayDryR;
+                processReverbBusSample(sampleplayReverbWetL,
+                                       sampleplayReverbWetR);
+                if (reverbBusActive) {
+                    reverbHadSourceInputThisSample = true;
+                }
+            }
+
+            float leftOut = sampleplayDryL + sampleplayDelayWetL +
+                            sampleplayReverbWetL;
+            float rightOut = sampleplayDryR + sampleplayDelayWetR +
+                             sampleplayReverbWetR;
             float loopMixedL = 0.0F;
             float loopMixedR = 0.0F;
             float loopDelaySumL = 0.0F;
             float loopDelaySumR = 0.0F;
+            float loopReverbSumL = 0.0F;
+            float loopReverbSumR = 0.0F;
             const float sampleplayMonoRaw = rawSampleplayL;
 
             // Mirror the global Sampleplay mono path into the
@@ -1383,8 +1558,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const float loopGainTarget = instance.gain.load(
                         std::memory_order_relaxed);
                     const bool matchesDelayLoop =
-                        delayTargetsLoop &&
-                        loopIsTargeted(loopModuleId);
+                        loopMatchesDelay(loopModuleId);
+                    const bool matchesReverbLoop =
+                        loopMatchesReverb(loopModuleId);
 
                     if (slotIndex < 0 ||
                         slotIndex >= static_cast<int>(
@@ -1640,20 +1816,25 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         }
 
                         if (finalGain > 0.0F) {
-                            if (matchesDelayLoop && delayFxMode != 0) {
+                            const bool routeThroughFilter =
+                                instance.routeThroughFilter.load(
+                                    std::memory_order_relaxed);
+                            if (routeThroughFilter) {
+                                loopMixedL += monoWithGain;
+                                loopMixedR += r * finalGain;
+                            } else {
+                                leftOut += monoWithGain;
+                                rightOut += r * finalGain;
+                            }
+
+                            if (matchesDelayLoop && delayBusActive) {
                                 loopDelaySumL += monoWithGain;
                                 loopDelaySumR += r * finalGain;
-                            } else {
-                                const bool routeThroughFilter =
-                                    instance.routeThroughFilter.load(
-                                        std::memory_order_relaxed);
-                                if (routeThroughFilter) {
-                                    loopMixedL += monoWithGain;
-                                    loopMixedR += r * finalGain;
-                                } else {
-                                    leftOut += monoWithGain;
-                                    rightOut += r * finalGain;
-                                }
+                            }
+
+                            if (matchesReverbLoop && reverbBusActive) {
+                                loopReverbSumL += monoWithGain;
+                                loopReverbSumR += r * finalGain;
                             }
                         }
 
@@ -1694,27 +1875,70 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             leftOut += loopFilteredL;
             rightOut += loopFilteredR;
 
-            if (delayTargetsLoop && delayFxMode != 0 &&
+            if (delayTargetsLoop &&
                 (loopDelaySumL != 0.0F || loopDelaySumR != 0.0F)) {
                 float delayL = loopDelaySumL;
                 float delayR = loopDelaySumR;
-                applyDelayFxSample(delayL, delayR);
-                delayHadSourceInputThisSample = true;
+                processDelayBusSample(delayL, delayR);
+                if (delayBusActive) {
+                    delayHadSourceInputThisSample = true;
+                }
                 leftOut += delayL;
                 rightOut += delayR;
             }
 
-            // Apply global Delay / Reverb FX when configured.
-            if (applyDelayGlobally) {
-                applyDelayFxSample(leftOut, rightOut);
-                delayHadSourceInputThisSample = true;
+            if (reverbTargetsLoop &&
+                (loopReverbSumL != 0.0F || loopReverbSumR != 0.0F)) {
+                float reverbL = loopReverbSumL;
+                float reverbR = loopReverbSumR;
+                processReverbBusSample(reverbL, reverbR);
+                if (reverbBusActive) {
+                    reverbHadSourceInputThisSample = true;
+                }
+                leftOut += reverbL;
+                rightOut += reverbR;
             }
 
-            if (!delayHadSourceInputThisSample && delayFxMode != 0 &&
+            // Apply global Delay / Reverb FX when configured.
+            const float globalFxInputL = leftOut;
+            const float globalFxInputR = rightOut;
+
+            if (delayApplyGlobal) {
+                float delayL = globalFxInputL;
+                float delayR = globalFxInputR;
+                processDelayBusSample(delayL, delayR);
+                if (delayBusActive) {
+                    delayHadSourceInputThisSample = true;
+                }
+                leftOut += delayL;
+                rightOut += delayR;
+            }
+
+            if (reverbApplyGlobal) {
+                float reverbL = globalFxInputL;
+                float reverbR = globalFxInputR;
+                processReverbBusSample(reverbL, reverbR);
+                if (reverbBusActive) {
+                    reverbHadSourceInputThisSample = true;
+                }
+                leftOut += reverbL;
+                rightOut += reverbR;
+            }
+
+            if (!delayHadSourceInputThisSample && delayBusActive &&
                 delayTailSamples > 0) {
                 float tailL = 0.0F;
                 float tailR = 0.0F;
-                applyDelayFxSample(tailL, tailR);
+                processDelayBusSample(tailL, tailR);
+                leftOut += tailL;
+                rightOut += tailR;
+            }
+
+            if (!reverbHadSourceInputThisSample && reverbBusActive &&
+                reverbTailSamples > 0) {
+                float tailL = 0.0F;
+                float tailR = 0.0F;
+                processReverbBusSample(tailL, tailR);
                 leftOut += tailL;
                 rightOut += tailR;
             }
@@ -1723,6 +1947,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 delayTailSamples = kDelayTailHoldSamples;
             } else if (delayTailSamples > 0) {
                 --delayTailSamples;
+            }
+
+            if (reverbHadSourceInputThisSample) {
+                reverbTailSamples = kDelayTailHoldSamples;
+            } else if (reverbTailSamples > 0) {
+                --reverbTailSamples;
             }
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
@@ -1749,6 +1979,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
     delayTailSamplesRemaining_.store(delayTailSamples,
                                      std::memory_order_relaxed);
+    reverbTailSamplesRemaining_.store(reverbTailSamples,
+                                      std::memory_order_relaxed);
 
     // Remember whether this callback block produced any audible
     // output so that the next block can safely enter the fully idle
@@ -2096,46 +2328,89 @@ void AudioEngine::setDelayFxParams(const int mode,
                                    DelayTargetConfig target)
 {
     const int clampedMode = juce::jlimit(0, 2, mode);
-    delayFx_.mode.store(clampedMode, std::memory_order_relaxed);
 
-    const float dNorm =
-        juce::jlimit(0.0F, 1.0F, delayNormalised);
-    const float fbClamped = juce::jlimit(0.0F, 1.0F, feedback);
-    const float revClamped =
-        juce::jlimit(0.0F, 1.0F, reverbAmount);
-    const float wetClamped =
-        juce::jlimit(0.0F, 1.0F, wetGain);
-
-    delayFx_.delayNormalised.store(dNorm, std::memory_order_relaxed);
-    delayFx_.feedback.store(fbClamped, std::memory_order_relaxed);
-    delayFx_.reverbAmount.store(revClamped,
-                                std::memory_order_relaxed);
-    delayFx_.wetGain.store(wetClamped,
-                           std::memory_order_relaxed);
-
-    delayFx_.applyGlobal.store(target.applyToGlobalMix ? 1 : 0,
-                               std::memory_order_relaxed);
-    delayFx_.includeSampleplay.store(
-        target.includeSampleplayBus ? 1 : 0,
-        std::memory_order_relaxed);
-    delayFx_.voiceMask.store(target.voiceMask,
-                             std::memory_order_relaxed);
-
-    const int clampedLoopCount = juce::jlimit(
-        0, DelayTargetConfig::kMaxLoopTargets, target.loopTargetCount);
-    delayFx_.loopTargetCount.store(clampedLoopCount,
+    auto applyRouting = [&](auto& busState) {
+        busState.applyGlobal.store(target.applyToGlobalMix ? 1 : 0,
                                    std::memory_order_relaxed);
-    for (int i = 0; i < DelayTargetConfig::kMaxLoopTargets; ++i) {
-        const std::uint64_t hash =
-            (i < clampedLoopCount)
-                ? target.loopHashes[static_cast<std::size_t>(i)]
-                : 0ULL;
-        delayFx_.loopTargetHashes[static_cast<std::size_t>(i)].store(
-            hash, std::memory_order_relaxed);
-    }
+        busState.includeSampleplay.store(
+            target.includeSampleplayBus ? 1 : 0,
+            std::memory_order_relaxed);
+        busState.voiceMask.store(target.voiceMask,
+                                 std::memory_order_relaxed);
 
-    if (clampedMode == 0) {
-        delayTailSamplesRemaining_.store(0, std::memory_order_relaxed);
+        const int clampedLoopCount = juce::jlimit(
+            0, DelayTargetConfig::kMaxLoopTargets, target.loopTargetCount);
+        busState.loopTargetCount.store(clampedLoopCount,
+                                       std::memory_order_relaxed);
+        for (int i = 0; i < DelayTargetConfig::kMaxLoopTargets; ++i) {
+            const std::uint64_t hash =
+                (i < clampedLoopCount)
+                    ? target.loopHashes[static_cast<std::size_t>(i)]
+                    : 0ULL;
+            busState.loopTargetHashes[static_cast<std::size_t>(i)].store(
+                hash, std::memory_order_relaxed);
+        }
+
+        const bool hasTargets = target.applyToGlobalMix ||
+                                 target.includeSampleplayBus ||
+                                 target.voiceMask != 0u ||
+                                 clampedLoopCount > 0;
+        const bool busActive = hasTargets || target.keepFxAlive;
+        busState.active.store(busActive ? 1 : 0,
+                              std::memory_order_relaxed);
+        return busActive;
+    };
+
+    switch (clampedMode) {
+        case 0: {
+            delayBus_.active.store(0, std::memory_order_relaxed);
+            reverbBus_.active.store(0, std::memory_order_relaxed);
+            delayTailSamplesRemaining_.store(0, std::memory_order_relaxed);
+            reverbTailSamplesRemaining_.store(0, std::memory_order_relaxed);
+            break;
+        }
+        case 1: {
+            const float dNorm =
+                juce::jlimit(0.0F, 1.0F, delayNormalised);
+            const float fbClamped =
+                juce::jlimit(0.0F, 0.95F, feedback);
+            const float wetClamped =
+                juce::jlimit(0.0F, 1.0F, wetGain);
+
+            delayBus_.delayNormalised.store(dNorm,
+                                            std::memory_order_relaxed);
+            delayBus_.feedback.store(fbClamped,
+                                     std::memory_order_relaxed);
+            delayBus_.wetGain.store(wetClamped,
+                                    std::memory_order_relaxed);
+
+            const bool active = applyRouting(delayBus_);
+            if (!active) {
+                delayTailSamplesRemaining_.store(
+                    0, std::memory_order_relaxed);
+            }
+            break;
+        }
+        case 2: {
+            const float revClamped =
+                juce::jlimit(0.0F, 1.0F, reverbAmount);
+            const float wetClamped =
+                juce::jlimit(0.0F, 1.0F, wetGain);
+
+            reverbBus_.reverbAmount.store(revClamped,
+                                          std::memory_order_relaxed);
+            reverbBus_.wetGain.store(wetClamped,
+                                     std::memory_order_relaxed);
+
+            const bool active = applyRouting(reverbBus_);
+            if (!active) {
+                reverbTailSamplesRemaining_.store(
+                    0, std::memory_order_relaxed);
+            }
+            break;
+        }
+        default:
+            break;
     }
 }
 

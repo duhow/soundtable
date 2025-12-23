@@ -43,6 +43,7 @@ public:
 
         bool applyToGlobalMix{false};
         bool includeSampleplayBus{false};
+        bool keepFxAlive{false};
         std::uint32_t voiceMask{0};
         int loopTargetCount{0};
         std::array<std::uint64_t, kMaxLoopTargets> loopHashes{};
@@ -289,16 +290,15 @@ public:
     void advanceLoopBeatCounter();
     [[nodiscard]] unsigned int loopBeatCounter() const noexcept;
 
-    // Configures the global Delay / Reverb FX bus driven by
-    // DelayModule instances in the Scene. `mode` selects the
-    // processing variant: 0 = bypass, 1 = feedback delay, 2 =
-    // reverb. `delayNormalised` is the normalised delay parameter in
-    // [0,1] as stored in the Scene (mapped to musical beat lengths on
-    // the audio thread), `feedback` controls the feedback amount in
-    // [0,1] for the feedback delay mode, `reverbAmount` controls the
-    // overall wetness of the reverb mode in [0,1], and `wetGain`
-    // applies an additional linear gain to the delayed/reverberated
-    // signal before it is mixed with the dry input.
+    // Configures the Delay (mode=1) or Reverb (mode=2) FX bus driven
+    // by DelayModule instances in the Scene. Passing mode=0 bypasses
+    // both buses immediately. `delayNormalised` is the normalised
+    // delay parameter in [0,1] (mapped to musical beat lengths on the
+    // audio thread), `feedback` controls the feedback amount in [0,1]
+    // for the delay bus, `reverbAmount` controls the wetness of the
+    // reverb bus in [0,1], and `wetGain` applies an additional linear
+    // gain to the delayed/reverberated signal before mixing it with
+    // the dry input.
     void setDelayFxParams(int mode, float delayNormalised,
                           float feedback, float reverbAmount,
                           float wetGain,
@@ -475,10 +475,21 @@ private:
     // active and connected to the master Output. Parameters are
     // driven from the UI thread via `setDelayFxParams` and consumed
     // atomically on the audio thread.
-    struct DelayFxState {
-        std::atomic<int> mode{0};           // 0=bypass,1=delay,2=reverb
+    struct DelayBusState {
+        std::atomic<int> active{0};
         std::atomic<float> delayNormalised{0.66F};
         std::atomic<float> feedback{0.5F};
+        std::atomic<float> wetGain{1.0F};
+        std::atomic<int> applyGlobal{0};
+        std::atomic<int> includeSampleplay{0};
+        std::atomic<std::uint32_t> voiceMask{0};
+        std::atomic<int> loopTargetCount{0};
+        std::array<std::atomic<std::uint64_t>, DelayTargetConfig::kMaxLoopTargets>
+            loopTargetHashes{};
+    };
+
+    struct ReverbBusState {
+        std::atomic<int> active{0};
         std::atomic<float> reverbAmount{0.5F};
         std::atomic<float> wetGain{1.0F};
         std::atomic<int> applyGlobal{0};
@@ -489,8 +500,10 @@ private:
             loopTargetHashes{};
     };
 
-    DelayFxState delayFx_{};
+    DelayBusState delayBus_{};
+    ReverbBusState reverbBus_{};
     std::atomic<int> delayTailSamplesRemaining_{0};
+    std::atomic<int> reverbTailSamplesRemaining_{0};
 
     // Simple stereo ring buffers used to implement the feedback
     // delay line for the Delay FX mode. Accessed exclusively on the
