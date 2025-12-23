@@ -3553,11 +3553,14 @@ void MainComponent::paintNodeSideControls(
                 g.strokePath(bottomPath, juce::PathStrokeType(5.0F));
 
                 // Filled portion of the large bottom segment. Values
-                // in [0, splitT] progressively fill the bar; above
-                // splitT the bar remains fully filled.
+                // in [0, splitT] progressively fill the bar; when the
+                // control moves into the upper small segments
+                // (value > splitT) only the background remains and
+                // the coloured fill is suppressed to keep the visual
+                // focus on the active small segment.
                 const float bottomFill01 =
                     juce::jlimit(0.0F, 1.0F, value / splitT);
-                if (bottomFill01 > 0.001F) {
+                if (value <= splitT && bottomFill01 > 0.001F) {
                     juce::Path bottomFilled;
                     const float threshold = 1.0F - bottomFill01;
                     bool started = false;
@@ -3613,29 +3616,52 @@ void MainComponent::paintNodeSideControls(
                     }
                 }
 
+                // Geometry for the upper half in angle space: use the
+                // same approach as Loop/pitch controls so that the 8
+                // segments have equal arc length.
+                const float dyTop = sliderTop - cy;
+                const float splitY = juce::jmap(splitT,
+                                                0.0F, 1.0F,
+                                                sliderTop,
+                                                sliderBottom);
+                const float dySplit = splitY - cy;
+                const float sinTop = juce::jlimit(-1.0F, 1.0F,
+                                                  dyTop / ringRadius);
+                const float sinSplit = juce::jlimit(-1.0F, 1.0F,
+                                                    dySplit /
+                                                        ringRadius);
+                const float angleTop = std::asin(sinTop);
+                const float angleSplit = std::asin(sinSplit);
+
                 // Place eight equal-sized segments in the upper half
-                // of the side arc (0 → splitT), from bottom (near
-                // splitT) to top (near 0), with a small gap between
-                // each one.
+                // of the side arc using the same pattern as Loop
+                // modules: segment 0 near the split (bottom of the
+                // upper half) and the last segment near the top.
+                const float angleBottom = angleSplit;
                 for (int i = 0; i < kSegments; ++i) {
-                    const float segStartNorm = static_cast<float>(i) /
-                                               static_cast<float>(kSegments);
-                    const float segEndNorm = static_cast<float>(i + 1) /
-                                             static_cast<float>(kSegments);
+                    const float segStartT = 1.0F -
+                        (static_cast<float>(i + 1) /
+                         static_cast<float>(kSegments));
+                    const float segEndT = 1.0F -
+                        (static_cast<float>(i) /
+                         static_cast<float>(kSegments));
 
-                    float segStartT = juce::jmap(segStartNorm,
-                                                 0.0F, 1.0F,
-                                                 splitT, 0.0F);
-                    float segEndT = juce::jmap(segEndNorm,
-                                               0.0F, 1.0F,
-                                               splitT, 0.0F);
+                    const float segAngle0 = juce::jmap(
+                        segStartT, 0.0F, 1.0F,
+                        angleTop, angleBottom);
+                    const float segAngle1 = juce::jmap(
+                        segEndT, 0.0F, 1.0F,
+                        angleTop, angleBottom);
 
-                    // Approximate 1 px separation between segments.
+                    // Approximate 1 px separation between segments to
+                    // keep them clearly visible without shrinking
+                    // them too much.
                     const float segmentGapPixels = 1.0F;
                     const float shrink = segmentGapPixels / ringRadius;
-                    if (segEndT - segStartT > 2.0F * shrink) {
-                        segStartT += shrink;
-                        segEndT -= shrink;
+                    const float a0 = segAngle0 + shrink;
+                    const float a1 = segAngle1 - shrink;
+                    if (a1 <= a0) {
+                        continue;
                     }
 
                     juce::Path segPath;
@@ -3643,19 +3669,10 @@ void MainComponent::paintNodeSideControls(
                     for (int s = 0; s <= segSteps; ++s) {
                         const float tt = static_cast<float>(s) /
                                          static_cast<float>(segSteps);
-                        const float t = juce::jmap(tt, 0.0F, 1.0F,
-                                                   segStartT, segEndT);
-                        const float y = juce::jmap(t, 0.0F, 1.0F,
-                                                   sliderTop,
-                                                   sliderBottom);
-                        const float dy = y - cy;
-                        const float inside =
-                            ringRadius * ringRadius - dy * dy;
-                        if (inside < 0.0F) {
-                            continue;
-                        }
-                        const float dx = std::sqrt(inside);
-                        const float x = cx - dx;
+                        const float a = juce::jmap(tt, 0.0F, 1.0F,
+                                                   a0, a1);
+                        const float x = cx - ringRadius * std::cos(a);
+                        const float y = cy + ringRadius * std::sin(a);
                         if (s == 0) {
                             segPath.startNewSubPath(x, y);
                         } else {
@@ -3665,14 +3682,14 @@ void MainComponent::paintNodeSideControls(
 
                     // Background for all upper segments.
                     g.setColour(freqBackgroundColour);
-                    g.strokePath(segPath, juce::PathStrokeType(5.0F));
+                    g.strokePath(segPath, juce::PathStrokeType(6.0F));
 
                     // Only the active segment is drawn in the
                     // foreground colour.
                     if (i == activeIndex) {
                         g.setColour(freqForegroundColour);
                         g.strokePath(segPath,
-                                     juce::PathStrokeType(5.0F));
+                                     juce::PathStrokeType(6.0F));
                     }
                 }
 
