@@ -105,6 +105,7 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     std::fill(delayBufferR_.begin(), delayBufferR_.end(), 0.0F);
     delayWriteIndex_ = 0;
     reverb_.reset();
+    delayTailSamplesRemaining_.store(0, std::memory_order_relaxed);
 
     // Reset transport state so that loop alignment and beat-synced
     // visuals start from a known position when the device starts.
@@ -280,6 +281,50 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     float reverbAmountForBlock = 0.0F;
     float wetGainForBlock = 1.0F;
 
+    const bool applyDelayGlobally =
+        delayFxMode != 0 &&
+        delayFx_.applyGlobal.load(std::memory_order_relaxed) != 0;
+    const bool delayTargetsSampleplay =
+        delayFxMode != 0 &&
+        delayFx_.includeSampleplay.load(std::memory_order_relaxed) != 0;
+    const std::uint32_t delayVoiceMask =
+        delayFx_.voiceMask.load(std::memory_order_relaxed);
+    const bool delayTargetsVoice =
+        delayFxMode != 0 && delayVoiceMask != 0u;
+
+    const int configuredLoopTargets =
+        delayFx_.loopTargetCount.load(std::memory_order_relaxed);
+    const int delayLoopTargetCount = juce::jlimit(
+        0, DelayTargetConfig::kMaxLoopTargets, configuredLoopTargets);
+    std::array<std::uint64_t, DelayTargetConfig::kMaxLoopTargets>
+        delayLoopHashes{};
+    for (int i = 0; i < delayLoopTargetCount; ++i) {
+        delayLoopHashes[static_cast<std::size_t>(i)] =
+            delayFx_.loopTargetHashes[static_cast<std::size_t>(i)].load(
+                std::memory_order_relaxed);
+    }
+    const bool delayTargetsLoop =
+        delayFxMode != 0 && delayLoopTargetCount > 0;
+
+    auto loopIsTargeted = [&](const std::string& moduleId) -> bool {
+        if (!delayTargetsLoop) {
+            return false;
+        }
+        const std::uint64_t hash = rectai::HashModuleId(moduleId);
+        for (int i = 0; i < delayLoopTargetCount; ++i) {
+            if (delayLoopHashes[static_cast<std::size_t>(i)] == hash) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    int delayTailSamples =
+        delayTailSamplesRemaining_.load(std::memory_order_relaxed);
+    if (delayFxMode == 0) {
+        delayTailSamples = 0;
+    }
+
     if (delayFxMode == 1) {  // Feedback delay mode
         const float clampedNorm =
             juce::jlimit(0.0F, 1.0F, delayNormRaw);
@@ -416,7 +461,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         };
 
     for (int sample = 0; sample < numSamples; ++sample) {
-        float oscMixed = 0.0F;
+        float oscMonoDry = 0.0F;
+        float oscDelayL = 0.0F;
+        float oscDelayR = 0.0F;
+        bool delayHadSourceInputThisSample = false;
 
         // Optionally run the Sampleplay stereo path through a
         // StateVariableTPTFilter so that downstream Filter modules
@@ -842,16 +890,38 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 // placed after that range.
                 visualVoices_.writeSamples(v, &voiceSamplePost, 1);
 
-                // Mix the post-filter, envelope- and level-shaped
-                // voice signal into the global oscillator mono bus.
-                oscMixed += voiceSamplePost;
+                std::uint32_t voiceBit = 0u;
+                if (v >= 0 && v < 32) {
+                    voiceBit = 1u
+                               << static_cast<std::uint32_t>(v);
+                }
+                const bool voiceMatchesDelay =
+                    delayTargetsVoice && voiceBit != 0u &&
+                    ((delayVoiceMask & voiceBit) != 0u);
+
+                if (voiceMatchesDelay && delayFxMode != 0) {
+                    float delayL = voiceSamplePost;
+                    float delayR = voiceSamplePost;
+                    applyDelayFxSample(delayL, delayR);
+                    delayHadSourceInputThisSample = true;
+                    oscDelayL += delayL;
+                    oscDelayR += delayR;
+                } else {
+                    // Mix the post-filter, envelope- and level-shaped
+                    // voice signal into the global oscillator mono bus.
+                    oscMonoDry += voiceSamplePost;
+                }
             }
 
-            // Prevent hard digital clipping when summing several
-            // voices or using high-Q filter settings on the
-            // oscillator side. FluidSynth output is assumed to be
-            // already well behaved; we clip after mixing both.
-            oscMixed = juce::jlimit(-0.9F, 0.9F, oscMixed);
+            float oscMixedLeft = oscMonoDry;
+            float oscMixedRight = oscMonoDry;
+            if (delayTargetsVoice) {
+                oscMixedLeft += oscDelayL;
+                oscMixedRight += oscDelayR;
+            }
+
+            oscMixedLeft = juce::jlimit(-0.9F, 0.9F, oscMixedLeft);
+            oscMixedRight = juce::jlimit(-0.9F, 0.9F, oscMixedRight);
 
             const float sampleplayMonoRaw = rawSampleplayL;
 
@@ -863,10 +933,19 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             visualVoices_.writeSamples(kVisualVoiceIdSampleplayRaw,
                                        &sampleplayMonoRaw, 1);
 
-            float leftOut = filteredSampleplayL + oscMixed;
-            float rightOut = filteredSampleplayR + oscMixed;
+            float sampleplayOutL = filteredSampleplayL;
+            float sampleplayOutR = filteredSampleplayR;
+            if (delayTargetsSampleplay && delayFxMode != 0) {
+                applyDelayFxSample(sampleplayOutL, sampleplayOutR);
+                delayHadSourceInputThisSample = true;
+            }
+
+            float leftOut = sampleplayOutL + oscMixedLeft;
+            float rightOut = sampleplayOutR + oscMixedRight;
             float loopMixedL = 0.0F;
             float loopMixedR = 0.0F;
+            float loopDelaySumL = 0.0F;
+            float loopDelaySumR = 0.0F;
 
             // Mix Loop modules: sum the currently selected slot for
             // each instance. Playback phase for all slots advances
@@ -879,11 +958,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // from the Reactable Envelope (attack/release times).
             if (loopSnapshot && !loopSnapshot->empty()) {
                 for (auto& pair : *loopSnapshot) {
+                    const std::string& loopModuleId = pair.first;
                     auto& instance = pair.second;
                     const int slotIndex = instance.selectedIndex.load(
                         std::memory_order_relaxed);
                     const float loopGainTarget = instance.gain.load(
                         std::memory_order_relaxed);
+                    const bool matchesDelayLoop =
+                        delayTargetsLoop &&
+                        loopIsTargeted(loopModuleId);
 
                     if (slotIndex < 0 ||
                         slotIndex >= static_cast<int>(
@@ -1136,43 +1219,33 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                                             envAmp));
                         const float monoDry = l;
                         const float monoWithGain = monoDry * finalGain;
-                        if (finalGain > 0.0F) {
-                            const bool routeThroughFilter =
-                                instance.routeThroughFilter.load(
-                                    std::memory_order_relaxed);
-                            if (routeThroughFilter) {
-                                loopMixedL += monoWithGain;
-                                loopMixedR += r * finalGain;
-                            } else {
-                                // Loops without an active Loop →
-                                // Filter route bypass the Loop bus
-                                // filter and are mixed directly into
-                                // the master output so that they are
-                                // not affected by filters intended
-                                // only for specific Loop chains.
-                                leftOut += monoWithGain;
-                                rightOut += r * finalGain;
-                            }
-                        }
-
                         const int wfIndex = instance.visualWaveformIndex;
                         if (wfIndex >= 0 &&
                             wfIndex < kMaxLoopWaveforms) {
-                            // Expose a per-LoopModule visual voice so
-                            // that each Loop has its own independent
-                            // buffer in the unified Voices structure.
-                            // We reserve the range
-                            // [kMaxVoices, kMaxVoices+kMaxLoopWaveforms)
-                            // for loops, reusing `wfIndex` as the
-                            // local offset. The visual signal mirrors
-                            // the post-gain/envelope mono loop output
-                            // so that waveforms match perceived loudness.
                             const int loopVoiceId =
                                 kMaxVoices + wfIndex;
                             const float loopVisualSample = monoWithGain;
                             visualVoices_.writeSamples(loopVoiceId,
                                                         &loopVisualSample,
                                                         1);
+                        }
+
+                        if (finalGain > 0.0F) {
+                            if (matchesDelayLoop && delayFxMode != 0) {
+                                loopDelaySumL += monoWithGain;
+                                loopDelaySumR += r * finalGain;
+                            } else {
+                                const bool routeThroughFilter =
+                                    instance.routeThroughFilter.load(
+                                        std::memory_order_relaxed);
+                                if (routeThroughFilter) {
+                                    loopMixedL += monoWithGain;
+                                    loopMixedR += r * finalGain;
+                                } else {
+                                    leftOut += monoWithGain;
+                                    rightOut += r * finalGain;
+                                }
+                            }
                         }
 
                         pos += step;
@@ -1213,9 +1286,37 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             leftOut += loopFilteredL;
             rightOut += loopFilteredR;
 
+            if (delayTargetsLoop && delayFxMode != 0 &&
+                (loopDelaySumL != 0.0F || loopDelaySumR != 0.0F)) {
+                float delayL = loopDelaySumL;
+                float delayR = loopDelaySumR;
+                applyDelayFxSample(delayL, delayR);
+                delayHadSourceInputThisSample = true;
+                leftOut += delayL;
+                rightOut += delayR;
+            }
+
             // Apply global Delay / Reverb FX when configured.
-            if (delayFxMode != 0) {
+            if (applyDelayGlobally) {
                 applyDelayFxSample(leftOut, rightOut);
+                delayHadSourceInputThisSample = true;
+            }
+
+            // Keep draining the delay line so that tails keep
+            // sounding even after connections are removed.
+            if (!delayHadSourceInputThisSample && delayFxMode != 0 &&
+                delayTailSamples > 0) {
+                float tailL = 0.0F;
+                float tailR = 0.0F;
+                applyDelayFxSample(tailL, tailR);
+                leftOut += tailL;
+                rightOut += tailR;
+            }
+
+            if (delayHadSourceInputThisSample) {
+                delayTailSamples = kDelayTailHoldSamples;
+            } else if (delayTailSamples > 0) {
+                --delayTailSamples;
             }
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
@@ -1244,12 +1345,20 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // Sampleplay (SoundFont) audio and keep its waveform
             // history up to date so that Sampleplay-only scenes
             // both sound and render correctly.
-            float leftOut =
+            float sampleplayOutL =
                 sampleplayLeft_[static_cast<std::size_t>(sample)];
-            float rightOut =
+            float sampleplayOutR =
                 sampleplayRight_[static_cast<std::size_t>(sample)];
+            if (delayTargetsSampleplay && delayFxMode != 0) {
+                applyDelayFxSample(sampleplayOutL, sampleplayOutR);
+            }
+
+            float leftOut = sampleplayOutL;
+            float rightOut = sampleplayOutR;
             float loopMixedL = 0.0F;
             float loopMixedR = 0.0F;
+            float loopDelaySumL = 0.0F;
+            float loopDelaySumR = 0.0F;
             const float sampleplayMonoRaw = rawSampleplayL;
 
             // Mirror the global Sampleplay mono path into the
@@ -1267,11 +1376,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // different loops remain phase-locked to the transport.
             if (loopSnapshot && !loopSnapshot->empty()) {
                 for (auto& pair : *loopSnapshot) {
+                    const std::string& loopModuleId = pair.first;
                     auto& instance = pair.second;
                     const int slotIndex = instance.selectedIndex.load(
                         std::memory_order_relaxed);
                     const float loopGainTarget = instance.gain.load(
                         std::memory_order_relaxed);
+                    const bool matchesDelayLoop =
+                        delayTargetsLoop &&
+                        loopIsTargeted(loopModuleId);
 
                     if (slotIndex < 0 ||
                         slotIndex >= static_cast<int>(
@@ -1515,19 +1628,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                                             envAmp));
                         const float monoDry = l;
                         const float monoWithGain = monoDry * finalGain;
-                        if (finalGain > 0.0F) {
-                            const bool routeThroughFilter =
-                                instance.routeThroughFilter.load(
-                                    std::memory_order_relaxed);
-                            if (routeThroughFilter) {
-                                loopMixedL += monoWithGain;
-                                loopMixedR += r * finalGain;
-                            } else {
-                                leftOut += monoWithGain;
-                                rightOut += r * finalGain;
-                            }
-                        }
-
                         const int wfIndex = instance.visualWaveformIndex;
                         if (wfIndex >= 0 &&
                             wfIndex < kMaxLoopWaveforms) {
@@ -1537,6 +1637,24 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             visualVoices_.writeSamples(loopVoiceId,
                                                         &loopVisualSample,
                                                         1);
+                        }
+
+                        if (finalGain > 0.0F) {
+                            if (matchesDelayLoop && delayFxMode != 0) {
+                                loopDelaySumL += monoWithGain;
+                                loopDelaySumR += r * finalGain;
+                            } else {
+                                const bool routeThroughFilter =
+                                    instance.routeThroughFilter.load(
+                                        std::memory_order_relaxed);
+                                if (routeThroughFilter) {
+                                    loopMixedL += monoWithGain;
+                                    loopMixedR += r * finalGain;
+                                } else {
+                                    leftOut += monoWithGain;
+                                    rightOut += r * finalGain;
+                                }
+                            }
                         }
 
                         pos += step;
@@ -1576,9 +1694,35 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             leftOut += loopFilteredL;
             rightOut += loopFilteredR;
 
+            if (delayTargetsLoop && delayFxMode != 0 &&
+                (loopDelaySumL != 0.0F || loopDelaySumR != 0.0F)) {
+                float delayL = loopDelaySumL;
+                float delayR = loopDelaySumR;
+                applyDelayFxSample(delayL, delayR);
+                delayHadSourceInputThisSample = true;
+                leftOut += delayL;
+                rightOut += delayR;
+            }
+
             // Apply global Delay / Reverb FX when configured.
-            if (delayFxMode != 0) {
+            if (applyDelayGlobally) {
                 applyDelayFxSample(leftOut, rightOut);
+                delayHadSourceInputThisSample = true;
+            }
+
+            if (!delayHadSourceInputThisSample && delayFxMode != 0 &&
+                delayTailSamples > 0) {
+                float tailL = 0.0F;
+                float tailR = 0.0F;
+                applyDelayFxSample(tailL, tailR);
+                leftOut += tailL;
+                rightOut += tailR;
+            }
+
+            if (delayHadSourceInputThisSample) {
+                delayTailSamples = kDelayTailHoldSamples;
+            } else if (delayTailSamples > 0) {
+                --delayTailSamples;
             }
 
             leftOut = juce::jlimit(-0.9F, 0.9F, leftOut);
@@ -1602,6 +1746,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             }
         }
     }
+
+    delayTailSamplesRemaining_.store(delayTailSamples,
+                                     std::memory_order_relaxed);
 
     // Remember whether this callback block produced any audible
     // output so that the next block can safely enter the fully idle
@@ -1945,7 +2092,8 @@ void AudioEngine::setDelayFxParams(const int mode,
                                    const float delayNormalised,
                                    const float feedback,
                                    const float reverbAmount,
-                                   const float wetGain)
+                                   const float wetGain,
+                                   DelayTargetConfig target)
 {
     const int clampedMode = juce::jlimit(0, 2, mode);
     delayFx_.mode.store(clampedMode, std::memory_order_relaxed);
@@ -1964,6 +2112,31 @@ void AudioEngine::setDelayFxParams(const int mode,
                                 std::memory_order_relaxed);
     delayFx_.wetGain.store(wetClamped,
                            std::memory_order_relaxed);
+
+    delayFx_.applyGlobal.store(target.applyToGlobalMix ? 1 : 0,
+                               std::memory_order_relaxed);
+    delayFx_.includeSampleplay.store(
+        target.includeSampleplayBus ? 1 : 0,
+        std::memory_order_relaxed);
+    delayFx_.voiceMask.store(target.voiceMask,
+                             std::memory_order_relaxed);
+
+    const int clampedLoopCount = juce::jlimit(
+        0, DelayTargetConfig::kMaxLoopTargets, target.loopTargetCount);
+    delayFx_.loopTargetCount.store(clampedLoopCount,
+                                   std::memory_order_relaxed);
+    for (int i = 0; i < DelayTargetConfig::kMaxLoopTargets; ++i) {
+        const std::uint64_t hash =
+            (i < clampedLoopCount)
+                ? target.loopHashes[static_cast<std::size_t>(i)]
+                : 0ULL;
+        delayFx_.loopTargetHashes[static_cast<std::size_t>(i)].store(
+            hash, std::memory_order_relaxed);
+    }
+
+    if (clampedMode == 0) {
+        delayTailSamplesRemaining_.store(0, std::memory_order_relaxed);
+    }
 }
 
 void AudioEngine::setLoopBeatPhase(const double beatPhase01)

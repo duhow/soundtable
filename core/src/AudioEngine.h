@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -18,6 +20,11 @@ namespace rectai {
 class SampleplaySynth;
 class Scene;
 class AudioGraph;
+
+[[nodiscard]] inline std::uint64_t HashModuleId(const std::string& id)
+{
+    return static_cast<std::uint64_t>(std::hash<std::string>{}(id));
+}
 }  // namespace rectai
 
 // Minimal audio engine for the RectaiTable core.
@@ -31,6 +38,16 @@ class AudioGraph;
 //   - Control parameters from the UI and tracking state.
 class AudioEngine : public juce::AudioIODeviceCallback {
 public:
+    struct DelayTargetConfig {
+        static constexpr int kMaxLoopTargets = 12;
+
+        bool applyToGlobalMix{false};
+        bool includeSampleplayBus{false};
+        std::uint32_t voiceMask{0};
+        int loopTargetCount{0};
+        std::array<std::uint64_t, kMaxLoopTargets> loopHashes{};
+    };
+
     AudioEngine();
     ~AudioEngine() override;
 
@@ -284,7 +301,8 @@ public:
     // signal before it is mixed with the dry input.
     void setDelayFxParams(int mode, float delayNormalised,
                           float feedback, float reverbAmount,
-                          float wetGain);
+                          float wetGain,
+                          DelayTargetConfig target);
 
     // Returns the current global transport position in beats as
     // driven by the audio callback using the configured BPM and
@@ -388,6 +406,7 @@ private:
     // sample rate and maximum delay time we expect to support (for
     // example, 48 kHz * 4 seconds).
     static constexpr int kMaxDelaySamples = 192000;
+    static constexpr int kDelayTailHoldSamples = kMaxDelaySamples * 4;
 
     struct Voice {
         std::atomic<double> frequency{0.0};
@@ -462,9 +481,16 @@ private:
         std::atomic<float> feedback{0.5F};
         std::atomic<float> reverbAmount{0.5F};
         std::atomic<float> wetGain{1.0F};
+        std::atomic<int> applyGlobal{0};
+        std::atomic<int> includeSampleplay{0};
+        std::atomic<std::uint32_t> voiceMask{0};
+        std::atomic<int> loopTargetCount{0};
+        std::array<std::atomic<std::uint64_t>, DelayTargetConfig::kMaxLoopTargets>
+            loopTargetHashes{};
     };
 
     DelayFxState delayFx_{};
+    std::atomic<int> delayTailSamplesRemaining_{0};
 
     // Simple stereo ring buffers used to implement the feedback
     // delay line for the Delay FX mode. Accessed exclusively on the

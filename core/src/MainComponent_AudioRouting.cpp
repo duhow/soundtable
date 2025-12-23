@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 #include "AudioEngine.h"
 #include "MainComponentHelpers.h"
@@ -104,6 +105,17 @@ void MainComponent::updateAudioRoutingAndVoices(
     // loading patches whose Output starts muted in a completely
     // silent state.
     float sampleplayOutputGain = globalVolumeGain;
+
+    struct DelaySelection {
+        int mode{0};
+        float delayParam{0.0F};
+        float feedback{0.0F};
+        float reverbAmount{0.0F};
+        float wetGain{1.0F};
+        bool includeSampleplay{false};
+        std::vector<std::string> voiceModuleIds;
+        std::vector<std::string> loopModuleIds;
+    } delaySelection;
 
     // Temporary hold-mute: if the user is holding down either the
     // Sampleplay radial to the master or one of its direct audio
@@ -220,20 +232,14 @@ void MainComponent::updateAudioRoutingAndVoices(
 
     audioEngine_.setSampleplayOutputGain(sampleplayOutputGain);
 
-    // Configure an optional global Delay / Reverb FX bus based on
-    // active DelayModule instances. For now we approximate the
-    // desired routing by selecting a single Delay module that is
-    // inside the musical area and has an unmuted route to the master
-    // Output, and apply its parameters to a stereo FX stage on the
-    // final mix.
-    int delayFxMode = 0;        // 0=bypass,1=delay,2=reverb
-    float delayParam = 0.0F;    // Normalised delay in [0,1]
-    float fbParam = 0.0F;       // Feedback / reverb amount in [0,1]
-    float reverbAmount = 0.0F;  // Wetness for reverb mode
-    float delayWetGain = 1.0F;  // Per-module wet gain for Delay FX
-
+    // Configure an optional Delay / Reverb FX bus based on active
+    // DelayModule instances. We select the first Delay module inside
+    // the music area with an unmuted route to the master Output and
+    // capture its parameters so they can be applied after mapping
+    // generators to voices.
     {
         const rectai::DelayModule* activeDelay = nullptr;
+        const rectai::ObjectInstance* activeDelayObj = nullptr;
 
         for (const auto& [objId, obj] : objects) {
             juce::ignoreUnused(objId);
@@ -254,10 +260,6 @@ void MainComponent::updateAudioRoutingAndVoices(
                 continue;
             }
 
-            // Require at least one unmuted audio route from the
-            // Delay module to the invisible master Output
-            // (MASTER_OUTPUT_ID) so that parked or muted Delay
-            // tangibles do not enable the FX bus.
             bool hasMasterRoute = false;
             bool masterRouteMuted = true;
 
@@ -290,7 +292,8 @@ void MainComponent::updateAudioRoutingAndVoices(
             }
 
             activeDelay = delayModule;
-            break;  // Use the first matching Delay module for now.
+            activeDelayObj = &obj;
+            break;
         }
 
         if (activeDelay != nullptr) {
@@ -298,28 +301,102 @@ void MainComponent::updateAudioRoutingAndVoices(
             const std::string modeType =
                 (mode != nullptr) ? mode->type : std::string();
 
-            delayParam = activeDelay->GetParameterOrDefault(
-                "delay", 0.66F);
-            fbParam = activeDelay->GetParameterOrDefault(
-                "fb", 0.5F);
-            delayWetGain = activeDelay->GetParameterOrDefault(
-                "gain", activeDelay->default_parameter_value("gain"));
+            delaySelection.delayParam =
+                activeDelay->GetParameterOrDefault("delay", 0.66F);
+            delaySelection.feedback =
+                activeDelay->GetParameterOrDefault("fb", 0.5F);
+            delaySelection.wetGain =
+                activeDelay->GetParameterOrDefault(
+                    "gain",
+                    activeDelay->default_parameter_value("gain"));
 
             if (modeType == "feedback") {
-                delayFxMode = 1;
-                reverbAmount = 0.0F;
+                delaySelection.mode = 1;
+                delaySelection.reverbAmount = 0.0F;
             } else if (modeType == "reverb") {
-                delayFxMode = 2;
-                reverbAmount = fbParam;
+                delaySelection.mode = 2;
+                delaySelection.reverbAmount = delaySelection.feedback;
+            }
+
+            if (activeDelayObj != nullptr) {
+                std::unordered_set<std::string> delayVoiceSources;
+                std::unordered_set<std::string> delayLoopSources;
+                const auto delayObjIt = moduleToObjectId.find(
+                    activeDelay->id());
+                const auto delayObjSceneIt =
+                    (delayObjIt != moduleToObjectId.end())
+                        ? objects.find(delayObjIt->second)
+                        : objects.end();
+
+                for (const auto& edge : audioEdges) {
+                    if (edge.to_module_id != activeDelay->id()) {
+                        continue;
+                    }
+
+                    const auto srcModIt = modules.find(edge.from_module_id);
+                    if (srcModIt == modules.end() ||
+                        srcModIt->second == nullptr) {
+                        continue;
+                    }
+
+                    const auto srcObjIdIt =
+                        moduleToObjectId.find(edge.from_module_id);
+                    if (srcObjIdIt == moduleToObjectId.end()) {
+                        continue;
+                    }
+
+                    const auto srcObjIt = objects.find(srcObjIdIt->second);
+                    if (srcObjIt == objects.end()) {
+                        continue;
+                    }
+
+                    const auto& srcObj = srcObjIt->second;
+                    if (!isInsideMusicArea(srcObj)) {
+                        continue;
+                    }
+
+                    if (!edge.is_hardlink && delayObjSceneIt != objects.end()) {
+                        if (!isConnectionGeometricallyActive(
+                                srcObj, delayObjSceneIt->second)) {
+                            continue;
+                        }
+                    }
+
+                    rectai::Connection tmpConn{
+                        edge.from_module_id,
+                        edge.from_port_name,
+                        edge.to_module_id,
+                        edge.to_port_name,
+                        edge.is_hardlink};
+                    const std::string key = makeConnectionKey(tmpConn);
+                    if (mutedConnections_.find(key) !=
+                        mutedConnections_.end()) {
+                        continue;
+                    }
+
+                    auto* sourceModule = srcModIt->second.get();
+
+                    if (sourceModule->is<rectai::LoopModule>()) {
+                        if (delayLoopSources
+                                .insert(sourceModule->id())
+                                .second) {
+                            delaySelection.loopModuleIds.push_back(
+                                sourceModule->id());
+                        }
+                    } else if (sourceModule->is<rectai::SampleplayModule>()) {
+                        delaySelection.includeSampleplay = true;
+                    } else {
+                        if (delayVoiceSources
+                                .insert(sourceModule->id())
+                                .second) {
+                            delaySelection.voiceModuleIds.push_back(
+                                sourceModule->id());
+                        }
+                    }
+                }
             }
         }
     }
-
-    audioEngine_.setDelayFxParams(delayFxMode,
-                                  delayParam,
-                                  fbParam,
-                                  reverbAmount,
-                                  delayWetGain);
 
     // Configure per-module Loop parameters (selected slot and gain)
     // based on the current Scene and routing. Loops keep running
@@ -1302,4 +1379,48 @@ void MainComponent::updateAudioRoutingAndVoices(
     // (pre/post voice or Sampleplay) instead of reimplementing
     // routing heuristics based on module types.
     updateConnectionVisualSources();
+
+    AudioEngine::DelayTargetConfig delayTargetConfig;
+    int delayModeToApply = delaySelection.mode;
+
+    if (delayModeToApply != 0) {
+        delayTargetConfig.includeSampleplayBus =
+            delaySelection.includeSampleplay;
+
+        for (const auto& moduleId : delaySelection.voiceModuleIds) {
+            const auto voiceIt = moduleVoiceIndex_.find(moduleId);
+            if (voiceIt == moduleVoiceIndex_.end()) {
+                continue;
+            }
+
+            const int resolvedVoice = voiceIt->second;
+            if (resolvedVoice < 0 ||
+                resolvedVoice >= AudioEngine::kMaxVoices ||
+                resolvedVoice >= 32) {
+                continue;
+            }
+
+            delayTargetConfig.voiceMask |=
+                (1u << static_cast<unsigned int>(resolvedVoice));
+        }
+
+        for (const auto& loopId : delaySelection.loopModuleIds) {
+            if (delayTargetConfig.loopTargetCount >=
+                AudioEngine::DelayTargetConfig::kMaxLoopTargets) {
+                break;
+            }
+
+            delayTargetConfig.loopHashes
+                [delayTargetConfig.loopTargetCount] =
+                    rectai::HashModuleId(loopId);
+            ++delayTargetConfig.loopTargetCount;
+        }
+    }
+
+    audioEngine_.setDelayFxParams(delayModeToApply,
+                                  delaySelection.delayParam,
+                                  delaySelection.feedback,
+                                  delaySelection.reverbAmount,
+                                  delaySelection.wetGain,
+                                  delayTargetConfig);
 }
