@@ -1855,39 +1855,7 @@ void MainComponent::timerCallback()
     updateSequencerAndPulses(graphEdges, audioEdges, globalVolumeGain,
                              nowSeconds, dt);
 
-    // Limit the maximum repaint rate independently from the timer
-    // frequency. This keeps waveform visualisations and widgets
-    // smooth while avoiding calling into JUCE's paint pipeline more
-    // often than necessary.
-
-    // Skip repaints entirely when the scene is visually idle to
-    // reduce CPU usage. We only refresh the UI when there is some
-    // form of ongoing visual activity (audio, pulses, BPM label or
-    // an active hold/mute gesture).
-    bool hasDelayOverlayActivity = false;
-    for (const auto& entry : delayNoteOverlays_) {
-        const double ts = entry.second.lastChangeSeconds;
-        if (ts > 0.0 && nowSeconds - ts <= 6.0) {
-            hasDelayOverlayActivity = true;
-            break;
-        }
-    }
-
-    const bool hasVisualActivity =
-        !modulesWithActiveAudio_.empty() || !pulses_.empty() ||
-        (bpmLastChangeSeconds_ > 0.0 &&
-         nowSeconds - bpmLastChangeSeconds_ <= 6.0) ||
-        hasDelayOverlayActivity ||
-        activeConnectionHold_.has_value() ||
-        // Keep the UI refreshing while the OSC/TUIO activity label
-        // is visible (up to 60 seconds since the last message) or
-        // while a short-lived traffic pulse is active.
-        (lastInputActivitySeconds_ > 0.0 &&
-         nowSeconds - lastInputActivitySeconds_ <= 60.0) ||
-        (inputActivityPulseSeconds_ > 0.0 &&
-         nowSeconds - inputActivityPulseSeconds_ <= 0.25);
-
-    if (hasVisualActivity) {
-        repaintWithRateLimit();
-    }
+    // Paint every frame at a capped 60 Hz so pulsating visuals and
+    // waveforms remain fluid even when the scene is otherwise idle.
+    repaintWithRateLimit();
 }
