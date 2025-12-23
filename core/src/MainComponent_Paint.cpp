@@ -2973,14 +2973,25 @@ void MainComponent::paintObjectsAndPanels(
         // Per-module detail panel (envelope/settings and
         // module-specific tabs) when active.
         paintNodeModulePanel(g, bounds, object, moduleForObject, cx, cy,
-                             insideMusic);
+                     insideMusic);
+
+        // Short-lived overlay showing the selected delay note icon
+        // near the top-left corner of Delay modules in feedback
+        // mode.
+        paintDelayNoteOverlay(g,
+                      moduleForObject,
+                      object.logical_id(),
+                      cx,
+                      cy,
+                      nodeRadius,
+                      nowSeconds);
 
         paintNodeTempoOverlay(g,
-                              moduleForObject,
-                              cx,
-                              cy,
-                              nodeRadius,
-                              bpmLabelAlpha);
+                      moduleForObject,
+                      cx,
+                      cy,
+                      nodeRadius,
+                      bpmLabelAlpha);
     }
 }
 
@@ -3112,6 +3123,109 @@ void MainComponent::paintNodeTempoOverlay(
    g.drawText(bpmText, bpmBounds,
               juce::Justification::topLeft,
               false);
+}
+
+void MainComponent::paintDelayNoteOverlay(
+    juce::Graphics& g,
+    const rectai::AudioModule* moduleForObject,
+    const std::string& moduleId,
+    float cx,
+    float cy,
+    float nodeRadius,
+    double nowSeconds)
+{
+    if (moduleForObject == nullptr ||
+        !moduleForObject->is<rectai::DelayModule>()) {
+        return;
+    }
+
+    const auto it = delayNoteOverlays_.find(moduleId);
+    if (it == delayNoteOverlays_.end()) {
+        return;
+    }
+
+    const auto& state = it->second;
+    if (state.segmentIndex < 0 || state.lastChangeSeconds <= 0.0) {
+        return;
+    }
+
+    const double elapsed = nowSeconds - state.lastChangeSeconds;
+    if (elapsed < 0.0) {
+        return;
+    }
+
+    // Shorter lifetime than the global BPM label: keep the note
+    // visible for ~2 seconds, then fade it out over 1 second.
+    double alpha = 0.0;
+    if (elapsed <= 2.0) {
+        alpha = 1.0;
+    } else if (elapsed <= 3.0) {
+        alpha = 1.0 - (elapsed - 2.0);
+    }
+
+    if (alpha <= 0.0) {
+        return;
+    }
+
+    // Atlas keys use the sprite basename without the "icons/" prefix
+    // (see loadAtlasResources where it strips the path component).
+    static constexpr const char* kDelaySegmentIcons[8] = {
+        "tempo_32",  // Fastest (1/32)
+        "tempo_16",  // 1/16
+        "tempo_8",   // 1/8
+        "tempo_4",   // 1/4
+        "tempo_3",   // 3/8
+        "tempo_2",   // 2/4
+        "tempo_1",   // 4/4
+        "tempo_0"};  // 8/4 or longest
+
+    const int idx = juce::jlimit(0, 7, state.segmentIndex);
+    const char* iconIdCStr = kDelaySegmentIcons[idx];
+    if (iconIdCStr == nullptr || iconIdCStr[0] == '\0') {
+        return;
+    }
+
+    const std::string iconId(iconIdCStr);
+
+    // Icon slightly outside the top-left of the node circle so that
+    // it does not blend with the node body colour.
+    const float margin = 4.0F;
+    const float iconSize =
+        juce::jmin(nodeRadius * 0.75F, 26.0F);
+    juce::Rectangle<float> iconBounds(
+        cx - nodeRadius - iconSize - margin,
+        cy - nodeRadius - iconSize - margin,
+        iconSize,
+        iconSize);
+
+    const float a = static_cast<float>(alpha);
+    const int destSize =
+        static_cast<int>(std::floor(iconBounds.getHeight()));
+    if (destSize <= 0) {
+        return;
+    }
+
+    if (!atlasLoaded_) {
+        // Fallback: simple filled circle when the atlas is not
+        // available so that the user still gets visual feedback.
+        g.setColour(juce::Colours::white.withAlpha(0.9F * a));
+        g.fillEllipse(iconBounds);
+        return;
+    }
+
+    auto iconImage = getCachedAtlasIcon(iconId, destSize, destSize);
+    if (!iconImage.isValid()) {
+        // Fallback when the specific icon cannot be resolved.
+        g.setColour(juce::Colours::white.withAlpha(0.9F * a));
+        g.fillEllipse(iconBounds);
+        return;
+    }
+
+    const int destX = juce::roundToInt(iconBounds.getX());
+    const int destY = juce::roundToInt(iconBounds.getY());
+
+    g.setColour(juce::Colours::white.withAlpha(0.9F * a));
+    g.drawImageAt(iconImage, destX, destY);
 }
 
 void MainComponent::paintNodeSideControls(
@@ -3693,28 +3807,17 @@ void MainComponent::paintNodeSideControls(
                     }
                 }
 
-                // Pointer: in the lower half it follows the
-                // continuous fill; in the upper half it points to
-                // the centre of the active small segment.
-                float pointerT = splitT;
-                if (value <= splitT) {
-                    const float frac =
-                        juce::jlimit(0.0F, 1.0F, value / splitT);
-                    pointerT = juce::jmap(frac, 1.0F, splitT,
-                                          splitT, 1.0F);
-                } else if (activeIndex >= 0) {
-                    const float segCenterNorm =
-                        (static_cast<float>(activeIndex) + 0.5F) /
-                        static_cast<float>(kSegments);
-                    pointerT = juce::jmap(segCenterNorm,
-                                           0.0F, 1.0F,
-                                           splitT, 0.0F);
-                }
-
-                const float pointerY = juce::jmap(pointerT,
+                // Pointer: follow the continuous 0–1 value along the
+                // same vertical mapping as el control genérico de
+                // frecuencia, de forma que 0 está en la parte baja
+                // del semicírculo y 1 en la parte alta, respetando
+                // el margen de 3 px.
+                const float pointerValue =
+                    juce::jlimit(0.0F, 1.0F, freqValue);
+                const float pointerY = juce::jmap(pointerValue,
                                                   0.0F, 1.0F,
-                                                  sliderTop,
-                                                  sliderBottom);
+                                                  sliderBottom,
+                                                  sliderTop);
                 const float dy = pointerY - cy;
                 const float inside =
                     ringRadius * ringRadius - dy * dy;

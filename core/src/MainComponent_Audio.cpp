@@ -561,10 +561,10 @@ void MainComponent::updateRotationDrivenControllers(
 
         const float diff = deltaIt->second;
 
-        // 1) Rotation → per-module frequency (`freq` parameter) or
-        // Loop sample selection (`sample` parameter).
+        // 1) Rotation → per-module controls (Loop sample selection,
+        // pitch/freq parameters, Delay time/amount, etc.).
         if (auto* loopModule =
-                dynamic_cast<rectai::LoopModule*>(module)) {
+            dynamic_cast<rectai::LoopModule*>(module)) {
             if (!obj.docked()) {
                 const float deltaSample = -diff / 360.0F;  // [-0.5, 0.5]
 
@@ -674,6 +674,62 @@ void MainComponent::updateRotationDrivenControllers(
                         1.0e-4F) {
                         maybeRetriggerOscillatorOnFreqChange(
                             obj.logical_id(), module);
+                    }
+                }
+            }
+        } else if (auto* delayModule =
+                       dynamic_cast<rectai::DelayModule*>(module)) {
+            if (!obj.docked()) {
+                // Map rotation to the Delay side bar: two full
+                // turns (720º) correspond to the full 0–1 range of
+                // the control. In feedback mode this drives the
+                // `delay` parameter (time); in reverb mode it drives
+                // the `fb` parameter (amount).
+                const float deltaNorm = -diff / 720.0F;
+
+                if (std::fabs(deltaNorm) <=
+                    std::numeric_limits<float>::epsilon()) {
+                    continue;
+                }
+
+                const auto* mode = delayModule->current_mode();
+                const bool isFeedbackMode =
+                    (mode != nullptr && mode->type == "feedback");
+
+                const char* paramName = isFeedbackMode ? "delay" : "fb";
+                const float currentValue = delayModule->GetParameterOrDefault(
+                    paramName,
+                    delayModule->default_parameter_value(paramName));
+                const float newValue = juce::jlimit(
+                    0.0F, 1.0F, currentValue + deltaNorm);
+
+                if (std::abs(newValue - currentValue) <= 1.0e-4F) {
+                    continue;
+                }
+
+                scene_.SetModuleParameter(obj.logical_id(), paramName,
+                                          newValue);
+
+                if (isFeedbackMode) {
+                    // In feedback mode, only the upper half of the
+                    // bar (0.5–1.0) is split into 8 segments. Mirror
+                    // that mapping so the overlay tracks those
+                    // discrete durations.
+                    constexpr float splitT = 0.5F;
+                    if (newValue > splitT) {
+                        const float topNorm = juce::jlimit(
+                            0.0F, 1.0F,
+                            (newValue - splitT) /
+                                (1.0F - splitT));
+                        int segIndex = static_cast<int>(
+                            topNorm * 8.0F);
+                        if (segIndex < 0) {
+                            segIndex = 0;
+                        } else if (segIndex > 7) {
+                            segIndex = 7;
+                        }
+                        markDelayNoteSegmentActive(
+                            obj.logical_id(), segIndex);
                     }
                 }
             }
@@ -1808,10 +1864,20 @@ void MainComponent::timerCallback()
     // reduce CPU usage. We only refresh the UI when there is some
     // form of ongoing visual activity (audio, pulses, BPM label or
     // an active hold/mute gesture).
+    bool hasDelayOverlayActivity = false;
+    for (const auto& entry : delayNoteOverlays_) {
+        const double ts = entry.second.lastChangeSeconds;
+        if (ts > 0.0 && nowSeconds - ts <= 6.0) {
+            hasDelayOverlayActivity = true;
+            break;
+        }
+    }
+
     const bool hasVisualActivity =
         !modulesWithActiveAudio_.empty() || !pulses_.empty() ||
         (bpmLastChangeSeconds_ > 0.0 &&
          nowSeconds - bpmLastChangeSeconds_ <= 6.0) ||
+        hasDelayOverlayActivity ||
         activeConnectionHold_.has_value() ||
         // Keep the UI refreshing while the OSC/TUIO activity label
         // is visible (up to 60 seconds since the last message) or

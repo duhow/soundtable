@@ -254,6 +254,20 @@ private:
     std::unordered_map<std::string, double>
         loopLabelLastChangeSeconds_;
 
+    // Delay feedback note overlay: per-DelayModule state storing the
+    // most recently selected small segment (index in [0,7]) and the
+    // timestamp of that change. Used by the paint code to draw a
+    // short-lived tempo note icon near the top-left of the node when
+    // the user selects one of the discrete delay durations in
+    // feedback mode.
+    struct DelayNoteOverlayState {
+        int segmentIndex{-1};
+        double lastChangeSeconds{0.0};
+    };
+
+    std::unordered_map<std::string, DelayNoteOverlayState>
+        delayNoteOverlays_;
+
     // Loop playhead trail: recent history of playback phases per
     // Loop module so that the UI can render a short white trail
     // behind the rotating red play bar. Samples are kept within a
@@ -537,6 +551,14 @@ private:
                                float nodeRadius,
                                double bpmLabelAlpha) const;
 
+    void paintDelayNoteOverlay(juce::Graphics& g,
+                               const rectai::AudioModule* moduleForObject,
+                               const std::string& moduleId,
+                               float cx,
+                               float cy,
+                               float nodeRadius,
+                               double nowSeconds);
+
     // Per-module detail panel anchored near the node.
     struct ModulePanelState {
         enum class Tab {
@@ -637,6 +659,13 @@ private:
     // active so that the UI keeps it visible and restarts its
     // fade-out timer.
     void markLoopSampleLabelActive(const std::string& moduleId);
+
+    // Mark the Delay feedback note overlay for a given module id as
+    // recently changed, storing the active small segment index. This
+    // drives a short-lived tempo note icon overlay near the
+    // top-left corner of the Delay node in feedback mode.
+    void markDelayNoteSegmentActive(const std::string& moduleId,
+                                    int segmentIndex);
 
     // Loop file browser helpers used by the LoopFiles panel tab.
     void ensureLoopFileBrowserInitialised(const std::string& moduleId,

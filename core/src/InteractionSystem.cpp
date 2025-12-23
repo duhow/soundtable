@@ -874,10 +874,9 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                     // Map click position on the delay side bar to a
                     // continuous delay value in [0,1] (feedback
                     // mode) or a continuous effect amount (reverb
-                    // mode). The DSP sigue cuantizando internamente
-                    // a 8 divisiones rítmicas, pero la UI mantiene
-                    // una barra llena 0–1 donde la mitad inferior
-                    // (0–0.5) corresponde al gran segmento base.
+                    // mode). The DSP keeps quantising the delay time
+                    // internally to 8 rhythmic divisions, while the
+                    // UI exposes a continuous 0–1 bar.
                     const auto* mode = delayModule->current_mode();
                     const bool isFeedbackMode =
                         (mode != nullptr && mode->type == "feedback");
@@ -888,6 +887,27 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                     if (isFeedbackMode) {
                         owner_.scene_.SetModuleParameter(
                             object.logical_id(), "delay", clamped);
+
+                        // Only the upper half of the bar (0.5–1.0)
+                        // is split into 8 discrete segments. Map
+                        // that range to indices 0..7 for the
+                        // overlay.
+                        constexpr float splitT = 0.5F;
+                        if (clamped > splitT) {
+                            const float topNorm = juce::jlimit(
+                                0.0F, 1.0F,
+                                (clamped - splitT) /
+                                    (1.0F - splitT));
+                            int segIndex = static_cast<int>(
+                                topNorm * 8.0F);
+                            if (segIndex < 0) {
+                                segIndex = 0;
+                            } else if (segIndex > 7) {
+                                segIndex = 7;
+                            }
+                            owner_.markDelayNoteSegmentActive(
+                                object.logical_id(), segIndex);
+                        }
                     } else {
                         owner_.scene_.SetModuleParameter(
                             object.logical_id(), "fb", clamped);
@@ -2281,12 +2301,11 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 return;
             }
 
-            if (auto* delayModule = dynamic_cast<rectai::DelayModule*>(
+                if (auto* delayModule = dynamic_cast<rectai::DelayModule*>(
                     moduleForFreq)) {
                 // Drag on Delay mirrors the click mapping: delay is
-                // a continuous 0–1 control in feedback mode (barra
-                // llena con mitad inferior 0–0.5 para el segmento
-                // grande) y fb es continuo en modo reverb.
+                // a continuous 0–1 control in feedback mode and fb
+                // is continuous in reverb mode.
                 const auto* mode = delayModule->current_mode();
                 const bool isFeedbackMode =
                     (mode != nullptr && mode->type == "feedback");
@@ -2297,6 +2316,23 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 if (isFeedbackMode) {
                     owner_.scene_.SetModuleParameter(
                         object.logical_id(), "delay", clamped);
+
+                    constexpr float splitT = 0.5F;
+                    if (clamped > splitT) {
+                        const float topNorm = juce::jlimit(
+                            0.0F, 1.0F,
+                            (clamped - splitT) /
+                                (1.0F - splitT));
+                        int segIndex = static_cast<int>(
+                            topNorm * 8.0F);
+                        if (segIndex < 0) {
+                            segIndex = 0;
+                        } else if (segIndex > 7) {
+                            segIndex = 7;
+                        }
+                        owner_.markDelayNoteSegmentActive(
+                            object.logical_id(), segIndex);
+                    }
                 } else {
                     owner_.scene_.SetModuleParameter(
                         object.logical_id(), "fb", clamped);

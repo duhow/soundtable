@@ -904,6 +904,21 @@ void MainComponent::markLoopSampleLabelActive(
     loopLabelLastChangeSeconds_[moduleId] = nowSeconds;
 }
 
+void MainComponent::markDelayNoteSegmentActive(
+    const std::string& moduleId, int segmentIndex)
+{
+    if (segmentIndex < 0) {
+        return;
+    }
+
+    const double nowSeconds =
+        juce::Time::getMillisecondCounterHiRes() / 1000.0;
+
+    auto& state = delayNoteOverlays_[moduleId];
+    state.segmentIndex = segmentIndex;
+    state.lastChangeSeconds = nowSeconds;
+}
+
 void MainComponent::ensureLoopFileBrowserInitialised(
     const std::string& moduleId, rectai::LoopModule* loopModule)
 {
