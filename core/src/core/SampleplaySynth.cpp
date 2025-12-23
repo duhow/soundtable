@@ -34,7 +34,7 @@ void SampleplaySynth::clearSynthLocked()
 
   if (impl_->synth != nullptr) {
     if (impl_->sfontId >= 0) {
-      (void)fluid_synth_sfunload(impl_->synth, impl_->sfontId, 1);
+      (void)fluid_synth_sfunload(impl_->synth, impl_->sfontId, 0);
       impl_->sfontId = -1;
     }
     delete_fluid_synth(impl_->synth);
@@ -123,7 +123,7 @@ bool SampleplaySynth::loadSoundfont(const std::string& path,
   }
 
   if (impl_->sfontId >= 0) {
-    (void)fluid_synth_sfunload(impl_->synth, impl_->sfontId, 1);
+    (void)fluid_synth_sfunload(impl_->synth, impl_->sfontId, 0);
     impl_->sfontId = -1;
   }
 

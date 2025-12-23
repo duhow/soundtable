@@ -88,7 +88,7 @@ bool EnumerateSoundfontPresets(const std::string& path,
         if (error_message != nullptr) {
             *error_message = "FluidSynth returned null soundfont handle";
         }
-        fluid_synth_sfunload(synth, sfid, 1);
+        fluid_synth_sfunload(synth, sfid, 0);
         delete_fluid_synth(synth);
         delete_fluid_settings(settings);
         return false;
@@ -119,7 +119,7 @@ bool EnumerateSoundfontPresets(const std::string& path,
         }
     }
 
-    fluid_synth_sfunload(synth, sfid, 1);
+    fluid_synth_sfunload(synth, sfid, 0);
     delete_fluid_synth(synth);
     delete_fluid_settings(settings);
 

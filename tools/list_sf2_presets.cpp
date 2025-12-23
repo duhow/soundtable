@@ -43,7 +43,7 @@ int main(int argc, char** argv)
     fluid_sfont_t* sfont = fluid_synth_get_sfont_by_id(synth, sfid);
     if (sfont == nullptr) {
         std::fprintf(stderr, "fluid_synth_get_sfont_by_id returned null for %s\n", path.c_str());
-        fluid_synth_sfunload(synth, sfid, 1);
+        fluid_synth_sfunload(synth, sfid, 0);
         delete_fluid_synth(synth);
         delete_fluid_settings(settings);
         return 1;
@@ -70,7 +70,7 @@ int main(int argc, char** argv)
         }
     }
 
-    fluid_synth_sfunload(synth, sfid, 1);
+    fluid_synth_sfunload(synth, sfid, 0);
     delete_fluid_synth(synth);
     delete_fluid_settings(settings);
 
