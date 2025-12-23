@@ -1,0 +1,51 @@
+diff --git a/JUCE/modules/juce_audio_devices/native/juce_ALSA_linux.cpp b/JUCE/modules/juce_audio_devices/native/juce_ALSA_linux.cpp
+index 84e06961f1..405edd714c 100644
+--- a/JUCE/modules/juce_audio_devices/native/juce_ALSA_linux.cpp
++++ b/JUCE/modules/juce_audio_devices/native/juce_ALSA_linux.cpp
+@@ -192,6 +192,26 @@ public:
+         closeNow();
+     }
+ 
++    void abortStream()
++    {
++        if (handle == nullptr)
++            return;
++
++        const int abortErr = snd_pcm_abort (handle);
++
++        if (abortErr < 0)
++        {
++            JUCE_ALSA_LOG ("snd_pcm_abort failed; err=" << abortErr
++                            << " (" << snd_strerror (abortErr) << ")");
++
++            const int dropErr = snd_pcm_drop (handle);
++
++            if (dropErr < 0)
++                JUCE_ALSA_LOG ("snd_pcm_drop failed; err=" << dropErr
++                                << " (" << snd_strerror (dropErr) << ")");
++        }
++    }
++
+     void closeNow()
+     {
+         if (handle != nullptr)
+@@ -662,8 +682,17 @@ public:
+             {
+                 JUCE_ALSA_LOG ("Thread is stuck in i/o. Is pulseaudio suspended?");
+ 
+-                if (outputDevice != nullptr) outputDevice->closeNow();
+-                if (inputDevice != nullptr) inputDevice->closeNow();
++                if (outputDevice != nullptr)
++                {
++                    outputDevice->abortStream();
++                    outputDevice->closeNow();
++                }
++
++                if (inputDevice != nullptr)
++                {
++                    inputDevice->abortStream();
++                    inputDevice->closeNow();
++                }
+             }
+         }
+ 
