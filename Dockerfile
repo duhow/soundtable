@@ -34,7 +34,7 @@ RUN apt-get update && \
         libopencv-dev && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/rectai-table
+WORKDIR /opt/soundtable
 
 #COPY CMakeLists.txt ./
 #COPY core ./core
