@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 # Core JUCE application
 
 if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "JUCE no encontrado en ${JUCE_DIR}. Consulta research/tech_stack.md para instrucciones.")
+    message(FATAL_ERROR "JUCE not found ${JUCE_DIR}. Download submodules: git submodule update --init --recursive")
 endif()
 
 add_subdirectory(${JUCE_DIR} JUCE-build)

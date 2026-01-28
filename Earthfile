@@ -47,6 +47,7 @@ the-base:
     COPY resources ./resources
     COPY reacTIVision ./reacTIVision
     COPY research ./research
+    COPY external ./external
 
     # JUCE: se espera que exista como submódulo JUCE/ en el repo host.
     # Si no existe, puede clonarse dentro del entorno Earthly manualmente.
