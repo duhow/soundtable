@@ -4,7 +4,7 @@
 
 class MainComponent;
 
-namespace rectai::ui {
+namespace soundtable::ui {
 
 // Lightweight interaction façade that receives normalised pointer and
 // wheel events from MainComponent (mouse + TUIO) and forwards them into
@@ -46,4 +46,4 @@ private:
     MainComponent& owner_;
 };
 
-}  // namespace rectai::ui
+}  // namespace soundtable::ui

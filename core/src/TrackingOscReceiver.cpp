@@ -6,7 +6,7 @@ namespace {
 constexpr int kDefaultPort = 3333;  // Aligned with common TUIO setups.
 }  // namespace
 
-TrackingOscReceiver::TrackingOscReceiver(rectai::Scene& scene, const int port)
+TrackingOscReceiver::TrackingOscReceiver(soundtable::Scene& scene, const int port)
     : scene_(scene)
 {
     // Register as a generic OSC listener; address-based dispatch is
@@ -17,11 +17,11 @@ TrackingOscReceiver::TrackingOscReceiver(rectai::Scene& scene, const int port)
     const auto actualPort = port > 0 ? port : kDefaultPort;
     if (!connect(actualPort)) {
         juce::Logger::writeToLog(
-            "[rectai-core] Failed to bind OSC receiver on port " +
+            "[soundtable-core] Failed to bind OSC receiver on port " +
             juce::String(actualPort));
     } else {
         juce::Logger::writeToLog(
-            "[rectai-core] OSC receiver listening on port " +
+            "[soundtable-core] OSC receiver listening on port " +
             juce::String(actualPort));
     }
 
@@ -46,7 +46,7 @@ void TrackingOscReceiver::writeLog(
     const juce::String& text)
 {
 #if !defined(NDEBUG)
-    juce::Logger::writeToLog("[rectai-core] " + text);
+    juce::Logger::writeToLog("[soundtable-core] " + text);
 #endif
     return;
 }
@@ -57,7 +57,7 @@ void TrackingOscReceiver::writeLog(
 {
 #if !defined(NDEBUG)
     const auto address = message.getAddressPattern().toString();
-    juce::Logger::writeToLog(juce::String("[rectai-core] ") + address + ": " + text);
+    juce::Logger::writeToLog(juce::String("[soundtable-core] ") + address + ": " + text);
 #endif
     return;
 }
@@ -79,15 +79,15 @@ void TrackingOscReceiver::oscMessageReceived(const juce::OSCMessage& message)
 {
     const auto address = message.getAddressPattern().toString();
 
-    if (address.startsWith("/rectai/")) {
+    if (address.startsWith("/soundtable/")) {
         notifyActivity(ActivityKind::kOsc);
     } else if (address.startsWith("/tuio/")) {
         notifyActivity(ActivityKind::kTuio);
     }
 
-    if (address == "/rectai/object") {
+    if (address == "/soundtable/object") {
         handleObjectMessage(message);
-    } else if (address == "/rectai/remove") {
+    } else if (address == "/soundtable/remove") {
         handleRemoveMessage(message);
     } else if (address == "/tuio/hello") {
         handleTuioHelloMessage(message);
@@ -150,7 +150,7 @@ void TrackingOscReceiver::handleObjectMessage(const juce::OSCMessage& message)
     constexpr float kPi = juce::MathConstants<float>::pi;
     const float angleRadians = angleDegrees * (kPi / 180.0F);
 
-    rectai::ObjectInstance instance(trackingId, logicalId, x, y,
+    soundtable::ObjectInstance instance(trackingId, logicalId, x, y,
                                     angleRadians);
     scene_.UpsertObject(instance);
 }
@@ -175,7 +175,7 @@ void TrackingOscReceiver::handleRemoveMessage(const juce::OSCMessage& message)
     }
 
     const auto& obj = it->second;
-    rectai::ObjectInstance dockedInstance(
+    soundtable::ObjectInstance dockedInstance(
         trackingId, obj.logical_id(), obj.x(), obj.y(),
         obj.angle_radians(), /*docked=*/true);
     scene_.UpsertObject(dockedInstance);
@@ -199,7 +199,7 @@ void TrackingOscReceiver::handleTuioHelloMessage(
     }
 
     juce::Logger::writeToLog(
-        "[rectai-core] TUIO hello from " + trackerId +
+        "[soundtable-core] TUIO hello from " + trackerId +
         " (client " + clientVersion + ", TUIO " + tuioVersion +
         ", via localhost:" + juce::String(kDefaultPort) + ")");
 }
@@ -251,7 +251,7 @@ void TrackingOscReceiver::handleTuio2DobjMessage(
         const float y = 2.0F * yNorm - 1.0F;
 
         juce::Logger::writeToLog(
-            "[rectai-core] /tuio/2Dobj set: s_id=" +
+            "[soundtable-core] /tuio/2Dobj set: s_id=" +
             juce::String(sessionId) + ", i_id=" +
             juce::String(symbolId) + ", xNorm=" +
             juce::String(xNorm, 3) + ", yNorm=" +
@@ -263,7 +263,7 @@ void TrackingOscReceiver::handleTuio2DobjMessage(
         // directly from it.
         const auto logicalId = std::to_string(symbolId);
 
-        rectai::ObjectInstance instance(
+        soundtable::ObjectInstance instance(
             static_cast<std::int64_t>(sessionId), logicalId, x, y,
             angleRadians, velocityX, velocityY, angularVelocity);
         scene_.UpsertObject(instance);
@@ -298,7 +298,7 @@ void TrackingOscReceiver::handleTuio2DobjMessage(
                 const auto it = objects.find(previousId);
                 if (it != objects.end()) {
                     const auto& obj = it->second;
-                    rectai::ObjectInstance dockedInstance(
+                    soundtable::ObjectInstance dockedInstance(
                         static_cast<std::int64_t>(previousId),
                         obj.logical_id(), obj.x(), obj.y(),
                         obj.angle_radians(), /*docked=*/true);
@@ -323,13 +323,13 @@ void TrackingOscReceiver::handleTuio2DcurMessage(
     //   /tuio/2Dcur fseq frameSeq
     if (message.size() < 1 || !message[0].isString()) {
         juce::Logger::writeToLog(
-            "[rectai-core] /tuio/2Dcur: missing command string");
+            "[soundtable-core] /tuio/2Dcur: missing command string");
         return;
     }
 
     const auto command = message[0].getString();
 
-    juce::Logger::writeToLog("[rectai-core] /tuio/2Dcur command '" +
+    juce::Logger::writeToLog("[soundtable-core] /tuio/2Dcur command '" +
                              command + "' with " +
                              juce::String(message.size()) + " args");
 
@@ -358,7 +358,7 @@ void TrackingOscReceiver::handleTuio2DcurMessage(
         tuioCursorPositions_[sessionId] = {normX, normY};
 
         juce::Logger::writeToLog(
-            "[rectai-core] /tuio/2Dcur set: s_id=" +
+            "[soundtable-core] /tuio/2Dcur set: s_id=" +
             juce::String(sessionId) + ", xNorm=" +
             juce::String(normX, 3) + ", yNorm=" +
             juce::String(normY, 3));

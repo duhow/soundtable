@@ -20,7 +20,7 @@ namespace {
 
     if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
         // Fallback to 127.0.0.1 if parsing fails.
-        std::cerr << "[rectai-tracker] Invalid OSC host '" << host
+        std::cerr << "[soundtable-tracker] Invalid OSC host '" << host
                   << "', falling back to 127.0.0.1" << std::endl;
         inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
     }
@@ -33,21 +33,21 @@ OscSender::OscSender(const std::string& host, const std::uint16_t port)
 {
     socketFd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (socketFd_ < 0) {
-        std::cerr << "[rectai-tracker] Failed to create OSC UDP socket" << std::endl;
+        std::cerr << "[soundtable-tracker] Failed to create OSC UDP socket" << std::endl;
         return;
     }
 
     const auto addr = makeAddress(host, port);
     if (::connect(socketFd_, reinterpret_cast<const sockaddr*>(&addr),
                   sizeof(addr)) < 0) {
-        std::cerr << "[rectai-tracker] Failed to connect OSC UDP socket to "
+        std::cerr << "[soundtable-tracker] Failed to connect OSC UDP socket to "
                   << host << ":" << port << std::endl;
         ::close(socketFd_);
         socketFd_ = -1;
         return;
     }
 
-    std::cout << "[rectai-tracker] OSC sender connected to " << host << ":"
+    std::cout << "[soundtable-tracker] OSC sender connected to " << host << ":"
               << port << std::endl;
 }
 
@@ -69,9 +69,9 @@ bool OscSender::sendObject(const std::int32_t trackingId,
         return false;
     }
 
-    // Address: /rectai/object
+    // Address: /soundtable/object
     // Type tags: ",isfff" (int32, string, float, float, float)
-    const auto message = buildRectaiObject(trackingId, logicalId, x, y,
+    const auto message = buildSoundtableObject(trackingId, logicalId, x, y,
                                            angleDegrees);
     return send(message);
 }
@@ -82,9 +82,9 @@ bool OscSender::sendRemove(const std::int32_t trackingId)
         return false;
     }
 
-    // Address: /rectai/remove
+    // Address: /soundtable/remove
     // Type tags: ",i" (int32)
-    const auto message = buildRectaiRemove(trackingId);
+    const auto message = buildSoundtableRemove(trackingId);
     return send(message);
 }
 
@@ -139,7 +139,7 @@ bool OscSender::sendHelloTuio11(const std::string& trackerId,
     return send(message);
 }
 
-OscSender::Message OscSender::buildRectaiObject(
+OscSender::Message OscSender::buildSoundtableObject(
     const std::int32_t trackingId,
     const std::string& logicalId,
     const float x,
@@ -149,7 +149,7 @@ OscSender::Message OscSender::buildRectaiObject(
     std::string buffer;
     buffer.reserve(128);
 
-    appendPaddedString("/rectai/object", buffer);
+    appendPaddedString("/soundtable/object", buffer);
     appendPaddedString(",isfff", buffer);
 
     appendInt32(trackingId, buffer);
@@ -161,13 +161,13 @@ OscSender::Message OscSender::buildRectaiObject(
     return buffer;
 }
 
-OscSender::Message OscSender::buildRectaiRemove(
+OscSender::Message OscSender::buildSoundtableRemove(
     const std::int32_t trackingId)
 {
     std::string buffer;
     buffer.reserve(64);
 
-    appendPaddedString("/rectai/remove", buffer);
+    appendPaddedString("/soundtable/remove", buffer);
     appendPaddedString(",i", buffer);
     appendInt32(trackingId, buffer);
 

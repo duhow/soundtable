@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-// Minimal OSC sender for the rectai-tracker.
+// Minimal OSC sender for the soundtable-tracker.
 // This is a very small, custom implementation that only supports
 // the subset of OSC we need for now:
 //   - Address patterns as strings.
@@ -22,13 +22,13 @@ public:
     // Low-level helpers to build OSC-encoded messages without sending them.
     // These are useful when batching multiple messages into a single
     // OSC bundle.
-    [[nodiscard]] Message buildRectaiObject(std::int32_t trackingId,
+    [[nodiscard]] Message buildSoundtableObject(std::int32_t trackingId,
                                             const std::string& logicalId,
                                             float x,
                                             float y,
                                             float angleDegrees);
 
-    [[nodiscard]] Message buildRectaiRemove(std::int32_t trackingId);
+    [[nodiscard]] Message buildSoundtableRemove(std::int32_t trackingId);
 
     [[nodiscard]] Message buildTuio2DobjSet(std::int32_t sessionId,
                                             std::int32_t symbolId,
@@ -54,7 +54,7 @@ public:
     // this falls back to sending it as a plain OSC message.
     bool sendBundle(const std::vector<Message>& messages);
 
-    // Sends a /rectai/object message with the given tracking id,
+    // Sends a /soundtable/object message with the given tracking id,
     // logical id, normalised position and angle in DEGREES
     // (range [0, 360]). The core converts this to radians when
     // populating ObjectInstance.
@@ -90,8 +90,8 @@ public:
     bool sendTuio2DobjFseq(std::int32_t frameSeq);
 
     // Sends a /tuio/hello negotiation message advertising TUIO 1.1
-    // support from rectai-tracker. This is a small, custom message
-    // understood by rectai-core and is not part of the standard
+    // support from soundtable-tracker. This is a small, custom message
+    // understood by soundtable-core and is not part of the standard
     // Reactable protocol.
     bool sendHelloTuio11(const std::string& trackerId,
                          const std::string& trackerVersion);

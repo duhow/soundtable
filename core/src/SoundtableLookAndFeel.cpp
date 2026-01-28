@@ -1,4 +1,4 @@
-#include "RectaiLookAndFeel.h"
+#include "SoundtableLookAndFeel.h"
 
 namespace {
 
@@ -33,7 +33,7 @@ namespace {
 
 }  // namespace
 
-RectaiLookAndFeel::RectaiLookAndFeel()
+SoundtableLookAndFeel::SoundtableLookAndFeel()
 {
     const auto fontFile = findEmbeddedFontFile();
     if (!fontFile.existsAsFile()) {

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace rectai {
+namespace soundtable {
 
 // Lightweight internal representation of a MIDI note event.
 // This is independent from JUCE but can be mapped to
@@ -15,4 +15,4 @@ struct MidiNoteEvent {
   bool is_note_on{true};   // true = NoteOn, false = NoteOff.
 };
 
-}  // namespace rectai
+}  // namespace soundtable

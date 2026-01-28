@@ -37,7 +37,7 @@ the-base:
             libopencv-dev && \
         rm -rf /var/lib/apt/lists/*
 
-    WORKDIR /opt/rectai-table
+    WORKDIR /opt/soundtable
 
     # Copiamos código del proyecto
     COPY CMakeLists.txt ./
@@ -53,7 +53,7 @@ the-base:
     COPY JUCE ./JUCE
 
 
-# Target principal: compila rectai-core (JUCE) y rectai-tracker (OpenCV)
+# Target principal: compila soundtable-core (JUCE) y soundtable-tracker (OpenCV)
 
 build:
     FROM +the-base
@@ -63,8 +63,8 @@ build:
         cmake --build . --config Release -- -j$(nproc)
 
     # Exportamos los binarios al host como artefactos locales.
-    SAVE ARTIFACT build/core/rectai-core_artefacts/Release/RectaiTable AS LOCAL build/RectaiTable
-    SAVE ARTIFACT build/rectai-tracker AS LOCAL build/rectai-tracker
+    SAVE ARTIFACT build/core/soundtable-core_artefacts/Release/Soundtable AS LOCAL build/Soundtable
+    SAVE ARTIFACT build/soundtable-tracker AS LOCAL build/soundtable-tracker
 
 
 # Target AppImage: genera un AppImage con todas las dependencias necesarias
@@ -84,27 +84,27 @@ appimage:
     # Preparamos AppDir con los binarios principales e iconos en ruta hicolor
     RUN mkdir -p /AppDir/usr/bin /AppDir/usr/share/applications /AppDir/usr/share/icons/hicolor/256x256/apps
     # Icono principal: se ajusta a 256x256 para cumplir con el tamaño del tema hicolor
-    COPY resources/reactable-logo.png /AppDir/usr/share/icons/hicolor/256x256/apps/RectaiTable.png
-    RUN convert /AppDir/usr/share/icons/hicolor/256x256/apps/RectaiTable.png \
+    COPY resources/reactable-logo.png /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png
+    RUN convert /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png \
         -resize 256x256^ -gravity center -extent 256x256 \
-        /AppDir/usr/share/icons/hicolor/256x256/apps/RectaiTable.png
+        /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png
     # Copia/symlink en la raíz del AppDir para que appimagetool/linuxdeploy lo detecten como icono de AppImage
-    RUN ln -sf usr/share/icons/hicolor/256x256/apps/RectaiTable.png /AppDir/RectaiTable.png && \
-        ln -sf RectaiTable.png /AppDir/.DirIcon
+    RUN ln -sf usr/share/icons/hicolor/256x256/apps/Soundtable.png /AppDir/Soundtable.png && \
+        ln -sf Soundtable.png /AppDir/.DirIcon
 
-    RUN cp build/core/rectai-core_artefacts/Release/RectaiTable /AppDir/usr/bin/RectaiTable && \
-        cp build/rectai-tracker /AppDir/usr/bin/rectai-tracker
+    RUN cp build/core/soundtable-core_artefacts/Release/Soundtable /AppDir/usr/bin/Soundtable && \
+        cp build/soundtable-tracker /AppDir/usr/bin/soundtable-tracker
 
     # Archivo .desktop mínimo para el lanzador principal (sin heredoc para evitar problemas de indentación)
     RUN printf '%s\n' \
         '[Desktop Entry]' \
         'Type=Application' \
-        'Name=RectaiTable' \
-        'Exec=RectaiTable' \
-        'Icon=RectaiTable' \
-        'StartupWMClass=RectaiTable' \
+        'Name=Soundtable' \
+        'Exec=Soundtable' \
+        'Icon=Soundtable' \
+        'StartupWMClass=Soundtable' \
         'Categories=AudioVideo;Audio;' \
-        > /AppDir/usr/share/applications/RectaiTable.desktop
+        > /AppDir/usr/share/applications/Soundtable.desktop
 
     # Descargamos linuxdeploy y appimagetool como AppImages
     RUN curl -L https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -o /usr/local/bin/linuxdeploy && \
@@ -118,16 +118,16 @@ appimage:
     # linuxdeploy analiza los binarios, registra el .desktop y el icono, y copia dependencias compartidas
     RUN /usr/local/bin/linuxdeploy \
         --appdir /AppDir \
-        --executable /AppDir/usr/bin/RectaiTable \
-        --executable /AppDir/usr/bin/rectai-tracker \
-        --desktop-file /AppDir/usr/share/applications/RectaiTable.desktop \
-        --icon-file /AppDir/usr/share/icons/hicolor/256x256/apps/RectaiTable.png
+        --executable /AppDir/usr/bin/Soundtable \
+        --executable /AppDir/usr/bin/soundtable-tracker \
+        --desktop-file /AppDir/usr/share/applications/Soundtable.desktop \
+        --icon-file /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png
 
     # Empaquetamos el AppDir en un AppImage con nombre fijo
-    RUN /usr/local/bin/appimagetool /AppDir RectaiTable-x86_64.AppImage
+    RUN /usr/local/bin/appimagetool /AppDir Soundtable-x86_64.AppImage
 
     # Exportamos el AppImage como artefacto local
-    SAVE ARTIFACT RectaiTable-x86_64.AppImage AS LOCAL build/RectaiTable-x86_64.AppImage
+    SAVE ARTIFACT Soundtable-x86_64.AppImage AS LOCAL build/Soundtable-x86_64.AppImage
 
 
 # Target de tests: construye y ejecuta CTest
@@ -136,6 +136,6 @@ test:
     FROM +the-base
 
     RUN mkdir -p build && cd build && \
-        cmake -DCMAKE_BUILD_TYPE=Debug -DRECTAI_BUILD_TESTS=ON .. && \
+        cmake -DCMAKE_BUILD_TYPE=Debug -DSOUNDTABLE_BUILD_TESTS=ON .. && \
         cmake --build . --config Debug -- -j$(nproc) && \
         ctest --output-on-failure

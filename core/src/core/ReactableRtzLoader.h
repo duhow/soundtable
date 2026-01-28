@@ -6,7 +6,7 @@
 
 #include "core/Scene.h"
 
-namespace rectai {
+namespace soundtable {
 
 struct ReactablePatchMetadata;
 
@@ -47,4 +47,4 @@ struct ReactablePatchMetadata;
     ReactablePatchMetadata* metadata,
     std::string* error_message);
 
-}  // namespace rectai
+}  // namespace soundtable

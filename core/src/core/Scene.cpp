@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace rectai {
+namespace soundtable {
 
 // Canonical id used for the invisible master Output module.
 inline constexpr const char* MASTER_OUTPUT_ID = "-1";
@@ -339,12 +339,12 @@ bool Scene::AddConnection(const Connection& connection)
   // module→Output(-1) auto-wiring used to model radial lines and
   // connection-level mute to the master.
     if (!connection.is_hardlink &&
-      connection.to_module_id != rectai::MASTER_OUTPUT_ID) {
+      connection.to_module_id != soundtable::MASTER_OUTPUT_ID) {
     const auto existingOut = std::find_if(
         connections_.cbegin(), connections_.cend(),
         [&connection](const Connection& c) {
           return c.from_module_id == connection.from_module_id &&
-                 c.to_module_id != rectai::MASTER_OUTPUT_ID;
+                 c.to_module_id != soundtable::MASTER_OUTPUT_ID;
         });
     if (existingOut != connections_.cend()) {
       return false;
@@ -459,4 +459,4 @@ const AudioModule* Scene::FindModule(const std::string& module_id) const
   return it->second.get();
 }
 
-}  // namespace rectai
+}  // namespace soundtable

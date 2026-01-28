@@ -102,7 +102,7 @@ En el constructor de `MainComponent` (tras `loadDefaultPatch()` y `refreshInside
   - Iterar `scene_.modules()`.
   - Para cada `LoopModule`:
     - Tomar hasta 4 entradas de `loop->loops()` ordenadas por `order` ascendente.
-    - Construir la ruta absoluta usando `rectai::ui::loadFile("Samples/" + filename)`.
+    - Construir la ruta absoluta usando `soundtable::ui::loadFile("Samples/" + filename)`.
     - Si el fichero existe, llamar a `audioEngine_.loadLoopSampleFromFile(module->id(), slotIndex, path, beats, &error)`.
   - Manejar el caso `filename` vacío:
     - O bien ignorarlo (slot sin audio), o bien asignar desde un pool genérico (`com.reactable/Samples` escaneado recursivamente). Para el MVP, basta con ignorar para no complicar el descubrimiento global.
@@ -137,7 +137,7 @@ En `MainComponent::timerCallback` (después de configurar Sampleplay):
 ### 5.1. Barra de freq segmentada y triángulo selector
 
 - En `MainComponent_Paint.cpp`, dentro del bloque de dibujo de la barra de frecuencia (control izquierdo):
-  - Detectar `moduleForObject->is<rectai::LoopModule>()`.
+  - Detectar `moduleForObject->is<soundtable::LoopModule>()`.
   - En lugar de pintar un arco continuo:
     - Dividir la barra en 4 segmentos verticales (mismo arco base) separados por un pequeño espacio (gap).
     - Para cada segmento `i` (0..3):

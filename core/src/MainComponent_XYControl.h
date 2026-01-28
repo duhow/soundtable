@@ -4,7 +4,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace rectai::ui {
+namespace soundtable::ui {
 
 // Generic 2D XY pad control used inside module detail panels.
 // The control exposes a normalised logical domain [0,1]x[0,1] while
@@ -65,4 +65,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(XYControl)
 };
 
-}  // namespace rectai::ui
+}  // namespace soundtable::ui

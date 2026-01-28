@@ -13,7 +13,7 @@ AudioEngine::AudioEngine()
         deviceManager_.initialiseWithDefaultDevices(/*numInputChannels*/ 0,
                                                     /*numOutputChannels*/ 2);
     if (audioError.isNotEmpty()) {
-        juce::Logger::writeToLog("[rectai-core] Failed to initialise audio: " +
+        juce::Logger::writeToLog("[soundtable-core] Failed to initialise audio: " +
                                  audioError);
 
         // Detect the specific case where JUCE reports that there are
@@ -26,17 +26,17 @@ AudioEngine::AudioEngine()
         }
     } else {
         deviceManager_.addAudioCallback(this);
-        juce::Logger::writeToLog("[rectai-core] Audio engine initialised.");
+        juce::Logger::writeToLog("[soundtable-core] Audio engine initialised.");
     }
 
     // Prepare SampleplaySynth instance; the actual SoundFont and
     // preset will be configured later from the UI thread.
-    sampleplaySynth_ = std::make_unique<rectai::SampleplaySynth>();
+    sampleplaySynth_ = std::make_unique<soundtable::SampleplaySynth>();
 
     // Initialise the logical audio graph so that callers can safely
     // query it even before the Scene has been rebuilt for the first
     // time. The initial graph is simply empty.
-    audioGraph_ = std::make_unique<rectai::AudioGraph>();
+    audioGraph_ = std::make_unique<soundtable::AudioGraph>();
 
     // Initialise per-voice RNG state for noise waveforms. The
     // xorshift32 algorithm used in the audio callback treats an
@@ -240,7 +240,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     static bool loggedLoopSnapshotOnce = false;
     if (!loggedLoopSnapshotOnce && loopSnapshot && !loopSnapshot->empty()) {
         loggedLoopSnapshotOnce = true;
-        juce::String msg("[rectai-core] Loop: snapshot contains ");
+        juce::String msg("[soundtable-core] Loop: snapshot contains ");
         msg += juce::String(static_cast<int>(loopSnapshot->size()));
         msg += " instances:";
         for (const auto& pair : *loopSnapshot) {
@@ -343,7 +343,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         if (!delayTargetsLoop) {
             return false;
         }
-        const std::uint64_t hash = rectai::HashModuleId(moduleId);
+        const std::uint64_t hash = soundtable::HashModuleId(moduleId);
         for (int i = 0; i < delayLoopTargetCount; ++i) {
             if (delayLoopHashes[static_cast<std::size_t>(i)] == hash) {
                 return true;
@@ -356,7 +356,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         if (!reverbTargetsLoop) {
             return false;
         }
-        const std::uint64_t hash = rectai::HashModuleId(moduleId);
+        const std::uint64_t hash = soundtable::HashModuleId(moduleId);
         for (int i = 0; i < reverbLoopTargetCount; ++i) {
             if (reverbLoopHashes[static_cast<std::size_t>(i)] == hash) {
                 return true;
@@ -2220,7 +2220,7 @@ bool AudioEngine::loadLoopSampleFromFile(const std::string& moduleId,
             loopModules_);
 
     juce::Logger::writeToLog(
-        juce::String("[rectai-core] Loop: loaded sample for module=") +
+        juce::String("[soundtable-core] Loop: loaded sample for module=") +
         juce::String(moduleId) + " slot=" + juce::String(slotIndex) +
         " frames=" +
         juce::String(instance.slots[static_cast<std::size_t>(slotIndex)]
@@ -2510,7 +2510,7 @@ void AudioEngine::setSampleplaySoundfont(const std::string& path)
     std::string error;
     if (!sampleplaySynth_->loadSoundfont(path, &error)) {
         juce::Logger::writeToLog(
-            juce::String("[rectai-core] Sampleplay: failed to load "
+            juce::String("[soundtable-core] Sampleplay: failed to load "
                          "soundfont in AudioEngine: ") +
             path + " (" + error + ")");
     }
@@ -2689,7 +2689,7 @@ void AudioEngine::getLoopBusWaveformSnapshot(float* dst,
                               windowSeconds);
 }
 
-void AudioEngine::rebuildAudioGraphFromScene(const rectai::Scene& scene)
+void AudioEngine::rebuildAudioGraphFromScene(const soundtable::Scene& scene)
 {
     if (audioGraph_ != nullptr) {
         audioGraph_->RebuildFromScene(scene);

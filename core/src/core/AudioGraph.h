@@ -6,7 +6,7 @@
 
 #include "core/Scene.h"
 
-namespace rectai {
+namespace soundtable {
 
 // Logical audio graph derived from a Scene: nodes are AudioModules and
 // edges are Scene::Connection entries annotated with their signal kind.
@@ -63,4 +63,4 @@ private:
     std::vector<Edge> edges_;
 };
 
-}  // namespace rectai
+}  // namespace soundtable

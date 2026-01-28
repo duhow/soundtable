@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace rectai {
+namespace soundtable {
 
 Voices::Voices(const int maxVoices, const int historySize) noexcept
     : maxVoices_(maxVoices > 0 ? maxVoices : 0),
@@ -127,4 +127,4 @@ void Voices::getSnapshot(const VoiceId voice,
     }
 }
 
-}  // namespace rectai
+}  // namespace soundtable

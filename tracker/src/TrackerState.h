@@ -5,7 +5,7 @@
 
 #include "TrackerTypes.h"
 
-namespace rectai::tracker {
+namespace soundtable::tracker {
 
 class TrackerState {
 public:
@@ -19,4 +19,4 @@ private:
     std::unordered_map<int, int> missingFramesById_;
 };
 
-} // namespace rectai::tracker
+} // namespace soundtable::tracker

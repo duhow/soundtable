@@ -4,12 +4,12 @@
 
 #include "core/Scene.h"
 
-namespace rectai {
+namespace soundtable {
 
-// Very simple, line-based textual serialization for rectai::Scene.
+// Very simple, line-based textual serialization for soundtable::Scene.
 //
 // Format (version 1):
-//   rectai_scene_v1
+//   soundtable_scene_v1
 //   module <id> <type_int>
 //   object <tracking_id> <logical_id> <x> <y> <angle_radians>
 //   connection <from_module_id> <from_port_name> <to_module_id> <to_port_name>
@@ -20,4 +20,4 @@ namespace rectai {
 
 [[nodiscard]] std::string SerializeScene(const Scene& scene);
 
-}  // namespace rectai
+}  // namespace soundtable

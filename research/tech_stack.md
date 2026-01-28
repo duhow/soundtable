@@ -105,7 +105,7 @@ A partir del documento de `architecture_concepts.md`, los componentes se mapean 
 1. **Servicio de tracking**
    - Lenguaje: C++.
    - Librerías: OpenCV (+ librería de marcadores), sockets UDP para TUIO/OSC.
-   - Proceso independiente, ejecutable tipo `rectai-tracker`.
+   - Proceso independiente, ejecutable tipo `soundtable-tracker`.
 
 2. **Core de interacción y modelo de mundo**
    - Lenguaje: C++.

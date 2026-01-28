@@ -1,6 +1,6 @@
 #include "TrackerState.h"
 
-namespace rectai::tracker {
+namespace soundtable::tracker {
 
 void TrackerState::update(const TrackedObjectList& objects)
 {
@@ -39,4 +39,4 @@ std::vector<int> TrackerState::collectRemovals(const int maxMissingFrames)
     return removed;
 }
 
-} // namespace rectai::tracker
+} // namespace soundtable::tracker

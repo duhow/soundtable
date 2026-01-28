@@ -2,7 +2,7 @@
 
 #include <sstream>
 
-namespace rectai {
+namespace soundtable {
 
 namespace {
 
@@ -17,7 +17,7 @@ std::string SerializeScene(const Scene& scene)
 {
     std::ostringstream out;
 
-    out << "rectai_scene_v1" << '\n';
+    out << "soundtable_scene_v1" << '\n';
 
     // Modules.
     for (const auto& [id, module] : scene.modules()) {
@@ -56,4 +56,4 @@ std::string SerializeScene(const Scene& scene)
     return out.str();
 }
 
-}  // namespace rectai
+}  // namespace soundtable

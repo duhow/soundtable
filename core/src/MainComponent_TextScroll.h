@@ -5,7 +5,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace rectai::ui {
+namespace soundtable::ui {
 
 // Generic vertically scrollable text list component used for module
 // detail panels (e.g. Loop sample selector). The component displays up
@@ -105,4 +105,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TextScrollList)
 };
 
-}  // namespace rectai::ui
+}  // namespace soundtable::ui

@@ -7,7 +7,7 @@
 
 #include "core/Scene.h"
 
-namespace rectai {
+namespace soundtable {
 
 // Canonical id used for the invisible master Output module.
 inline constexpr const char* MASTER_OUTPUT_ID = "-1";
@@ -619,7 +619,7 @@ class SampleplayModule : public AudioModule {
         // "default.sf2"). This is kept separate from `soundfont_path_`,
         // which stores the fully resolved path validated by
         // LoadSoundfont(). UI code can use this value together with
-        // rectai::ui::loadFile to locate the asset within the
+        // soundtable::ui::loadFile to locate the asset within the
         // com.reactable/ tree.
         [[nodiscard]] const std::string& raw_soundfont_name() const
         {
@@ -648,4 +648,4 @@ class SampleplayModule : public AudioModule {
         std::vector<int> default_preset_indices_;
 };
 
-}  // namespace rectai
+}  // namespace soundtable

@@ -20,7 +20,7 @@ if(UNIX AND NOT APPLE)
     # Remaining libraries via pkg-config
     find_package(PkgConfig REQUIRED)
 
-    set(RECTAI_JUCE_PKG_DEPS
+    set(SOUNDTABLE_JUCE_PKG_DEPS
         alsa            # libasound2-dev
         jack            # libjack-jackd2-dev
         freetype2       # libfreetype-dev / libfreetype6-dev
@@ -34,7 +34,7 @@ if(UNIX AND NOT APPLE)
         xrender         # libxrender-dev
     )
 
-    foreach(dep IN LISTS RECTAI_JUCE_PKG_DEPS)
+    foreach(dep IN LISTS SOUNDTABLE_JUCE_PKG_DEPS)
         pkg_check_modules(${dep}_PKG REQUIRED ${dep})
     endforeach()
 
@@ -54,16 +54,16 @@ endif()
 
 # Librería de dominio (modelo de escena, módulos, etc.)
 
-file(GLOB_RECURSE RECTAI_CORE_LIB_SOURCES CONFIGURE_DEPENDS
+file(GLOB_RECURSE SOUNDTABLE_CORE_LIB_SOURCES CONFIGURE_DEPENDS
     src/core/*.cpp
     src/core/*.h
 )
 
-add_library(rectai-core-lib STATIC
-    ${RECTAI_CORE_LIB_SOURCES}
+add_library(soundtable-core-lib STATIC
+    ${SOUNDTABLE_CORE_LIB_SOURCES}
 )
 
-target_include_directories(rectai-core-lib
+target_include_directories(soundtable-core-lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     $<$<AND:$<BOOL:${FLUIDSYNTH_FOUND}>,$<PLATFORM_ID:Linux>>:${FLUIDSYNTH_INCLUDE_DIRS}>
@@ -71,32 +71,32 @@ target_include_directories(rectai-core-lib
 )
 
 if (MSVC)
-    target_compile_options(rectai-core-lib PRIVATE /W4 /permissive-)
+    target_compile_options(soundtable-core-lib PRIVATE /W4 /permissive-)
 else()
-    target_compile_options(rectai-core-lib PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+    target_compile_options(soundtable-core-lib PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 
 if(UNIX AND NOT APPLE)
-    target_link_libraries(rectai-core-lib
+    target_link_libraries(soundtable-core-lib
         PUBLIC
             ${FLUIDSYNTH_LIBRARIES}
             $<$<BOOL:${LIBZIP_FOUND}>:${LIBZIP_LIBRARIES}>
     )
 endif()
 
-target_compile_definitions(rectai-core-lib
+target_compile_definitions(soundtable-core-lib
     PUBLIC
-        $<$<BOOL:${LIBZIP_FOUND}>:RECTAI_HAVE_LIBZIP=1>
+        $<$<BOOL:${LIBZIP_FOUND}>:SOUNDTABLE_HAVE_LIBZIP=1>
 )
 
 
 # Aplicación JUCE principal
 
-set(PROJECT_NAME rectai-core)
+set(PROJECT_NAME soundtable-core)
 
 juce_add_gui_app(${PROJECT_NAME}
-    COMPANY_NAME "rectai"
-    PRODUCT_NAME "RectaiTable"
+    COMPANY_NAME "soundtable"
+    PRODUCT_NAME "Soundtable"
     NEEDS_WEB_BROWSER TRUE
     ICON_BIG "${CMAKE_SOURCE_DIR}/resources/reactable-logo.png"
     ICON_SMALL "${CMAKE_SOURCE_DIR}/resources/reactable-logo.png"
@@ -126,14 +126,14 @@ target_sources(${PROJECT_NAME}
         src/MainComponentHelpers.h
         src/InteractionSystem.cpp
         src/InteractionSystem.h
-        src/RectaiLookAndFeel.cpp
+        src/SoundtableLookAndFeel.cpp
         src/AudioEngine.cpp
         src/AudioEngine.h
         src/TrackingOscReceiver.cpp
         src/TrackingOscReceiver.h
 )
 
-juce_add_binary_data(rectai-core-assets
+juce_add_binary_data(soundtable-core-assets
     SOURCES
         "${CMAKE_SOURCE_DIR}/resources/reactable-logo.png"
 )
@@ -144,14 +144,14 @@ else()
     # Para la app JUCE principal evitamos -Wconversion, ya que provoca
     # muchos avisos ruidosos en el código de terceros (JUCE/Harfbuzz).
     # Seguimos usando un nivel alto de warnings en la librería de dominio
-    # rectai-core-lib.
+    # soundtable-core-lib.
     target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
-        rectai-core-lib
-        rectai-core-assets
+        soundtable-core-lib
+        soundtable-core-assets
         juce::juce_gui_extra
         juce::juce_audio_utils
         juce::juce_audio_formats

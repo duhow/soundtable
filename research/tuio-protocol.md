@@ -1,8 +1,8 @@
-# Protocolo TUIO en rectai-table (borrador inicial)
+# Protocolo TUIO en soundtable (borrador inicial)
 
 ## 1. Objetivo general
 
-Este documento define cómo `rectai-tracker` y `rectai-core` integrarán el protocolo **TUIO** empezando por **TUIO 1.1**, manteniendo compatibilidad con el flujo actual basado en mensajes **OSC personalizados**, y preparando el terreno para soportar **TUIO 2.0** en el futuro.
+Este documento define cómo `soundtable-tracker` y `soundtable-core` integrarán el protocolo **TUIO** empezando por **TUIO 1.1**, manteniendo compatibilidad con el flujo actual basado en mensajes **OSC personalizados**, y preparando el terreno para soportar **TUIO 2.0** en el futuro.
 
 El foco inmediato es:
 
@@ -17,7 +17,7 @@ El foco inmediato es:
 
 ### 2.1 Transporte
 
-- `rectai-tracker` ya envía datos al core mediante **OSC/UDP** local (detalles exactos a revisar en la siguiente fase del diseño).
+- `soundtable-tracker` ya envía datos al core mediante **OSC/UDP** local (detalles exactos a revisar en la siguiente fase del diseño).
 - El core asume un conjunto de mensajes OSC concreto para actualizar la escena: posiciones, orientación y presencia de fiduciales.
 
 ### 2.2 Requisitos de compatibilidad
@@ -39,7 +39,7 @@ El foco inmediato es:
   - `alive`: lista de IDs actualmente presentes.
   - `fseq`: número de frame lógico (para sincronizar).
 
-Para `rectai-table` nos interesan principalmente:
+Para `soundtable` nos interesan principalmente:
 
 - `tuio/2Dobj` para mapear fiduciales existentes a objetos TUIO que instancian/controlan módulos en el modelo `Scene`.
 - `tuio/2Dcur` para mapear detecciones de finger a cursores TUIO que el core usa como puntero principal (equivalente al ratón: down/move/up).
@@ -54,19 +54,19 @@ Necesitamos saber si el core entiende TUIO 1.1 antes de enviar eventos con esa s
 
 Implementación actual (simplificada respecto a la propuesta inicial con ACK):
 
-- Al arrancar `rectai-tracker`, si el socket OSC hacia el core se ha creado correctamente y **no** se pasa `--osc`, el tracker entra en **modo TUIO 1.1** y envía un **mensaje de saludo** indicando la versión que propone:
+- Al arrancar `soundtable-tracker`, si el socket OSC hacia el core se ha creado correctamente y **no** se pasa `--osc`, el tracker entra en **modo TUIO 1.1** y envía un **mensaje de saludo** indicando la versión que propone:
   - Dirección OSC: `/tuio/hello`.
   - Argumentos:
-    - `string` identificador del tracker (por ejemplo `"rectai-tracker"`).
+    - `string` identificador del tracker (por ejemplo `"soundtable-tracker"`).
     - `string` versión TUIO propuesta (por ejemplo `"1.1"`).
     - `string` versión interna del tracker (por ejemplo `"0.1.0"`).
 - El core no envía ningún ACK; simplemente registra en los logs una línea del tipo:
-  - `[rectai-core] TUIO hello from rectai-tracker (client 0.1.0, TUIO 1.1, via localhost:3333)`.
+  - `[soundtable-core] TUIO hello from soundtable-tracker (client 0.1.0, TUIO 1.1, via localhost:3333)`.
 
 ### 4.3 Selección de modo y fallback
 
 - El modo de salida del tracker se elige así:
-  - Si se pasa `--osc` en la línea de comandos, el tracker fuerza **modo OSC clásico** y sólo emite `/rectai/object` y `/rectai/remove`.
+  - Si se pasa `--osc` en la línea de comandos, el tracker fuerza **modo OSC clásico** y sólo emite `/soundtable/object` y `/soundtable/remove`.
   - Si no se pasa `--osc` y el socket OSC está disponible, el tracker entra en **modo TUIO 1.1** y emite únicamente mensajes TUIO estándar (`/tuio/2Dobj`).
 - No hay timeouts ni reintentos asociados a `/tuio/hello`: es un anuncio best-effort.
 - Si el socket OSC no se puede abrir al arrancar, el tracker lo reporta en logs y el core simplemente no recibirá actualizaciones de tracking.
@@ -99,7 +99,7 @@ En TUIO 1.1, un mensaje típico `set` para `tuio/2Dobj` tiene la forma:
   - `X`, `Y`, `A` (velocidades lineal y angular).
   - `m`, `r` (accel lineal y rotacional).
 
-Para `rectai-tracker` se plantea:
+Para `soundtable-tracker` se plantea:
 
 - Usar como `s_id` (session id) el identificador de tracking de cada detección de fiducial.
 - Mapear el **fiducial id físico** a un **id lógico de módulo** mediante una tabla interna y usar ese id lógico como `i_id` de TUIO. El core lo interpreta directamente como `logical_id` de `ObjectInstance`.
@@ -123,7 +123,7 @@ En TUIO 1.1, los cursores 2D (fingers) se representan típicamente con:
   - `X`, `Y` (velocidad).
   - `m` (aceleración).
 
-Plan para `rectai-tracker` (alto nivel):
+Plan para `soundtable-tracker` (alto nivel):
 
 - Extender el pipeline de tracking para identificar blobs o puntos candidatos a finger.
 - Asignar a cada finger detectado un `s_id` estable mientras el dedo permanezca en la mesa.
@@ -150,13 +150,13 @@ Para organizar el trabajo, planteamos una secuencia de fases:
   - Decisión de mensajes de anuncio `/tuio/hello` y del modo de salida (TUIO vs OSC propietario).
   - Clarificación de objetivos de compatibilidad y fallback.
 2. **Fase 2 (tracker)**
-   - Implementar en `rectai-tracker`:
+   - Implementar en `soundtable-tracker`:
      - Envío del mensaje de saludo TUIO al arrancar.
      - Espera de ack con timeout de 2s y registro de fallback en logs.
      - Emisión de mensajes `tuio/2Dobj` a partir de los fiduciales actuales cuando TUIO 1.1 esté activo.
    - Mantener en paralelo el formato OSC actual mientras se estabiliza la transición (según se decida).
 3. **Fase 3 (core)**
-   - Implementar en `rectai-core`:
+   - Implementar en `soundtable-core`:
      - Receptor OSC que escuche `/tuio/hello` y registre la información de versión del tracker.
      - Receptor y parser de mensajes `tuio/2Dobj` (y, más adelante, `tuio/2Dcur`).
      - Mapeo de estos mensajes al modelo `Scene` y a la capa de input.

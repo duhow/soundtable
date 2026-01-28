@@ -10,9 +10,9 @@
 
 #include "MainComponent_TextScroll.h"
 
-namespace rectai {
+namespace soundtable {
 class LoopModule;
-}  // namespace rectai
+}  // namespace soundtable
 
 // Lightweight per-module file browser helper for Loop modules. It
 // owns the directory traversal state and drives a TextScrollList with
@@ -44,14 +44,14 @@ public:
 
     using ListMap = std::unordered_map<
         std::string,
-        std::unique_ptr<rectai::ui::TextScrollList>>;
+        std::unique_ptr<soundtable::ui::TextScrollList>>;
 
     LoopFileBrowser(StateMap& stateMap,
                     ListMap& listMap,
                     juce::File samplesRootDir,
                     std::function<void()> repaintCallback,
                     std::function<void(const std::string&)> markLabelActive,
-                    std::function<rectai::LoopModule*(const std::string&)>
+                    std::function<soundtable::LoopModule*(const std::string&)>
                         findLoopModule,
                     std::function<bool(const std::string& moduleId,
                                        int slotIndex,
@@ -67,16 +67,16 @@ public:
     // initialised and synchronised with the currently active Loop
     // slot of the provided LoopModule.
     void ensureInitialised(const std::string& moduleId,
-                           rectai::LoopModule* loopModule);
+                           soundtable::LoopModule* loopModule);
 
     // Rebuild the entry list and associated TextScrollList items for
     // a given module.
     void rebuildEntries(const std::string& moduleId,
-                        rectai::LoopModule* loopModule);
+                        soundtable::LoopModule* loopModule);
 
     // Retrieve or lazily create the TextScrollList associated with a
     // given module id.
-    [[nodiscard]] rectai::ui::TextScrollList*
+    [[nodiscard]] soundtable::ui::TextScrollList*
     getOrCreateList(const std::string& moduleId);
 
     // Handle a selection change coming from the TextScrollList for a
@@ -92,7 +92,7 @@ private:
     juce::File samplesRootDir_;
     std::function<void()> repaintCallback_;
     std::function<void(const std::string&)> markLabelActive_;
-    std::function<rectai::LoopModule*(const std::string&)> findLoopModule_;
+    std::function<soundtable::LoopModule*(const std::string&)> findLoopModule_;
     std::function<bool(const std::string& moduleId,
                        int slotIndex,
                        const std::string& fullPath,

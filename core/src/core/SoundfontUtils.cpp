@@ -38,7 +38,7 @@ const char* fluid_preset_get_name(void* preset);
 
 }  // extern "C"
 
-namespace rectai {
+namespace soundtable {
 
 bool EnumerateSoundfontPresets(const std::string& path,
                                std::vector<SoundfontPreset>& out_presets,
@@ -133,4 +133,4 @@ bool EnumerateSoundfontPresets(const std::string& path,
     return true;
 }
 
-}  // namespace rectai
+}  // namespace soundtable

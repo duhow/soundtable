@@ -16,9 +16,9 @@
 
 class AudioEngine;
 
-namespace rectai {
+namespace soundtable {
 class LoopModule;
-}  // namespace rectai
+}  // namespace soundtable
 
 #include "MainComponent_LoopFileBrowser.h"
 
@@ -52,28 +52,28 @@ public:
     void timerCallback() override;
 
     void updateAudioRoutingAndVoices(
-        const std::unordered_map<std::int64_t, rectai::ObjectInstance>& objects,
-        const std::unordered_map<std::string, std::unique_ptr<rectai::AudioModule>>& modules,
-        const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+        const std::unordered_map<std::int64_t, soundtable::ObjectInstance>& objects,
+        const std::unordered_map<std::string, std::unique_ptr<soundtable::AudioModule>>& modules,
+        const std::vector<soundtable::AudioGraph::Edge>& audioEdges,
         const std::unordered_map<std::string, std::int64_t>& moduleToObjectId,
         float globalVolumeGain);
 
     void updateRotationDrivenControllers(
-        const std::unordered_map<std::int64_t, rectai::ObjectInstance>& objects,
-        const std::unordered_map<std::string, std::unique_ptr<rectai::AudioModule>>& modules,
+        const std::unordered_map<std::int64_t, soundtable::ObjectInstance>& objects,
+        const std::unordered_map<std::string, std::unique_ptr<soundtable::AudioModule>>& modules,
         const std::unordered_map<std::int64_t, float>& rotationDeltaDegrees);
 
     void updateSequencerAndPulses(
-        const std::vector<rectai::AudioGraph::Edge>& graphEdges,
-        const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+        const std::vector<soundtable::AudioGraph::Edge>& graphEdges,
+        const std::vector<soundtable::AudioGraph::Edge>& audioEdges,
         float globalVolumeGain,
         double nowSeconds,
         double dt);
 
     void runSequencerStep(
         int stepIndex,
-        const std::vector<rectai::AudioGraph::Edge>& graphEdges,
-        const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+        const std::vector<soundtable::AudioGraph::Edge>& graphEdges,
+        const std::vector<soundtable::AudioGraph::Edge>& audioEdges,
         float globalVolumeGain);
 
 private:
@@ -113,7 +113,7 @@ private:
             moduleToObjectId) const;
 
     [[nodiscard]] bool isInsideMusicArea(
-        const rectai::ObjectInstance& obj) const;
+        const soundtable::ObjectInstance& obj) const;
 
     // Recompute and cache the inside-music-area flag on all
     // objects in the Scene so that hot paths (paint, audio) can
@@ -126,12 +126,12 @@ private:
     // mutate the Scene; it is used by refreshInsideMusicAreaFlags
     // and by input handlers when an object is being dragged.
     [[nodiscard]] bool computeInsideMusicArea(
-        const rectai::ObjectInstance& obj) const;
+        const soundtable::ObjectInstance& obj) const;
 
     // Map an ObjectInstance in table space (centre-origin, radius 1)
     // to component-space pixels for a given bounds rectangle.
     static juce::Point<float> objectTableToScreen(
-        const rectai::ObjectInstance& obj,
+        const soundtable::ObjectInstance& obj,
         const juce::Rectangle<float>& bounds);
 
     // Generic pointer handlers shared by mouse and external TUIO
@@ -162,7 +162,7 @@ private:
     // retrigger semantics.
     void maybeRetriggerOscillatorOnFreqChange(
         const std::string& moduleId,
-        rectai::AudioModule* module);
+        soundtable::AudioModule* module);
 
     // When the sustain-related shape of an Oscillator envelope
     // changes (for example, points_y in the Reactable envelope),
@@ -175,12 +175,12 @@ private:
     bool unloadAtlasResources();
 
     AudioEngine& audioEngine_;
-    rectai::Scene scene_;
+    soundtable::Scene scene_;
 
     // Logical audio graph derived from the Scene. This is the Phase 2
     // building block towards per-connection audio buffers: it captures
     // modules as nodes and connections as typed edges (audio/MIDI).
-    rectai::AudioGraph audioGraph_;
+    soundtable::AudioGraph audioGraph_;
 
     // OSC bridge that updates the Scene from tracking messages.
     TrackingOscReceiver trackingOscReceiver_{scene_, 3333};
@@ -504,8 +504,8 @@ private:
                                  juce::Colour bodyColour);
 
     void paintNodeSideControls(juce::Graphics& g,
-                               const rectai::ObjectInstance& object,
-                               const rectai::AudioModule* moduleForObject,
+                               const soundtable::ObjectInstance& object,
+                               const soundtable::AudioModule* moduleForObject,
                                float cx,
                                float cy,
                                float ringRadius,
@@ -517,16 +517,16 @@ private:
                                bool showGainControl);
 
     void paintNodeIconAndModeButton(juce::Graphics& g,
-                                    const rectai::ObjectInstance& object,
-                                    const rectai::AudioModule* moduleForObject,
+                                    const soundtable::ObjectInstance& object,
+                                    const soundtable::AudioModule* moduleForObject,
                                     float cx,
                                     float cy,
                                     float nodeRadius,
                                     juce::Colour bodyColour);
 
     void paintNodeModeOverlayAndIcons(juce::Graphics& g,
-                                      const rectai::ObjectInstance& object,
-                                      const rectai::AudioModule* moduleForObject,
+                                      const soundtable::ObjectInstance& object,
+                                      const soundtable::AudioModule* moduleForObject,
                                       float cx,
                                       float cy,
                                       float ringRadius,
@@ -535,7 +535,7 @@ private:
                                       float nodeRadius);
 
     void paintNodeLabelsAndLoopTrail(juce::Graphics& g,
-                                     const rectai::AudioModule* moduleForObject,
+                                     const soundtable::AudioModule* moduleForObject,
                                      float cx,
                                      float cy,
                                      float nodeRadius,
@@ -545,27 +545,27 @@ private:
 
     void paintNodeModulePanel(juce::Graphics& g,
                               const juce::Rectangle<float>& bounds,
-                              const rectai::ObjectInstance& object,
-                              const rectai::AudioModule* moduleForObject,
+                              const soundtable::ObjectInstance& object,
+                              const soundtable::AudioModule* moduleForObject,
                               float cx,
                               float cy,
                               bool insideMusic);
 
     void paintNodeDebugOverlay(juce::Graphics& g,
-                               const rectai::ObjectInstance& object,
+                               const soundtable::ObjectInstance& object,
                                float cx,
                                float cy,
                                float nodeRadius) const;
 
     void paintNodeTempoOverlay(juce::Graphics& g,
-                               const rectai::AudioModule* moduleForObject,
+                               const soundtable::AudioModule* moduleForObject,
                                float cx,
                                float cy,
                                float nodeRadius,
                                double bpmLabelAlpha) const;
 
     void paintDelayNoteOverlay(juce::Graphics& g,
-                               const rectai::AudioModule* moduleForObject,
+                               const soundtable::AudioModule* moduleForObject,
                                const std::string& moduleId,
                                float cx,
                                float cy,
@@ -599,12 +599,12 @@ private:
     std::unordered_map<std::string, LoopFileBrowserState>
         loopFileBrowsers_;
     std::unordered_map<std::string,
-                       std::unique_ptr<rectai::ui::TextScrollList>>
+                       std::unique_ptr<soundtable::ui::TextScrollList>>
         loopFileLists_;
 
     // Per-TempoModule BPM preset lists backed by TextScrollList.
     std::unordered_map<std::string,
-                       std::unique_ptr<rectai::ui::TextScrollList>>
+                       std::unique_ptr<soundtable::ui::TextScrollList>>
         tempoPresetLists_;
 
     // Per-module XY control instances used by modules that expose an
@@ -612,7 +612,7 @@ private:
     // components; their logical values are mapped to module
     // parameters on demand.
     std::unordered_map<std::string,
-                       std::unique_ptr<rectai::ui::XYControl>>
+                       std::unique_ptr<soundtable::ui::XYControl>>
         xyControls_;
 
     // Resolved base directory for com.reactable/Samples used by the
@@ -651,7 +651,7 @@ private:
     // Geometry for the module detail panel relative to an object
     // on the table.
     [[nodiscard]] juce::Rectangle<float> getModulePanelBounds(
-        const rectai::ObjectInstance& object,
+        const soundtable::ObjectInstance& object,
         const juce::Rectangle<float>& bounds) const;
 
     void toggleHardlinkBetweenObjects(std::int64_t objectIdA,
@@ -682,20 +682,20 @@ private:
 
     // Loop file browser helpers used by the LoopFiles panel tab.
     void ensureLoopFileBrowserInitialised(const std::string& moduleId,
-                                          rectai::LoopModule* loopModule);
+                                          soundtable::LoopModule* loopModule);
     void rebuildLoopFileBrowserEntries(const std::string& moduleId,
-                                       rectai::LoopModule* loopModule);
-    [[nodiscard]] rectai::ui::TextScrollList*
+                                       soundtable::LoopModule* loopModule);
+    [[nodiscard]] soundtable::ui::TextScrollList*
     getOrCreateLoopFileList(const std::string& moduleId);
     void onLoopFileSelectionChanged(const std::string& moduleId,
                                     int rowIndex);
 
     // Tempo BPM preset helpers used by the Tempo settings tab.
-    [[nodiscard]] rectai::ui::TextScrollList*
+    [[nodiscard]] soundtable::ui::TextScrollList*
     getOrCreateTempoPresetList(const std::string& moduleId);
 
     // XY control helpers used by modules exposing the XY settings tab.
-    [[nodiscard]] rectai::ui::XYControl*
+    [[nodiscard]] soundtable::ui::XYControl*
     getOrCreateXYControl(const std::string& moduleId);
 
     // Touch interface state.
@@ -759,12 +759,12 @@ private:
     // Centralised interaction façade that receives normalised pointer and
     // wheel events from mouse and TUIO sources and forwards them into the
     // shared input logic.
-    rectai::ui::InteractionSystem interactionSystem_{*this};
+    soundtable::ui::InteractionSystem interactionSystem_{*this};
 
     // Allow the interaction system to access private helpers and state so
     // that it can delegate to the existing input logic without duplicating
     // public wrappers.
-    friend class rectai::ui::InteractionSystem;
+    friend class soundtable::ui::InteractionSystem;
 
     // Rebuild the mapping from Scene::connections() to visual
     // waveform sources (pre/post voice or Sampleplay) using the

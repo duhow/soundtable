@@ -2,7 +2,7 @@
 
 #include "AudioEngine.h"
 #include "MainComponent.h"
-#include "RectaiLookAndFeel.h"
+#include "SoundtableLookAndFeel.h"
 #include "BinaryData.h"
 
 class MainWindow : public juce::DocumentWindow {
@@ -92,11 +92,11 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
 };
 
-class RectaiApplication : public juce::JUCEApplication {
+class SoundtableApplication : public juce::JUCEApplication {
 public:
-    RectaiApplication() = default;
+    SoundtableApplication() = default;
 
-    const juce::String getApplicationName() override { return "RectaiTable"; }
+    const juce::String getApplicationName() override { return "Soundtable"; }
     const juce::String getApplicationVersion() override { return "0.1.0"; }
 
     void initialise(const juce::String& commandLineParameters) override
@@ -172,11 +172,11 @@ public:
     }
 
 private:
-    RectaiLookAndFeel lookAndFeel_;
+    SoundtableLookAndFeel lookAndFeel_;
     std::unique_ptr<MainWindow> mainWindow_;
     AudioEngine audioEngine_;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RectaiApplication)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoundtableApplication)
 };
 
-START_JUCE_APPLICATION(RectaiApplication)
+START_JUCE_APPLICATION(SoundtableApplication)

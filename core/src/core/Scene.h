@@ -9,7 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace rectai {
+namespace soundtable {
 
 // Represents a tangible or virtual object instance on the table.
 class ObjectInstance {
@@ -406,4 +406,4 @@ class Scene {
   std::unordered_map<std::int64_t, ObjectInstance> objects_;
 };
 
-}  // namespace rectai
+}  // namespace soundtable

@@ -1,6 +1,6 @@
 #include "core/AudioGraph.h"
 
-namespace rectai {
+namespace soundtable {
 
 namespace {
 
@@ -92,4 +92,4 @@ std::vector<AudioGraph::Edge> AudioGraph::audio_edges() const
     return result;
 }
 
-}  // namespace rectai
+}  // namespace soundtable

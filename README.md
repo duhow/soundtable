@@ -1,4 +1,4 @@
-# rectai-table
+# soundtable
 
 Proyecto de recreación de un sistema tipo Reactable, con prioridad en Linux y soporte multiplataforma.
 
@@ -47,8 +47,8 @@ cmake --build . --config Debug -- -j"$(nproc)"
 
 Esto generará, entre otros:
 
-- `rectai-core`: aplicación principal JUCE.
-- `rectai-tracker`: servicio de tracking (CLI).
+- `soundtable-core`: aplicación principal JUCE.
+- `soundtable-tracker`: servicio de tracking (CLI).
 
 ## Compilación con Earthly (recomendada para builds reproducibles)
 
@@ -64,14 +64,14 @@ earthly +build
 
 Esto descargará una imagen base de Ubuntu, instalará todas las dependencias de compilación y generará los binarios:
 
-- `build/rectai-core`
-- `build/rectai-tracker`
+- `build/soundtable-core`
+- `build/soundtable-tracker`
 
 ## Compilación con Docker
 
 ```bash
-docker build -t rectai-table-build .
-docker run --rm -it rectai-table-build /bin/bash
+docker build -t soundtable-build .
+docker run --rm -it soundtable-build /bin/bash
 ```
 
 Dentro del contenedor, los artefactos de build se encuentran en `build/`.

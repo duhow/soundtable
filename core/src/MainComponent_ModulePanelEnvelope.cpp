@@ -19,7 +19,7 @@ ModuleEnvelopeGeometry computeModuleEnvelopeGeometry(
 void paintModuleEnvelopeView(
     juce::Graphics& g,
     const juce::Rectangle<float>& panelBounds,
-    const rectai::AudioModuleWithEnvelope& module,
+    const soundtable::AudioModuleWithEnvelope& module,
     const bool atlasLoaded,
     const std::function<juce::Image(const std::string&, int, int)>&
         getCachedIcon,

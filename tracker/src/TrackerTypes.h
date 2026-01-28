@@ -2,7 +2,7 @@
 
 #include <vector>
 
-namespace rectai::tracker {
+namespace soundtable::tracker {
 
 struct TrackedObject {
     int id{};
@@ -14,4 +14,4 @@ struct TrackedObject {
 
 using TrackedObjectList = std::vector<TrackedObject>;
 
-} // namespace rectai::tracker
+} // namespace soundtable::tracker

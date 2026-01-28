@@ -4,7 +4,7 @@
 
 #include <fluidsynth.h>
 
-namespace rectai {
+namespace soundtable {
 
 // Small pImpl to keep FluidSynth types out of the public header and
 // avoid leaking implementation details.
@@ -211,4 +211,4 @@ void SampleplaySynth::render(float* const left, float* const right,
                                 right, 0, 1);
 }
 
-}  // namespace rectai
+}  // namespace soundtable

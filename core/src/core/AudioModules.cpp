@@ -6,7 +6,7 @@
 #include <cstring>
 #include <fstream>
 
-namespace rectai {
+namespace soundtable {
 
 namespace {
 constexpr uint32_t MakeColour(const uint8_t r, const uint8_t g,
@@ -917,4 +917,4 @@ void SampleplayModule::CycleBank()
   }
 }
 
-}  // namespace rectai
+}  // namespace soundtable

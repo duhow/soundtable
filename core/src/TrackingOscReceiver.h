@@ -11,12 +11,12 @@
 
 // Simple OSC-based bridge to update the Scene from tracking messages.
 // For now this uses a very small custom protocol:
-//   - /rectai/object  (int32 trackingId, string logicalId,
+//   - /soundtable/object  (int32 trackingId, string logicalId,
 //                      float x, float y, float angleDegrees)
 //       => upsert ObjectInstance in the Scene. The incoming angle is
 //          expressed in degrees in the range [0, 360] and is converted
 //          internally to radians for the Scene model.
-//   - /rectai/remove  (int32 trackingId)
+//   - /soundtable/remove  (int32 trackingId)
 //       => remove ObjectInstance from the Scene
 //
 // This receiver also supports standard OSC bundles as used by
@@ -29,7 +29,7 @@ class TrackingOscReceiver : private juce::OSCReceiver,
 public:
     enum class ActivityKind { kOsc = 0, kTuio = 1 };
 
-    TrackingOscReceiver(rectai::Scene& scene, int port);
+    TrackingOscReceiver(soundtable::Scene& scene, int port);
     ~TrackingOscReceiver() override;
 
     // Register optional callbacks to mirror TUIO 2D cursor events into
@@ -46,7 +46,7 @@ public:
         std::function<void(std::int32_t sessionId)> onUp);
 
     // Optional callback invoked whenever an incoming OSC message is
-    // successfully classified as either proprietary rectai OSC traffic
+    // successfully classified as either proprietary soundtable OSC traffic
     // (ActivityKind::kOsc) or standard TUIO traffic (ActivityKind::kTuio).
     // This is used by the UI layer to drive lightweight "traffic"
     // indicators without coupling visual code into the receiver.
@@ -68,10 +68,10 @@ private:
 
     void notifyActivity(ActivityKind kind);
 
-    rectai::Scene& scene_;
+    soundtable::Scene& scene_;
 
     // Track the current set of alive TUIO session ids in order to
-    // detect removals and mirror the /rectai/remove behaviour.
+    // detect removals and mirror the /soundtable/remove behaviour.
     std::unordered_set<std::int32_t> tuioAliveSessionIds_;
 
     // Track active TUIO cursor session ids and optional UI callbacks

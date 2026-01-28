@@ -15,7 +15,7 @@
 
 #include <opencv2/imgproc.hpp>
 
-namespace rectai::tracker {
+namespace soundtable::tracker {
 
 namespace {
 
@@ -290,7 +290,7 @@ TrackedObjectList TrackerEngine::processFrameInternal(const cv::Mat& frame, cv::
                 hasActiveFilter_ = true;
 
 #ifndef NDEBUG
-                std::cerr << "[rectai-tracker] filter training completed for fiducial "
+                std::cerr << "[soundtable-tracker] filter training completed for fiducial "
                           << primaryFiducialId_ << " over " << kTrainingWindowFrames
                           << " frames. Results:";
                 for (int i = 0; i < kNumThresholdFilters; ++i) {
@@ -501,4 +501,4 @@ int TrackerEngine::filterIndex(const ThresholdFilter filter) noexcept
     return 0;
 }
 
-} // namespace rectai::tracker
+} // namespace soundtable::tracker

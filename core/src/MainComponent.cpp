@@ -167,7 +167,7 @@ void MainComponent::renderDockBackgroundIfNeeded(
 }
 
 juce::Rectangle<float> MainComponent::getModulePanelBounds(
-    const rectai::ObjectInstance& object,
+    const soundtable::ObjectInstance& object,
     const juce::Rectangle<float>& bounds) const
 {
     const auto centrePos = objectTableToScreen(object, bounds);
@@ -212,7 +212,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     juce::File comReactableRoot;
     {
         const juce::File defaultRtp =
-            rectai::ui::loadFile("Resources/default.rtp");
+            soundtable::ui::loadFile("Resources/default.rtp");
         if (defaultRtp.existsAsFile()) {
             comReactableRoot = defaultRtp.getParentDirectory()
                                       .getParentDirectory();
@@ -235,18 +235,18 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     // small hardcoded demo scene used originally.
     const auto loadPatchFromFile =
         [this, comReactableRoot](const juce::File& patchFile) {
-        using rectai::LoadReactablePatchFromFile;
-        using rectai::LoadReactableSessionFromRtz;
-        using rectai::ReactablePatchMetadata;
+        using soundtable::LoadReactablePatchFromFile;
+        using soundtable::LoadReactableSessionFromRtz;
+        using soundtable::ReactablePatchMetadata;
 
         if (!patchFile.existsAsFile()) {
             return false;
         }
 
-        rectai::ReactablePatchMetadata metadata;
+        soundtable::ReactablePatchMetadata metadata;
         std::string error;
 
-        scene_ = rectai::Scene{};
+        scene_ = soundtable::Scene{};
 
         const juce::String extension =
             patchFile.getFileExtension().toLowerCase();
@@ -264,7 +264,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
         }
         if (ok) {
             masterColour_ =
-                rectai::ui::colourFromArgb(metadata.master_colour_argb);
+                soundtable::ui::colourFromArgb(metadata.master_colour_argb);
             masterMuted_ = metadata.master_muted;
 
             // Log basic project metadata (authors and title) when a
@@ -300,7 +300,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                     continue;
                 }
                 const std::string key =
-                    rectai::ui::makeConnectionKey(conn);
+                    soundtable::ui::makeConnectionKey(conn);
                 mutedConnections_.insert(key);
             }
 
@@ -314,7 +314,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                 }
 
                 const auto* tempoModule =
-                    dynamic_cast<const rectai::TempoModule*>(
+                    dynamic_cast<const soundtable::TempoModule*>(
                         modulePtr.get());
                 if (tempoModule == nullptr) {
                     continue;
@@ -322,14 +322,14 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
 
                 const float tempoValue = tempoModule->GetParameterOrDefault(
                     "tempo", 120.0F);
-                bpm_ = rectai::TempoModule::ClampBpm(tempoValue);
+                bpm_ = soundtable::TempoModule::ClampBpm(tempoValue);
                 break;
             }
             return true;
         }
 
         juce::Logger::writeToLog(
-            juce::String("[rectai-core] Failed to load session: ") +
+            juce::String("[soundtable-core] Failed to load session: ") +
             patchFile.getFullPathName() + " (" + juce::String(error) +
             ")");
         return false;
@@ -350,7 +350,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             }
 
             auto* sampleModule =
-                dynamic_cast<rectai::SampleplayModule*>(
+                dynamic_cast<soundtable::SampleplayModule*>(
                     modulePtr.get());
             if (sampleModule == nullptr) {
                 continue;
@@ -376,10 +376,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             const juce::String relativePath =
                 juce::String("Soundfonts/") + rawName;
             const juce::File sf2File =
-                rectai::ui::loadFile(relativePath);
+                soundtable::ui::loadFile(relativePath);
             if (!sf2File.existsAsFile()) {
                 juce::Logger::writeToLog(
-                    juce::String("[rectai-core] Sampleplay: soundfont not "
+                    juce::String("[soundtable-core] Sampleplay: soundfont not "
                                  "found: ") +
                     sf2File.getFullPathName());
                 continue;
@@ -390,7 +390,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                 sf2File.getFullPathName().toStdString(), &error);
             if (!ok) {
                 juce::Logger::writeToLog(
-                    juce::String("[rectai-core] Sampleplay: failed to load "
+                    juce::String("[soundtable-core] Sampleplay: failed to load "
                                  "soundfont: ") +
                     sf2File.getFullPathName() + " (" + error + ")");
                 continue;
@@ -409,13 +409,13 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             // SampleplayModule instrument list from the actual
             // contents of the .sf2 file, ignoring the list in the
             // .rtp (except for the preferred default name).
-            std::vector<rectai::SoundfontPreset> presets;
+            std::vector<soundtable::SoundfontPreset> presets;
             std::string enumError;
-            if (!rectai::EnumerateSoundfontPresets(
+            if (!soundtable::EnumerateSoundfontPresets(
                     sampleModule->soundfont_path(), presets,
                     &enumError)) {
                 juce::Logger::writeToLog(
-                    juce::String("[rectai-core] Sampleplay: failed to "
+                    juce::String("[soundtable-core] Sampleplay: failed to "
                                  "enumerate presets: ") +
                     sf2File.getFullPathName() + " (" + enumError + ")");
                 continue;
@@ -426,7 +426,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             instruments.reserve(presets.size());
 
             for (const auto& p : presets) {
-                rectai::SampleInstrument inst;
+                soundtable::SampleInstrument inst;
                 inst.name = p.name;
                 inst.bank = p.bank;
                 inst.program = p.program;
@@ -622,9 +622,9 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
         [this](const std::string& moduleId) {
             markLoopSampleLabelActive(moduleId);
         },
-        [this](const std::string& moduleId) -> rectai::LoopModule* {
+        [this](const std::string& moduleId) -> soundtable::LoopModule* {
             auto* base = scene_.FindModule(moduleId);
-            return dynamic_cast<rectai::LoopModule*>(base);
+            return dynamic_cast<soundtable::LoopModule*>(base);
         },
         [this](const std::string& moduleId,
                int slotIndex,
@@ -649,7 +649,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             }
 
             auto* loopModule =
-                dynamic_cast<rectai::LoopModule*>(modulePtr.get());
+                dynamic_cast<soundtable::LoopModule*>(modulePtr.get());
             if (loopModule == nullptr) {
                 continue;
             }
@@ -657,11 +657,11 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             // Order loops by the `order` field and load up to the
             // first four entries. Filenames are resolved relative to
             // com.reactable/Samples/.
-            std::vector<rectai::LoopDefinition> loops =
+            std::vector<soundtable::LoopDefinition> loops =
                 loopModule->loops();
             std::sort(loops.begin(), loops.end(),
-                      [](const rectai::LoopDefinition& a,
-                         const rectai::LoopDefinition& b) {
+                      [](const soundtable::LoopDefinition& a,
+                         const soundtable::LoopDefinition& b) {
                           return a.order < b.order;
                       });
 
@@ -678,10 +678,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                     juce::String("Samples/") +
                     juce::String(loopDef.filename);
                 const juce::File audioFile =
-                    rectai::ui::loadFile(relativePath);
+                    soundtable::ui::loadFile(relativePath);
                 if (!audioFile.existsAsFile()) {
                     juce::Logger::writeToLog(
-                        juce::String("[rectai-core] Loop: sample not "
+                        juce::String("[soundtable-core] Loop: sample not "
                                      "found: ") +
                         audioFile.getFullPathName());
                     ++slotIndex;
@@ -695,7 +695,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                     loopDef.beats, &error);
                 if (!ok) {
                     juce::Logger::writeToLog(
-                        juce::String("[rectai-core] Loop: failed to load "
+                        juce::String("[soundtable-core] Loop: failed to load "
                                      "sample: ") +
                         audioFile.getFullPathName() + " (" +
                         juce::String(error) + ")");
@@ -717,7 +717,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                 initialSessionPath);
         if (!userFile.existsAsFile()) {
             juce::Logger::writeToLog(
-                juce::String("[rectai-core] Session file not found: ") +
+                juce::String("[soundtable-core] Session file not found: ") +
                 userFile.getFullPathName());
         } else {
             loaded = loadPatchFromFile(userFile);
@@ -728,7 +728,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     //    failed, fall back to the bundled default patch.
     if (!loaded) {
         const juce::File defaultFile =
-            rectai::ui::loadFile("Resources/default.rtp");
+            soundtable::ui::loadFile("Resources/default.rtp");
         if (defaultFile.existsAsFile()) {
             loaded = loadPatchFromFile(defaultFile);
         }
@@ -741,11 +741,11 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
         // explicit Output/master so that connection-level mute via
         // radials and AudioGraph-based routing behave consistently
         // with real Reactable patches.
-        auto osc1 = std::make_unique<rectai::OscillatorModule>("osc1");
+        auto osc1 = std::make_unique<soundtable::OscillatorModule>("osc1");
         auto filter1 =
-            std::make_unique<rectai::FilterModule>("filter1");
+            std::make_unique<soundtable::FilterModule>("filter1");
         auto output =
-            std::make_unique<rectai::OutputModule>(rectai::MASTER_OUTPUT_ID);
+            std::make_unique<soundtable::OutputModule>(soundtable::MASTER_OUTPUT_ID);
 
         (void)scene_.AddModule(std::move(osc1));
         (void)scene_.AddModule(std::move(filter1));
@@ -753,7 +753,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
 
         // Basic chain Osc -> Filter -> Output(master).
         {
-            rectai::Connection c1{
+            soundtable::Connection c1{
                 .from_module_id = "osc1",
                 .from_port_name = "out",
                 .to_module_id = "filter1",
@@ -761,10 +761,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                 .is_hardlink = false};
             (void)scene_.AddConnection(c1);
 
-            rectai::Connection c2{
+            soundtable::Connection c2{
                 .from_module_id = "filter1",
                 .from_port_name = "out",
-                .to_module_id = rectai::MASTER_OUTPUT_ID,
+                .to_module_id = soundtable::MASTER_OUTPUT_ID,
                 .to_port_name = "in",
                 .is_hardlink = false};
             (void)scene_.AddConnection(c2);
@@ -773,10 +773,10 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
             // its radial to the master exists in the Scene model and
             // can be muted via line-cutting gestures, mirroring the
             // behaviour of patches loaded from .rtp.
-            rectai::Connection c3{
+            soundtable::Connection c3{
                 .from_module_id = "osc1",
                 .from_port_name = "out",
-                .to_module_id = rectai::MASTER_OUTPUT_ID,
+                .to_module_id = soundtable::MASTER_OUTPUT_ID,
                 .to_port_name = "in",
                 .is_hardlink = false};
             (void)scene_.AddConnection(c3);
@@ -786,11 +786,11 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
         // represented as an object with logical_id MASTER_OUTPUT_ID but remains
         // invisible in the UI (MainComponent_Paint filters it out).
         scene_.UpsertObject(
-            rectai::ObjectInstance(1, "osc1", 0.3F, 0.5F, 0.0F));
-        scene_.UpsertObject(rectai::ObjectInstance(
+            soundtable::ObjectInstance(1, "osc1", 0.3F, 0.5F, 0.0F));
+        scene_.UpsertObject(soundtable::ObjectInstance(
             2, "filter1", 0.7F, 0.5F, 0.0F));
-        scene_.UpsertObject(rectai::ObjectInstance(
-            -1, rectai::MASTER_OUTPUT_ID, 0.5F, 0.1F, 0.0F));
+        scene_.UpsertObject(soundtable::ObjectInstance(
+            -1, soundtable::MASTER_OUTPUT_ID, 0.5F, 0.1F, 0.0F));
     }
 
     // After the scene has been populated, recompute the cached flag
@@ -922,7 +922,7 @@ void MainComponent::markDelayNoteSegmentActive(
 }
 
 void MainComponent::ensureLoopFileBrowserInitialised(
-    const std::string& moduleId, rectai::LoopModule* loopModule)
+    const std::string& moduleId, soundtable::LoopModule* loopModule)
 {
     if (loopFileBrowser_ == nullptr) {
         return;
@@ -931,7 +931,7 @@ void MainComponent::ensureLoopFileBrowserInitialised(
 }
 
 void MainComponent::rebuildLoopFileBrowserEntries(
-    const std::string& moduleId, rectai::LoopModule* loopModule)
+    const std::string& moduleId, soundtable::LoopModule* loopModule)
 {
     if (loopFileBrowser_ == nullptr) {
         return;
@@ -948,7 +948,7 @@ void MainComponent::onLoopFileSelectionChanged(
     loopFileBrowser_->handleSelectionChanged(moduleId, rowIndex);
 }
 
-rectai::ui::TextScrollList*
+soundtable::ui::TextScrollList*
 MainComponent::getOrCreateLoopFileList(const std::string& moduleId)
 {
     if (loopFileBrowser_ == nullptr) {
@@ -957,7 +957,7 @@ MainComponent::getOrCreateLoopFileList(const std::string& moduleId)
     return loopFileBrowser_->getOrCreateList(moduleId);
 }
 
-rectai::ui::TextScrollList*
+soundtable::ui::TextScrollList*
 MainComponent::getOrCreateTempoPresetList(const std::string& moduleId)
 {
     auto it = tempoPresetLists_.find(moduleId);
@@ -965,7 +965,7 @@ MainComponent::getOrCreateTempoPresetList(const std::string& moduleId)
         return it->second.get();
     }
 
-    auto list = std::make_unique<rectai::ui::TextScrollList>();
+    auto list = std::make_unique<soundtable::ui::TextScrollList>();
     list->setMaxVisibleItems(6);
     list->setRowHeight(18.0F);
 
@@ -973,13 +973,13 @@ MainComponent::getOrCreateTempoPresetList(const std::string& moduleId)
     // parameter whenever a preset is chosen from the TextScrollList.
     list->setOnSelectionChanged(
         [this, moduleId](int index) {
-            const auto& presets = rectai::TempoModule::bpm_presets();
+            const auto& presets = soundtable::TempoModule::bpm_presets();
             if (index < 0 ||
                 index >= static_cast<int>(presets.size())) {
                 return;
             }
 
-            const float newBpm = rectai::TempoModule::ClampBpm(
+            const float newBpm = soundtable::TempoModule::ClampBpm(
                 presets[static_cast<std::size_t>(index)].bpm);
 
             if (newBpm == bpm_) {
@@ -995,12 +995,12 @@ MainComponent::getOrCreateTempoPresetList(const std::string& moduleId)
             repaintWithRateLimit();
         });
 
-    rectai::ui::TextScrollList* raw = list.get();
+    soundtable::ui::TextScrollList* raw = list.get();
     tempoPresetLists_.emplace(moduleId, std::move(list));
     return raw;
 }
 
-rectai::ui::XYControl*
+soundtable::ui::XYControl*
 MainComponent::getOrCreateXYControl(const std::string& moduleId)
 {
     auto it = xyControls_.find(moduleId);
@@ -1008,8 +1008,8 @@ MainComponent::getOrCreateXYControl(const std::string& moduleId)
         return it->second.get();
     }
 
-    auto control = std::make_unique<rectai::ui::XYControl>();
-    rectai::ui::XYControl* raw = control.get();
+    auto control = std::make_unique<soundtable::ui::XYControl>();
+    soundtable::ui::XYControl* raw = control.get();
     xyControls_.emplace(moduleId, std::move(control));
     return raw;
 }

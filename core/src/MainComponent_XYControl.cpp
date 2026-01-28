@@ -1,6 +1,6 @@
 #include "MainComponent_XYControl.h"
 
-namespace rectai::ui {
+namespace soundtable::ui {
 
 namespace {
 inline float clamp01(float v) noexcept
@@ -174,4 +174,4 @@ void XYControl::mouseUp(const juce::MouseEvent& event)
     }
 }
 
-}  // namespace rectai::ui
+}  // namespace soundtable::ui

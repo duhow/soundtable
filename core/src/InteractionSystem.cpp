@@ -5,7 +5,7 @@
 #include "MainComponentHelpers.h"
 #include "core/AudioModules.h"
 
-namespace rectai::ui {
+namespace soundtable::ui {
 
 namespace {
 
@@ -81,7 +81,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                 continue;
             }
 
-            const rectai::ObjectInstance* panelObject = nullptr;
+            const soundtable::ObjectInstance* panelObject = nullptr;
             for (const auto& [id, obj] : objects) {
                 juce::ignoreUnused(id);
                 if (obj.logical_id() == moduleId && !obj.docked()) {
@@ -120,7 +120,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
             const auto panelBounds =
                 owner_.getModulePanelBounds(*panelObject, bounds);
             const auto modIt = modules.find(panelState.moduleId);
-            const rectai::AudioModule* moduleForPanel =
+            const soundtable::AudioModule* moduleForPanel =
                 (modIt != modules.end() && modIt->second != nullptr)
                     ? modIt->second.get()
                     : nullptr;
@@ -131,7 +131,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
             // interaction logic stays in sync with the visual
             // ordering.
             constexpr float kTabStripHeight = 26.0F;
-            const rectai::AudioModule::SettingsTabs* settingsTabsPtr =
+            const soundtable::AudioModule::SettingsTabs* settingsTabsPtr =
                 nullptr;
             if (moduleForPanel != nullptr) {
                 settingsTabsPtr =
@@ -171,7 +171,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                     const auto& desc =
                         (*settingsTabsPtr)[static_cast<std::size_t>(
                             hitIndex)];
-                    using Kind = rectai::AudioModule::SettingsTabKind;
+                    using Kind = soundtable::AudioModule::SettingsTabKind;
                     switch (desc.kind) {
                     case Kind::kEnvelope:
                         panelState.activeTab =
@@ -204,8 +204,8 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                     MainComponent::ModulePanelState::Tab::kEnvelope &&
                 moduleForPanel != nullptr) {
                 auto* envModule =
-                    dynamic_cast<rectai::AudioModuleWithEnvelope*>(
-                        const_cast<rectai::AudioModule*>(
+                    dynamic_cast<soundtable::AudioModuleWithEnvelope*>(
+                        const_cast<soundtable::AudioModule*>(
                             moduleForPanel));
                 if (envModule == nullptr) {
                     continue;
@@ -331,8 +331,8 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                     MainComponent::ModulePanelState::Tab::kLoopFiles &&
                 moduleForPanel != nullptr) {
                 auto* loopModule =
-                    dynamic_cast<rectai::LoopModule*>(
-                        const_cast<rectai::AudioModule*>(
+                    dynamic_cast<soundtable::LoopModule*>(
+                        const_cast<soundtable::AudioModule*>(
                             moduleForPanel));
                 if (loopModule == nullptr) {
                     continue;
@@ -376,12 +376,12 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                     MainComponent::ModulePanelState::Tab::kXYControl &&
                 moduleForPanel != nullptr) {
                 auto* filterModule =
-                    dynamic_cast<rectai::FilterModule*>(
-                        const_cast<rectai::AudioModule*>(
+                    dynamic_cast<soundtable::FilterModule*>(
+                        const_cast<soundtable::AudioModule*>(
                             moduleForPanel));
                 auto* lfoModule =
-                    dynamic_cast<rectai::LfoModule*>(
-                        const_cast<rectai::AudioModule*>(
+                    dynamic_cast<soundtable::LfoModule*>(
+                        const_cast<soundtable::AudioModule*>(
                             moduleForPanel));
 
                 juce::ignoreUnused(filterModule, lfoModule);
@@ -418,8 +418,8 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                     MainComponent::ModulePanelState::Tab::kSettings &&
                 moduleForPanel != nullptr) {
                 auto* tempoModule =
-                    dynamic_cast<rectai::TempoModule*>(
-                        const_cast<rectai::AudioModule*>(
+                    dynamic_cast<soundtable::TempoModule*>(
+                        const_cast<soundtable::AudioModule*>(
                             moduleForPanel));
                 if (tempoModule == nullptr) {
                     continue;
@@ -477,7 +477,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
     // module.
     if (isRightClick) {
         for (const auto& [id, object] : objects) {
-            if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+            if (object.logical_id() == soundtable::MASTER_OUTPUT_ID ||
                 object.docked()) {
                 continue;
             }
@@ -500,7 +500,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                 continue;
             }
 
-            auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(
+            auto* oscModule = dynamic_cast<soundtable::OscillatorModule*>(
                 modIt->second.get());
             if (oscModule != nullptr) {
                 oscModule->cycle_mode_forward();
@@ -509,7 +509,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
             }
 
             auto* filterModule =
-                dynamic_cast<rectai::FilterModule*>(modIt->second.get());
+                dynamic_cast<soundtable::FilterModule*>(modIt->second.get());
             if (filterModule != nullptr) {
                 filterModule->cycle_mode_forward();
                 owner_.repaint();
@@ -517,7 +517,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
             }
 
             if (auto* sampleModule =
-                    dynamic_cast<rectai::SampleplayModule*>(
+                    dynamic_cast<soundtable::SampleplayModule*>(
                         modIt->second.get())) {
                 // Right-click on Sampleplay cycles instruments within
                 // the current logical bank. Holding CTRL while
@@ -553,7 +553,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
     const float sliderMargin = 3.0F;
 
     for (const auto& [id, object] : objects) {
-        if (object.logical_id() == rectai::MASTER_OUTPUT_ID) {
+        if (object.logical_id() == soundtable::MASTER_OUTPUT_ID) {
             continue;
         }
 
@@ -572,22 +572,22 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
         }
 
         const auto modIt = modules.find(object.logical_id());
-        const rectai::AudioModule* moduleForObject =
+        const soundtable::AudioModule* moduleForObject =
             (modIt != modules.end()) ? modIt->second.get() : nullptr;
         const bool isTempoModule =
             (moduleForObject != nullptr &&
-             moduleForObject->is<rectai::TempoModule>());
+             moduleForObject->is<soundtable::TempoModule>());
         const bool isDelayModule =
             (moduleForObject != nullptr &&
-             moduleForObject->is<rectai::DelayModule>());
+             moduleForObject->is<soundtable::DelayModule>());
         bool freqEnabled = false;
         bool gainEnabled = false;
         float freqValue = 0.5F;
         float gainValue = 0.5F;
         if (moduleForObject != nullptr) {
             if (isTempoModule) {
-                freqValue = rectai::TempoModule::NormalisedFromBpm(owner_.bpm_);
-            } else if (moduleForObject->is<rectai::LoopModule>()) {
+                freqValue = soundtable::TempoModule::NormalisedFromBpm(owner_.bpm_);
+            } else if (moduleForObject->is<soundtable::LoopModule>()) {
                 // Loop modules use the left bar to select the
                 // current sample slot via the normalised "sample"
                 // parameter.
@@ -618,13 +618,13 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
             gainEnabled = moduleForObject->uses_gain_control();
 
             if (const auto* volumeModule =
-                    dynamic_cast<const rectai::VolumeModule*>(
+                    dynamic_cast<const soundtable::VolumeModule*>(
                         moduleForObject)) {
                 gainValue = volumeModule->GetParameterOrDefault(
                     "volume",
                     volumeModule->default_parameter_value("volume"));
             } else if (moduleForObject->type() ==
-                       rectai::ModuleType::kFilter) {
+                       soundtable::ModuleType::kFilter) {
                 gainValue = moduleForObject->GetParameterOrDefault(
                     "q",
                     moduleForObject->default_parameter_value("q"));
@@ -638,7 +638,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                 moduleForObject->uses_frequency_control() ||
                 moduleForObject->uses_pitch_control() ||
                 isTempoModule ||
-                moduleForObject->is<rectai::LoopModule>() ||
+                moduleForObject->is<soundtable::LoopModule>() ||
                 isDelayModule;
         }
         freqValue = juce::jlimit(0.0F, 1.0F, freqValue);
@@ -731,8 +731,8 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
 
             if (isTempoModule) {
                 const float newBpm =
-                    rectai::TempoModule::BpmFromNormalised(value);
-                owner_.bpm_ = rectai::TempoModule::ClampBpm(newBpm);
+                    soundtable::TempoModule::BpmFromNormalised(value);
+                owner_.bpm_ = soundtable::TempoModule::ClampBpm(newBpm);
 
                 owner_.bpmLastChangeSeconds_ =
                     juce::Time::getMillisecondCounterHiRes() /
@@ -744,7 +744,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                 const auto& modulesForFreq = owner_.scene_.modules();
                 const auto modItFreq =
                     modulesForFreq.find(object.logical_id());
-                rectai::AudioModule* moduleForFreq =
+                soundtable::AudioModule* moduleForFreq =
                     (modItFreq != modulesForFreq.end() &&
                      modItFreq->second != nullptr)
                         ? modItFreq->second.get()
@@ -775,7 +775,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                                                kMaxMidi);
 
                     auto* oscModule =
-                        dynamic_cast<rectai::OscillatorModule*>(
+                        dynamic_cast<soundtable::OscillatorModule*>(
                             moduleForFreq);
                     float effectivePrevMidi = previousMidi;
                     float effectiveNewMidi = newMidi;
@@ -844,7 +844,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                                 object.logical_id(), moduleForFreq);
                         }
                     }
-                } else if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
+                } else if (auto* loopModule = dynamic_cast<soundtable::LoopModule*>(
                                moduleForFreq)) {
                     // Map click position to one of four discrete
                     // sample slots and update the "sample"
@@ -869,7 +869,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                                               "sample", sampleValue);
                     owner_.markLoopSampleLabelActive(loopModule->id());
                 } else if (auto* delayModule =
-                               dynamic_cast<rectai::DelayModule*>(
+                               dynamic_cast<soundtable::DelayModule*>(
                                    moduleForFreq)) {
                     // Map click position on the delay side bar to a
                     // continuous delay value in [0,1] (feedback
@@ -951,16 +951,16 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
             if (modItGain != modulesForGain.end() &&
                 modItGain->second != nullptr) {
                 auto* module = modItGain->second.get();
-                if (module->type() == rectai::ModuleType::kFilter) {
+                if (module->type() == soundtable::ModuleType::kFilter) {
                     owner_.scene_.SetModuleParameter(object.logical_id(), "q",
                                               value);
-                } else if (dynamic_cast<rectai::VolumeModule*>(module) !=
+                } else if (dynamic_cast<soundtable::VolumeModule*>(module) !=
                            nullptr) {
                     owner_.scene_.SetModuleParameter(object.logical_id(), "volume",
                                               value);
-                } else if (dynamic_cast<rectai::LoopModule*>(module) !=
+                } else if (dynamic_cast<soundtable::LoopModule*>(module) !=
                            nullptr ||
-                           dynamic_cast<rectai::SampleplayModule*>(
+                           dynamic_cast<soundtable::SampleplayModule*>(
                                module) != nullptr) {
                     // Loop and Sampleplay expose their main level as
                     // "amp" instead of "gain".
@@ -1030,7 +1030,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
 
     // Next, try to select an object by clicking on its circle.
     for (const auto& [id, object] : objects) {
-        if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+        if (object.logical_id() == soundtable::MASTER_OUTPUT_ID ||
             object.docked()) {
             continue;
         }
@@ -1051,7 +1051,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
     // If no free object was picked, try selecting a docked module from the
     // right-hand dock strip so it can be dragged into the musical area.
     if (owner_.draggedObjectId_ == 0) {
-        std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+        std::vector<std::pair<std::int64_t, const soundtable::ObjectInstance*>>
             dockedObjects;
         dockedObjects.reserve(objects.size());
         for (const auto& [id, obj] : objects) {
@@ -1168,7 +1168,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
             // Ignore connections targeting the invisible Output/master
             // module (id MASTER_OUTPUT_ID) so that auto-wired master
             // links do not affect centre-line hit-testing.
-            if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+            if (conn.to_module_id == soundtable::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -1271,7 +1271,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
         // clickable here (i.e. only modules that carry audio and not pure
         // control/MIDI modules such as the Sequencer).
         for (const auto& [id, object] : objectsLocal) {
-            if (object.logical_id() == rectai::MASTER_OUTPUT_ID ||
+            if (object.logical_id() == soundtable::MASTER_OUTPUT_ID ||
                 object.docked()) {
                 continue;
             }
@@ -1286,7 +1286,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
 
             const auto modForConnectionIt =
                 modulesLocal.find(object.logical_id());
-            const rectai::AudioModule* moduleForConnection = nullptr;
+            const soundtable::AudioModule* moduleForConnection = nullptr;
             if (modForConnectionIt != modulesLocal.end() &&
                 modForConnectionIt->second != nullptr) {
                 moduleForConnection = modForConnectionIt->second.get();
@@ -1295,7 +1295,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
             const bool isGenerator =
                 moduleForConnection != nullptr &&
                 moduleForConnection->type() ==
-                    rectai::ModuleType::kGenerator;
+                    soundtable::ModuleType::kGenerator;
             const bool isGlobalController =
                 moduleForConnection != nullptr &&
                 moduleForConnection->is_global_controller();
@@ -1343,7 +1343,7 @@ void InteractionSystem::handlePointerDown(const PointerEvent& event)
                 bool isRadialMuted = false;
                 for (const auto& conn : owner_.scene_.connections()) {
                     if (conn.from_module_id != object.logical_id() ||
-                        conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                        conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -1453,7 +1453,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 // Locate the object that owns this panel by matching
                 // logical_id with the module id stored in the panel
                 // state.
-                const rectai::ObjectInstance* objectPtr = nullptr;
+                const soundtable::ObjectInstance* objectPtr = nullptr;
                 for (const auto& [objId, obj] : objects) {
                     juce::ignoreUnused(objId);
                     if (obj.logical_id() == moduleId) {
@@ -1475,13 +1475,13 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
 
                 const auto* moduleForPanel = modIt->second.get();
 
-                rectai::ui::TextScrollList* list = nullptr;
+                soundtable::ui::TextScrollList* list = nullptr;
 
                 if (panelState.activeTab ==
                     MainComponent::ModulePanelState::Tab::kLoopFiles) {
                     auto* loopModule =
-                        dynamic_cast<rectai::LoopModule*>(
-                            const_cast<rectai::AudioModule*>(
+                        dynamic_cast<soundtable::LoopModule*>(
+                            const_cast<soundtable::AudioModule*>(
                                 moduleForPanel));
                     if (loopModule == nullptr) {
                         continue;
@@ -1496,8 +1496,8 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 } else if (panelState.activeTab ==
                            MainComponent::ModulePanelState::Tab::kSettings) {
                     auto* tempoModule =
-                        dynamic_cast<rectai::TempoModule*>(
-                            const_cast<rectai::AudioModule*>(
+                        dynamic_cast<soundtable::TempoModule*>(
+                            const_cast<soundtable::AudioModule*>(
                                 moduleForPanel));
                     if (tempoModule == nullptr) {
                         continue;
@@ -1580,13 +1580,13 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
             // producen/consumen audio, excluyendo controladores globales
             // y módulos sólo MIDI/control como el Sequencer.
             for (const auto& [id, object] : objects) {
-                if (object.logical_id() == rectai::MASTER_OUTPUT_ID || object.docked() ||
+                if (object.logical_id() == soundtable::MASTER_OUTPUT_ID || object.docked() ||
                     !owner_.isInsideMusicArea(object)) {
                     continue;
                 }
 
                 const auto modIt = modules.find(object.logical_id());
-                const rectai::AudioModule* moduleForLine = nullptr;
+                const soundtable::AudioModule* moduleForLine = nullptr;
                 if (modIt != modules.end() && modIt->second != nullptr) {
                     moduleForLine = modIt->second.get();
                 }
@@ -1612,14 +1612,14 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 const bool isGeneratorLike =
                     moduleForLine != nullptr &&
                     moduleForLine->type() !=
-                        rectai::ModuleType::kSettings;
+                        soundtable::ModuleType::kSettings;
                 
                 bool hasActiveOutgoingConnection = false;
                 for (const auto& conn : owner_.scene_.connections()) {
                     // Skip auto-wired connections from generators to the
                     // invisible Output/master module so that only real
                     // module-to-module chains influence centre-line cuts.
-                    if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                    if (conn.to_module_id == soundtable::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -1685,7 +1685,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 // edges here would cause a double toggle (radial
                 // + connection) for the same underlying path,
                 // effectively cancelling the mute.
-                if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                if (conn.to_module_id == soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -1768,10 +1768,10 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
             if (modIt != modules.end() && modIt->second != nullptr) {
                 auto* modulePtr = modIt->second.get();
                 auto* envModule =
-                    dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                    dynamic_cast<soundtable::AudioModuleWithEnvelope*>(
                         modulePtr);
                 if (envModule != nullptr) {
-                    const rectai::ObjectInstance* panelObject = nullptr;
+                    const soundtable::ObjectInstance* panelObject = nullptr;
                     for (const auto& [id, obj] : objects) {
                         juce::ignoreUnused(id);
                         if (obj.logical_id() == dragState.moduleId &&
@@ -1892,7 +1892,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 modIt->second != nullptr) {
                 const auto* modulePtr = modIt->second.get();
 
-                const rectai::ObjectInstance* panelObject = nullptr;
+                const soundtable::ObjectInstance* panelObject = nullptr;
                 for (const auto& [id, obj] : objectsLocal) {
                     juce::ignoreUnused(id);
                     if (obj.logical_id() == dragState.moduleId &&
@@ -2020,7 +2020,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
             if (modIt != modulesLocal.end() &&
                 modIt->second != nullptr) {
                 auto* modulePtr = modIt->second.get();
-                if (dynamic_cast<rectai::AudioModuleWithEnvelope*>(
+                if (dynamic_cast<soundtable::AudioModuleWithEnvelope*>(
                         modulePtr) != nullptr) {
                     panel.activeTab = MainComponent::ModulePanelState::Tab::kEnvelope;
                 }
@@ -2147,7 +2147,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
             const auto& modulesForFreq = owner_.scene_.modules();
             const auto modItFreq =
                 modulesForFreq.find(object.logical_id());
-            rectai::AudioModule* moduleForFreq =
+            soundtable::AudioModule* moduleForFreq =
                 (modItFreq != modulesForFreq.end() &&
                  modItFreq->second != nullptr)
                     ? modItFreq->second.get()
@@ -2155,13 +2155,13 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
 
             const bool isTempoModule =
                 (moduleForFreq != nullptr &&
-                 moduleForFreq->is<rectai::TempoModule>());
+                 moduleForFreq->is<soundtable::TempoModule>());
 
             if (isTempoModule) {
                 const float newBpm =
-                    rectai::TempoModule::BpmFromNormalised(value);
+                    soundtable::TempoModule::BpmFromNormalised(value);
                 const float clampedBpm =
-                    rectai::TempoModule::ClampBpm(newBpm);
+                    soundtable::TempoModule::ClampBpm(newBpm);
 
                 if (clampedBpm == owner_.bpm_) {
                     return;
@@ -2200,7 +2200,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                                            kMaxMidi);
 
                 auto* oscModule =
-                    dynamic_cast<rectai::OscillatorModule*>(
+                    dynamic_cast<soundtable::OscillatorModule*>(
                         moduleForFreq);
                 float effectivePrevMidi = previousMidi;
                 float effectiveNewMidi = newMidi;
@@ -2274,7 +2274,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 return;
             }
 
-                    if (auto* loopModule = dynamic_cast<rectai::LoopModule*>(
+                    if (auto* loopModule = dynamic_cast<soundtable::LoopModule*>(
                         moduleForFreq)) {
                 // Map drag position to one of four discrete
                 // sample slots and update the "sample"
@@ -2301,7 +2301,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 return;
             }
 
-                if (auto* delayModule = dynamic_cast<rectai::DelayModule*>(
+                if (auto* delayModule = dynamic_cast<soundtable::DelayModule*>(
                     moduleForFreq)) {
                 // Drag on Delay mirrors the click mapping: delay is
                 // a continuous 0–1 control in feedback mode and fb
@@ -2368,16 +2368,16 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
             if (modItGain != modulesForGain.end() &&
                 modItGain->second != nullptr) {
                 auto* module = modItGain->second.get();
-                if (module->type() == rectai::ModuleType::kFilter) {
+                if (module->type() == soundtable::ModuleType::kFilter) {
                     owner_.scene_.SetModuleParameter(object.logical_id(), "q",
                                               value);
-                } else if (dynamic_cast<rectai::VolumeModule*>(module) !=
+                } else if (dynamic_cast<soundtable::VolumeModule*>(module) !=
                            nullptr) {
                     owner_.scene_.SetModuleParameter(object.logical_id(),
                                               "volume", value);
-                } else if (dynamic_cast<rectai::LoopModule*>(module) !=
+                } else if (dynamic_cast<soundtable::LoopModule*>(module) !=
                            nullptr ||
-                           dynamic_cast<rectai::SampleplayModule*>(
+                           dynamic_cast<soundtable::SampleplayModule*>(
                                module) != nullptr) {
                     // Loop and Sampleplay expose their main level as
                     // "amp" instead of "gain".
@@ -2439,7 +2439,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
 
             // Pointer has left the dock area: instantiate the object on the
             // table at the dragged position, marking it as undocked.
-            updated = rectai::ObjectInstance(
+            updated = soundtable::ObjectInstance(
                 updated.tracking_id(), updated.logical_id(), tableX, tableY,
                 updated.angle_radians(), false);
         } else {
@@ -2482,7 +2482,7 @@ void InteractionSystem::handlePointerDrag(const PointerEvent& event)
                 // so that the text is fully visible for a few seconds and
                 // then fades out.
                 if (auto* sampleModule =
-                        dynamic_cast<rectai::SampleplayModule*>(module)) {
+                        dynamic_cast<soundtable::SampleplayModule*>(module)) {
                     owner_.markSampleplayInstrumentLabelActive(
                         sampleModule->id());
                 }
@@ -2533,7 +2533,7 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
                 // Locate the object that owns this panel by matching
                 // logical_id with the module id stored in the panel
                 // state.
-                const rectai::ObjectInstance* objectPtr = nullptr;
+                const soundtable::ObjectInstance* objectPtr = nullptr;
                 for (const auto& [objId, obj] : objects) {
                     juce::ignoreUnused(objId);
                     if (obj.logical_id() == moduleId) {
@@ -2555,13 +2555,13 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
 
                 const auto* moduleForPanel = modIt->second.get();
 
-                rectai::ui::TextScrollList* list = nullptr;
+                soundtable::ui::TextScrollList* list = nullptr;
 
                 if (panelState.activeTab ==
                     MainComponent::ModulePanelState::Tab::kLoopFiles) {
                     auto* loopModule =
-                        dynamic_cast<rectai::LoopModule*>(
-                            const_cast<rectai::AudioModule*>(
+                        dynamic_cast<soundtable::LoopModule*>(
+                            const_cast<soundtable::AudioModule*>(
                                 moduleForPanel));
                     if (loopModule == nullptr) {
                         continue;
@@ -2576,8 +2576,8 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
                 } else if (panelState.activeTab ==
                            MainComponent::ModulePanelState::Tab::kSettings) {
                     auto* tempoModule =
-                        dynamic_cast<rectai::TempoModule*>(
-                            const_cast<rectai::AudioModule*>(
+                        dynamic_cast<soundtable::TempoModule*>(
+                            const_cast<soundtable::AudioModule*>(
                                 moduleForPanel));
                     if (tempoModule == nullptr) {
                         continue;
@@ -2644,7 +2644,7 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
                     continue;
                 }
 
-                const rectai::ObjectInstance* objectPtr = nullptr;
+                const soundtable::ObjectInstance* objectPtr = nullptr;
                 for (const auto& [objId, obj] : objects) {
                     juce::ignoreUnused(objId);
                     if (obj.logical_id() == moduleId) {
@@ -2738,7 +2738,7 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
                     for (const auto& conn : connections) {
                         if (conn.from_module_id != moduleId ||
                             conn.to_module_id !=
-                                rectai::MASTER_OUTPUT_ID) {
+                                soundtable::MASTER_OUTPUT_ID) {
                             continue;
                         }
 
@@ -2808,7 +2808,7 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
         // toggle its mute state.
         for (const auto& conn : connections) {
             if (conn.from_module_id != moduleId ||
-                conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -2860,7 +2860,7 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
         const bool wasMuted =
             owner_.mutedConnections_.find(connKey) != owner_.mutedConnections_.end();
 
-        const rectai::Connection* matchedConn = nullptr;
+        const soundtable::Connection* matchedConn = nullptr;
         for (const auto& conn : connections) {
             if (makeConnectionKey(conn) == connKey) {
                 matchedConn = &conn;
@@ -2875,7 +2875,7 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
 
             const auto fromObjIt =
                 moduleToObjectId.find(srcModuleId);
-            const rectai::ObjectInstance* fromObj = nullptr;
+            const soundtable::ObjectInstance* fromObj = nullptr;
             if (fromObjIt != moduleToObjectId.end()) {
                 const auto objIt = objects.find(fromObjIt->second);
                 if (objIt != objects.end()) {
@@ -2894,7 +2894,7 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
                     // Output/master module so they do not influence the
                     // "only one connection" rule from the user's
                     // perspective.
-                    if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                    if (conn.to_module_id == soundtable::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -2944,7 +2944,7 @@ void InteractionSystem::handlePointerUp(const PointerEvent& event)
         if (matchedConn != nullptr && hasSingleActiveConnection) {
             for (const auto& conn : connections) {
                 if (conn.from_module_id != srcModuleId ||
-                    conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                    conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -3251,7 +3251,7 @@ void InteractionSystem::handleWheel(const WheelEvent& event)
             }
 
             // Locate the object that owns this panel.
-            const rectai::ObjectInstance* objectPtr = nullptr;
+            const soundtable::ObjectInstance* objectPtr = nullptr;
             for (const auto& [objId, obj] : objects) {
                 juce::ignoreUnused(objId);
                 if (obj.logical_id() == moduleId) {
@@ -3273,8 +3273,8 @@ void InteractionSystem::handleWheel(const WheelEvent& event)
 
             const auto* moduleForPanel = modIt->second.get();
             auto* loopModule =
-                dynamic_cast<rectai::LoopModule*>(
-                    const_cast<rectai::AudioModule*>(
+                dynamic_cast<soundtable::LoopModule*>(
+                    const_cast<soundtable::AudioModule*>(
                         moduleForPanel));
             if (loopModule != nullptr) {
                 owner_.ensureLoopFileBrowserInitialised(panelState.moduleId,
@@ -3342,7 +3342,7 @@ void InteractionSystem::handleWheel(const WheelEvent& event)
             }
 
             // Locate the object that owns this panel.
-            const rectai::ObjectInstance* objectPtr = nullptr;
+            const soundtable::ObjectInstance* objectPtr = nullptr;
             for (const auto& [objId, obj] : objects) {
                 juce::ignoreUnused(objId);
                 if (obj.logical_id() == moduleId) {
@@ -3364,8 +3364,8 @@ void InteractionSystem::handleWheel(const WheelEvent& event)
 
             const auto* moduleForPanel = modIt->second.get();
             auto* tempoModule =
-                dynamic_cast<rectai::TempoModule*>(
-                    const_cast<rectai::AudioModule*>(
+                dynamic_cast<soundtable::TempoModule*>(
+                    const_cast<soundtable::AudioModule*>(
                         moduleForPanel));
             if (tempoModule == nullptr) {
                 continue;
@@ -3457,13 +3457,13 @@ void InteractionSystem::handleWheel(const WheelEvent& event)
 
             // TempoModule: fine-grained BPM nudging.
             if (auto* tempoModule =
-                    dynamic_cast<rectai::TempoModule*>(module)) {
+                    dynamic_cast<soundtable::TempoModule*>(module)) {
                 const float baseStep =
                     event.isShiftDown ? 5.0F : 1.0F;
                 const float step =
                     (wheelDelta > 0.0F) ? baseStep : -baseStep;
                 const float newBpm =
-                    rectai::TempoModule::ClampBpm(owner_.bpm_ + step);
+                    soundtable::TempoModule::ClampBpm(owner_.bpm_ + step);
 
                 if (newBpm == owner_.bpm_) {
                     return;
@@ -3485,7 +3485,7 @@ void InteractionSystem::handleWheel(const WheelEvent& event)
             // LoopModule: cycle through the four discrete sample
             // slots using the normalised "sample" parameter.
             else if (auto* loopModule =
-                    dynamic_cast<rectai::LoopModule*>(module)) {
+                    dynamic_cast<soundtable::LoopModule*>(module)) {
                 float sampleParam = loopModule->GetParameterOrDefault(
                     "sample", 0.0F);
                 sampleParam = juce::jlimit(0.0F, 1.0F, sampleParam);
@@ -3515,4 +3515,4 @@ void InteractionSystem::handleWheel(const WheelEvent& event)
     }
 }
 
-}  // namespace rectai::ui
+}  // namespace soundtable::ui

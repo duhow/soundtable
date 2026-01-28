@@ -1,4 +1,4 @@
-# Dependencias del proyecto rectai-table
+# Dependencias del proyecto soundtable
 
 Este documento lista las dependencias principales del proyecto y cómo instalarlas.
 
@@ -63,7 +63,7 @@ En Windows, se utilizarán las dependencias que JUCE gestiona a través de su in
 
 ## 3. Dependencias del servicio de tracking (OpenCV)
 
-El servicio `rectai-tracker` depende de **OpenCV** para captura y procesado de vídeo.
+El servicio `soundtable-tracker` depende de **OpenCV** para captura y procesado de vídeo.
 
 ### 3.1. Paquetes en Ubuntu/Debian
 
@@ -109,16 +109,16 @@ El repositorio incluye un `Dockerfile` que instala todas las dependencias necesa
 Desde la raíz del proyecto:
 
 ```bash
-docker build -t rectai-table-build .
+docker build -t soundtable-build .
 ```
 
 ### 4.2. Ejecutar un contenedor interactivo
 
 ```bash
-docker run --rm -it rectai-table-build /bin/bash
+docker run --rm -it soundtable-build /bin/bash
 ```
 
-Dentro del contenedor, los binarios resultantes (por ejemplo, `rectai-core` y `rectai-tracker`) estarán en el directorio `build/`.
+Dentro del contenedor, los binarios resultantes (por ejemplo, `soundtable-core` y `soundtable-tracker`) estarán en el directorio `build/`.
 
 ## 5. Resumen rápido de instalación en Linux (host)
 

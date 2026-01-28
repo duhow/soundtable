@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace rectai {
+namespace soundtable {
 
 // Lightweight description of a preset (instrument) inside a
 // SoundFont2 (.sf2) file. The bank and program numbers follow the
@@ -23,4 +23,4 @@ bool EnumerateSoundfontPresets(const std::string& path,
                                std::vector<SoundfontPreset>& out_presets,
                                std::string* error_message = nullptr);
 
-}  // namespace rectai
+}  // namespace soundtable

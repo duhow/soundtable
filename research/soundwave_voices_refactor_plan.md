@@ -243,7 +243,7 @@ Salida de Fase 2:
 
 Estado actual (22-12-2025):
 
-- Se ha introducido la clase `rectai::Voices` en
+- Se ha introducido la clase `soundtable::Voices` en
   [core/src/core/Voices.h](core/src/core/Voices.h) y
   [core/src/core/Voices.cpp](core/src/core/Voices.cpp):
   - Sin dependencias de JUCE ni de `Scene`/`AudioGraph`.
@@ -261,7 +261,7 @@ Estado actual (22-12-2025):
     buffer plano `[voice][sample]` sin locks, pensada para un escritor
     (audio) y múltiples lectores (UI).
 
-- Integración: `Voices` forma parte de `rectai-core-lib` vía el glob
+- Integración: `Voices` forma parte de `soundtable-core-lib` vía el glob
   `src/core/*.cpp` en [core/CMakeLists.txt](core/CMakeLists.txt), pero aún no está
   conectada a `AudioEngine` ni consumida por `MainComponent`. El sistema
   existente de waveforms (buffers en `AudioEngine` + taps por conexión)

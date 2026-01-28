@@ -5,12 +5,12 @@
 
 // Lightweight wrapper around FluidSynth used to render SoundFont2
 // instruments for Sampleplay modules. This class is deliberately kept
-// independent of JUCE so it can live inside rectai-core-lib. All
+// independent of JUCE so it can live inside soundtable-core-lib. All
 // methods are thread-safe via an internal mutex, but note that calling
 // them from a real-time audio thread may introduce contention; this is
 // acceptable for the current prototype.
 
-namespace rectai {
+namespace soundtable {
 
 class SampleplaySynth {
  public:
@@ -54,4 +54,4 @@ class SampleplaySynth {
   Impl* impl_{nullptr};
 };
 
-}  // namespace rectai
+}  // namespace soundtable

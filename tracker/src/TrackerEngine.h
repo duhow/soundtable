@@ -15,7 +15,7 @@ extern "C" {
 #include "treeidmap.h"
 }
 
-namespace rectai::tracker {
+namespace soundtable::tracker {
 
 class TrackerEngine {
 public:
@@ -93,4 +93,4 @@ private:
     [[nodiscard]] static int filterIndex(ThresholdFilter filter) noexcept;
 };
 
-} // namespace rectai::tracker
+} // namespace soundtable::tracker

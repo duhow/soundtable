@@ -9,11 +9,11 @@
 #include "core/AudioModules.h"
 #include "core/MidiTypes.h"
 
-using rectai::ui::isConnectionGeometricallyActive;
-using rectai::ui::makeConnectionKey;
-using rectai::ui::makeModulePairKey;
-using rectai::ui::makeObjectPairKey;
-using rectai::ui::generateConnectionFromModules;
+using soundtable::ui::isConnectionGeometricallyActive;
+using soundtable::ui::makeConnectionKey;
+using soundtable::ui::makeModulePairKey;
+using soundtable::ui::makeObjectPairKey;
+using soundtable::ui::generateConnectionFromModules;
 
 #include <optional>
 
@@ -47,7 +47,7 @@ struct EnvelopeAnalysis {
     bool hasSustainPlateau{false};
 };
 
-[[nodiscard]] EnvelopeAnalysis analyseEnvelope(const rectai::Envelope& e)
+[[nodiscard]] EnvelopeAnalysis analyseEnvelope(const soundtable::Envelope& e)
 {
     EnvelopeAnalysis result{};
 
@@ -165,7 +165,7 @@ void MainComponent::toggleHardlinkBetweenObjects(
     auto* moduleB = modItB->second.get();
 
     // Prepare the connection object for lookup or creation.
-    rectai::Connection connection;
+    soundtable::Connection connection;
 
     // No valid audio routing between these modules.
     if(!generateConnectionFromModules(*moduleA, *moduleB, true, connection)) {
@@ -230,7 +230,7 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
         }
 
         const auto* volumeModule =
-            dynamic_cast<const rectai::VolumeModule*>(modulePtr.get());
+            dynamic_cast<const soundtable::VolumeModule*>(modulePtr.get());
         if (volumeModule != nullptr) {
             globalVolumeParam =
                 volumeModule->GetParameterOrDefault("volume", 0.9F);
@@ -255,7 +255,7 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
 
         const auto* module = modIt->second.get();
         const auto* sampleModule =
-            dynamic_cast<const rectai::SampleplayModule*>(module);
+            dynamic_cast<const soundtable::SampleplayModule*>(module);
         if (sampleModule == nullptr) {
             continue;
         }
@@ -279,13 +279,13 @@ void MainComponent::triggerSampleplayNotesOnBeat(const bool strongBeat)
 
             for (const auto& edge : audioEdges) {
                 if (edge.from_module_id != module->id() ||
-                    edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                    edge.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
                 hasMasterRoute = true;
 
-                rectai::Connection conn{edge.from_module_id,
+                soundtable::Connection conn{edge.from_module_id,
                                          edge.from_port_name,
                                          edge.to_module_id,
                                          edge.to_port_name,
@@ -368,15 +368,15 @@ void MainComponent::updateConnectionVisualSources()
     // Helper to determine whether a Scene::Connection carries audio
     // by inspecting the declared port kinds on source/destination
     // modules.
-    auto isAudioConnection = [&](const rectai::Connection& conn) {
+    auto isAudioConnection = [&](const soundtable::Connection& conn) {
         const auto fromIt = modules.find(conn.from_module_id);
         const auto toIt = modules.find(conn.to_module_id);
 
-        const rectai::AudioModule* fromModule =
+        const soundtable::AudioModule* fromModule =
             (fromIt != modules.end() && fromIt->second != nullptr)
                 ? fromIt->second.get()
                 : nullptr;
-        const rectai::AudioModule* toModule =
+        const soundtable::AudioModule* toModule =
             (toIt != modules.end() && toIt->second != nullptr)
                 ? toIt->second.get()
                 : nullptr;
@@ -384,7 +384,7 @@ void MainComponent::updateConnectionVisualSources()
         if (fromModule != nullptr) {
             for (const auto& port : fromModule->output_ports()) {
                 if (port.name == conn.from_port_name) {
-                    return port.kind == rectai::PortSignalKind::kAudio;
+                    return port.kind == soundtable::PortSignalKind::kAudio;
                 }
             }
         }
@@ -392,7 +392,7 @@ void MainComponent::updateConnectionVisualSources()
         if (toModule != nullptr) {
             for (const auto& port : toModule->input_ports()) {
                 if (port.name == conn.to_port_name) {
-                    return port.kind == rectai::PortSignalKind::kAudio;
+                    return port.kind == soundtable::PortSignalKind::kAudio;
                 }
             }
         }
@@ -415,11 +415,11 @@ void MainComponent::updateConnectionVisualSources()
         const auto fromIt = modules.find(conn.from_module_id);
         const auto toIt = modules.find(conn.to_module_id);
 
-        const rectai::AudioModule* fromModule =
+        const soundtable::AudioModule* fromModule =
             (fromIt != modules.end() && fromIt->second != nullptr)
                 ? fromIt->second.get()
                 : nullptr;
-        const rectai::AudioModule* toModule =
+        const soundtable::AudioModule* toModule =
             (toIt != modules.end() && toIt->second != nullptr)
                 ? toIt->second.get()
                 : nullptr;
@@ -434,9 +434,9 @@ void MainComponent::updateConnectionVisualSources()
         // waveform buffer rather than any per-voice buffer.
         const bool involvesSampleplay =
             (fromModule != nullptr &&
-             fromModule->is<rectai::SampleplayModule>()) ||
+             fromModule->is<soundtable::SampleplayModule>()) ||
             (toModule != nullptr &&
-             toModule->is<rectai::SampleplayModule>());
+             toModule->is<soundtable::SampleplayModule>());
 
         if (involvesSampleplay) {
             source.kind = ConnectionVisualSource::Kind::kSampleplay;
@@ -465,10 +465,10 @@ void MainComponent::updateConnectionVisualSources()
 
             const bool fromIsGenerator =
                 (fromModule != nullptr &&
-                 fromModule->type() == rectai::ModuleType::kGenerator);
+                 fromModule->type() == soundtable::ModuleType::kGenerator);
             const bool fromIsFilter =
                 (fromModule != nullptr &&
-                 fromModule->is<rectai::FilterModule>());
+                 fromModule->is<soundtable::FilterModule>());
 
             // For generator→X connections use the pre-filter
             // waveform so that Osc→Filter shows the raw oscillator.
@@ -531,8 +531,8 @@ void MainComponent::rotationTrackingUpdate(std::unordered_map<std::int64_t, floa
 }
 
 void MainComponent::updateRotationDrivenControllers(
-    const std::unordered_map<std::int64_t, rectai::ObjectInstance>& objects,
-    const std::unordered_map<std::string, std::unique_ptr<rectai::AudioModule>>& modules,
+    const std::unordered_map<std::int64_t, soundtable::ObjectInstance>& objects,
+    const std::unordered_map<std::string, std::unique_ptr<soundtable::AudioModule>>& modules,
     const std::unordered_map<std::int64_t, float>& rotationDeltaDegrees)
 {
     // ------------------------------------------------------------------
@@ -564,7 +564,7 @@ void MainComponent::updateRotationDrivenControllers(
         // 1) Rotation → per-module controls (Loop sample selection,
         // pitch/freq parameters, Delay time/amount, etc.).
         if (auto* loopModule =
-            dynamic_cast<rectai::LoopModule*>(module)) {
+            dynamic_cast<soundtable::LoopModule*>(module)) {
             if (!obj.docked()) {
                 const float deltaSample = -diff / 360.0F;  // [-0.5, 0.5]
 
@@ -623,7 +623,7 @@ void MainComponent::updateRotationDrivenControllers(
             updatedMidi = juce::jlimit(kMinMidi, kMaxMidi, updatedMidi);
 
             auto* oscModule =
-                dynamic_cast<rectai::OscillatorModule*>(module);
+                dynamic_cast<soundtable::OscillatorModule*>(module);
             float effectivePrevMidi = clampedCurrent;
             float effectiveNewMidi = updatedMidi;
             if (oscModule != nullptr &&
@@ -678,7 +678,7 @@ void MainComponent::updateRotationDrivenControllers(
                 }
             }
         } else if (auto* delayModule =
-                       dynamic_cast<rectai::DelayModule*>(module)) {
+                       dynamic_cast<soundtable::DelayModule*>(module)) {
             if (!obj.docked()) {
                 // Map rotation to the Delay side bar: two full
                 // turns (720º) correspond to the full 0–1 range of
@@ -759,7 +759,7 @@ void MainComponent::updateRotationDrivenControllers(
 
         // 2) Rotation → global tempo (BPM).
         if (auto* tempoModule =
-                dynamic_cast<rectai::TempoModule*>(module)) {
+                dynamic_cast<soundtable::TempoModule*>(module)) {
             (void)tempoModule;
 
             if (std::fabs(diff) <=
@@ -774,7 +774,7 @@ void MainComponent::updateRotationDrivenControllers(
             }
 
             const float newBpm =
-                rectai::TempoModule::ClampBpm(bpm_ + deltaBpm);
+                soundtable::TempoModule::ClampBpm(bpm_ + deltaBpm);
 
             bpm_ = newBpm;
 
@@ -786,7 +786,7 @@ void MainComponent::updateRotationDrivenControllers(
 
         // 3) Rotation → global volume (master).
         if (auto* volumeModule =
-                dynamic_cast<rectai::VolumeModule*>(module)) {
+                dynamic_cast<soundtable::VolumeModule*>(module)) {
             const float deltaVolume = -diff / 360.0F;  // [-0.5, 0.5]
             if (std::fabs(deltaVolume) <=
                 std::numeric_limits<float>::epsilon()) {
@@ -811,8 +811,8 @@ void MainComponent::updateRotationDrivenControllers(
 
 void MainComponent::runSequencerStep(
     const int stepIndex,
-    const std::vector<rectai::AudioGraph::Edge>& graphEdges,
-    const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+    const std::vector<soundtable::AudioGraph::Edge>& graphEdges,
+    const std::vector<soundtable::AudioGraph::Edge>& audioEdges,
     const float globalVolumeGain)
 {
     const auto& modulesLocal = scene_.modules();
@@ -828,7 +828,7 @@ void MainComponent::runSequencerStep(
     }
 
     if (stepIndex < 0 ||
-        stepIndex >= rectai::SequencerPreset::kNumSteps) {
+        stepIndex >= soundtable::SequencerPreset::kNumSteps) {
         return;
     }
 
@@ -837,12 +837,12 @@ void MainComponent::runSequencerStep(
             continue;
         }
 
-        if (!modulePtr->is<rectai::SequencerModule>()) {
+        if (!modulePtr->is<soundtable::SequencerModule>()) {
             continue;
         }
 
         auto* seqModule =
-            dynamic_cast<rectai::SequencerModule*>(modulePtr.get());
+            dynamic_cast<soundtable::SequencerModule*>(modulePtr.get());
         if (seqModule == nullptr) {
             continue;
         }
@@ -867,7 +867,7 @@ void MainComponent::runSequencerStep(
         // Resolve current preset and step.
         const int presetIndex = seqModule->current_preset();
         if (presetIndex < 0 ||
-            presetIndex >= rectai::SequencerModule::kNumPresets) {
+            presetIndex >= soundtable::SequencerModule::kNumPresets) {
             continue;
         }
 
@@ -895,7 +895,7 @@ void MainComponent::runSequencerStep(
                     }
 
                     if (auto* oscModule =
-                            dynamic_cast<rectai::OscillatorModule*>(
+                            dynamic_cast<soundtable::OscillatorModule*>(
                                 modDestIt->second.get())) {
                         oscillatorSequencerGain_[oscModule->id()] =
                             0.0F;
@@ -942,7 +942,7 @@ void MainComponent::runSequencerStep(
 
             auto* dstModule = modDestIt->second.get();
 
-            rectai::Connection tmpConn{
+            soundtable::Connection tmpConn{
                 edge.from_module_id,
                 edge.from_port_name,
                 edge.to_module_id,
@@ -958,7 +958,7 @@ void MainComponent::runSequencerStep(
                 continue;
             }
 
-            rectai::MidiNoteEvent noteEvent;
+            soundtable::MidiNoteEvent noteEvent;
             noteEvent.channel = 0;
             noteEvent.note = juce::jlimit(0, 127, step.pitch);
             noteEvent.velocity01 =
@@ -967,7 +967,7 @@ void MainComponent::runSequencerStep(
             noteEvent.is_note_on = true;
 
             if (const auto* sampleModule =
-                    dynamic_cast<const rectai::SampleplayModule*>(
+                    dynamic_cast<const soundtable::SampleplayModule*>(
                         dstModule)) {
                 bool dstMutedToMaster = false;
                 {
@@ -978,13 +978,13 @@ void MainComponent::runSequencerStep(
                         if (aedge.from_module_id !=
                                 sampleModule->id() ||
                             aedge.to_module_id !=
-                                rectai::MASTER_OUTPUT_ID) {
+                                soundtable::MASTER_OUTPUT_ID) {
                             continue;
                         }
 
                         hasMasterRoute = true;
 
-                        rectai::Connection mconn{
+                        soundtable::Connection mconn{
                             aedge.from_module_id,
                             aedge.from_port_name,
                             aedge.to_module_id,
@@ -1066,7 +1066,7 @@ void MainComponent::runSequencerStep(
             }
 
             if (auto* oscModule =
-                    dynamic_cast<rectai::OscillatorModule*>(
+                    dynamic_cast<soundtable::OscillatorModule*>(
                         dstModule)) {
                 if (seqVersion >= 2) {
                     const double targetHz =
@@ -1114,8 +1114,8 @@ void MainComponent::runSequencerStep(
 }
 
 void MainComponent::updateSequencerAndPulses(
-    const std::vector<rectai::AudioGraph::Edge>& graphEdges,
-    const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+    const std::vector<soundtable::AudioGraph::Edge>& graphEdges,
+    const std::vector<soundtable::AudioGraph::Edge>& audioEdges,
     const float globalVolumeGain,
     const double nowSeconds,
     const double dt)
@@ -1179,7 +1179,7 @@ void MainComponent::updateSequencerAndPulses(
     beatIndex_ = wholeBeats % 4;
 
     const int audioStepsPerBar =
-        rectai::SequencerPreset::kNumSteps;
+        soundtable::SequencerPreset::kNumSteps;
     if (audioStepsPerBar > 0) {
         const double transportPositionBeats =
             transportBeats_ + beatPhase_;
@@ -1291,7 +1291,7 @@ void MainComponent::timerCallback()
         // module↔centre collisions can reuse the same mapping.
         struct InsideEntry {
             std::int64_t id;
-            const rectai::ObjectInstance* obj{nullptr};
+            const soundtable::ObjectInstance* obj{nullptr};
             float sx{0.0F};
             float sy{0.0F};
         };
@@ -1328,7 +1328,7 @@ void MainComponent::timerCallback()
             // module→MASTER_OUTPUT_ID connections plus per-connection
             // mute state, not by creating/removing hardlinks through
             // physical collisions.
-            if (objA->logical_id() == rectai::MASTER_OUTPUT_ID) {
+            if (objA->logical_id() == soundtable::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -1339,7 +1339,7 @@ void MainComponent::timerCallback()
                 const auto& entryB = inside[j];
                 const auto* objB = entryB.obj;
 
-                if (objB->logical_id() == rectai::MASTER_OUTPUT_ID) {
+                if (objB->logical_id() == soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -1380,7 +1380,7 @@ void MainComponent::timerCallback()
         // the central node to promote/demote its route to the master.
         std::optional<std::int64_t> masterObjectId;
         for (const auto& [objId, obj] : objects) {
-            if (obj.logical_id() == rectai::MASTER_OUTPUT_ID) {
+            if (obj.logical_id() == soundtable::MASTER_OUTPUT_ID) {
                 masterObjectId = objId;
                 break;
             }
@@ -1392,7 +1392,7 @@ void MainComponent::timerCallback()
 
             for (const auto& entry : inside) {
                 if (entry.obj == nullptr ||
-                    entry.obj->logical_id() == rectai::MASTER_OUTPUT_ID) {
+                    entry.obj->logical_id() == soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -1452,8 +1452,8 @@ void MainComponent::timerCallback()
             const auto toObjIdIt =
                 moduleToObjectId.find(conn.to_module_id);
 
-            const rectai::ObjectInstance* fromObj = nullptr;
-            const rectai::ObjectInstance* toObj = nullptr;
+            const soundtable::ObjectInstance* fromObj = nullptr;
+            const soundtable::ObjectInstance* toObj = nullptr;
             if (fromObjIdIt != moduleToObjectId.end()) {
                 const auto it = objects.find(fromObjIdIt->second);
                 if (it != objects.end()) {
@@ -1491,7 +1491,7 @@ void MainComponent::timerCallback()
         // Consider only objects that are currently inside the musical
         // area; docked modules and objects outside the circle are
         // ignored for dynamic connections.
-        std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+        std::vector<std::pair<std::int64_t, const soundtable::ObjectInstance*>>
             inside;
         inside.reserve(objects.size());
         for (const auto& [objId, obj] : objects) {
@@ -1506,7 +1506,7 @@ void MainComponent::timerCallback()
         // modules. For cada módulo origen conservamos solo el candidato
         // con mejor puntuación (más cercano dentro del cono).
         struct DynamicCandidate {
-            rectai::Connection connection;
+            soundtable::Connection connection;
             float score{0.0F};
         };
 
@@ -1545,14 +1545,14 @@ void MainComponent::timerCallback()
                 // so that generators can always target the closest
                 // compatible Filter while keeping a single dynamic
                 // outgoing connection. Skip those pairs here.
-                if (moduleA->type() == rectai::ModuleType::kGenerator ||
-                    moduleB->type() == rectai::ModuleType::kGenerator) {
+                if (moduleA->type() == soundtable::ModuleType::kGenerator ||
+                    moduleB->type() == soundtable::ModuleType::kGenerator) {
                     continue;
                 }
 
                 // Decide connection direction based on existing
                 // connection policies.
-                rectai::Connection connection;
+                soundtable::Connection connection;
                 if (!generateConnectionFromModules(*moduleA, *moduleB,
                                                    false, connection)) {
                     continue;
@@ -1561,12 +1561,12 @@ void MainComponent::timerCallback()
                 // Avoid proposing explicit dynamic connections towards
                 // the invisible Output/master; esas rutas ya las
                 // gestiona el loader como auto-wiring.
-                if (connection.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                if (connection.to_module_id == soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
-                const rectai::ObjectInstance* fromObj = nullptr;
-                const rectai::ObjectInstance* toObj = nullptr;
+                const soundtable::ObjectInstance* fromObj = nullptr;
+                const soundtable::ObjectInstance* toObj = nullptr;
 
                 if (moduleA->CanConnectTo(*moduleB)) {
                     fromObj = objA;
@@ -1639,7 +1639,7 @@ void MainComponent::timerCallback()
         // Index existing non-hardlink connections by source module so
         // we can adjust a generator's single dynamic route to its
         // closest compatible downstream module.
-        std::unordered_map<std::string, std::vector<rectai::Connection>>
+        std::unordered_map<std::string, std::vector<soundtable::Connection>>
             dynamicByFrom;
         for (const auto& conn : connections) {
             if (conn.is_hardlink) {
@@ -1647,7 +1647,7 @@ void MainComponent::timerCallback()
             }
 
             // Skip implicit/master connections.
-            if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+            if (conn.to_module_id == soundtable::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -1670,7 +1670,7 @@ void MainComponent::timerCallback()
             // can participate in dynamic routing as long as
             // AudioModule::CanConnectTo allows it. Settings modules
             // (Tempo, Tonalizer, etc.) are excluded from this pass.
-            if (srcModule->type() == rectai::ModuleType::kSettings) {
+            if (srcModule->type() == soundtable::ModuleType::kSettings) {
                 continue;
             }
 
@@ -1678,7 +1678,7 @@ void MainComponent::timerCallback()
                 continue;
             }
 
-            const rectai::AudioModule* bestModule = nullptr;
+            const soundtable::AudioModule* bestModule = nullptr;
             std::string bestModuleId;
             float bestDistSq = std::numeric_limits<float>::max();
             bool bestIsFilter = false;
@@ -1704,7 +1704,7 @@ void MainComponent::timerCallback()
 
                 // Ignore Output/master and global controllers as
                 // downstream targets for the generator dynamic link.
-                if (destModule->id() == rectai::MASTER_OUTPUT_ID ||
+                if (destModule->id() == soundtable::MASTER_OUTPUT_ID ||
                     destModule->is_global_controller()) {
                     continue;
                 }
@@ -1718,7 +1718,7 @@ void MainComponent::timerCallback()
                 }
 
                 const bool destIsFilter =
-                    (destModule->type() == rectai::ModuleType::kFilter);
+                    (destModule->type() == soundtable::ModuleType::kFilter);
                 const float dx = otherObj.x() - obj.x();
                 const float dy = otherObj.y() - obj.y();
                 const float distSq = dx * dx + dy * dy;
@@ -1735,7 +1735,7 @@ void MainComponent::timerCallback()
             }
 
             auto dynIt = dynamicByFrom.find(srcModule->id());
-            const rectai::Connection* existingConn = nullptr;
+            const soundtable::Connection* existingConn = nullptr;
             if (dynIt != dynamicByFrom.end() && !dynIt->second.empty()) {
                 existingConn = &dynIt->second.front();
             }
@@ -1774,7 +1774,7 @@ void MainComponent::timerCallback()
                 }
             }
 
-            rectai::Connection newConn{srcModule->id(), "out",
+            soundtable::Connection newConn{srcModule->id(), "out",
                                        bestModuleId, "in", false};
             (void)scene_.AddConnection(newConn);
         }
@@ -1806,7 +1806,7 @@ void MainComponent::timerCallback()
         }
 
         const auto* volumeModule =
-            dynamic_cast<const rectai::VolumeModule*>(modulePtr.get());
+            dynamic_cast<const soundtable::VolumeModule*>(modulePtr.get());
         if (volumeModule != nullptr) {
             globalVolumeParam =
                 volumeModule->GetParameterOrDefault("volume", 0.9F);

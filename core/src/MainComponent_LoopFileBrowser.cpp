@@ -9,7 +9,7 @@ LoopFileBrowser::LoopFileBrowser(
     juce::File samplesRootDir,
     std::function<void()> repaintCallback,
     std::function<void(const std::string&)> markLabelActive,
-    std::function<rectai::LoopModule*(const std::string&)> findLoopModule,
+    std::function<soundtable::LoopModule*(const std::string&)> findLoopModule,
     std::function<bool(const std::string& moduleId,
                        int slotIndex,
                        const std::string& fullPath,
@@ -41,7 +41,7 @@ int LoopFileBrowser::computeSlotIndexFromSampleParam(float sampleParam)
     return index;
 }
 
-rectai::ui::TextScrollList*
+soundtable::ui::TextScrollList*
 LoopFileBrowser::getOrCreateList(const std::string& moduleId)
 {
     auto it = listMap_.find(moduleId);
@@ -49,11 +49,11 @@ LoopFileBrowser::getOrCreateList(const std::string& moduleId)
         return it->second.get();
     }
 
-    auto list = std::make_unique<rectai::ui::TextScrollList>();
+    auto list = std::make_unique<soundtable::ui::TextScrollList>();
     list->setMaxVisibleItems(6);
     list->setRowHeight(18.0F);
 
-    rectai::ui::TextScrollList* raw = list.get();
+    soundtable::ui::TextScrollList* raw = list.get();
     raw->setOnSelectionChanged(
         [this, moduleId](int index) {
             handleSelectionChanged(moduleId, index);
@@ -64,7 +64,7 @@ LoopFileBrowser::getOrCreateList(const std::string& moduleId)
 }
 
 void LoopFileBrowser::ensureInitialised(const std::string& moduleId,
-                                        rectai::LoopModule* loopModule)
+                                        soundtable::LoopModule* loopModule)
 {
     auto& state = stateMap_[moduleId];
     if (!state.initialised) {
@@ -128,7 +128,7 @@ void LoopFileBrowser::ensureInitialised(const std::string& moduleId,
 }
 
 void LoopFileBrowser::rebuildEntries(const std::string& moduleId,
-                                     rectai::LoopModule* loopModule)
+                                     soundtable::LoopModule* loopModule)
 {
     juce::ignoreUnused(loopModule);
 
@@ -232,12 +232,12 @@ void LoopFileBrowser::rebuildEntries(const std::string& moduleId,
         return;
     }
 
-    std::vector<rectai::ui::TextScrollList::Item> items;
+    std::vector<soundtable::ui::TextScrollList::Item> items;
     items.reserve(state.entries.size());
 
     for (std::size_t i = 0; i < state.entries.size(); ++i) {
         const auto& entry = state.entries[i];
-        rectai::ui::TextScrollList::Item item;
+        soundtable::ui::TextScrollList::Item item;
 
         switch (entry.kind) {
         case EntryKind::kClearSample:
@@ -312,7 +312,7 @@ void LoopFileBrowser::handleSelectionChanged(const std::string& moduleId,
         loops.resize(static_cast<std::size_t>(slotIndex + 1));
     }
 
-    rectai::LoopDefinition& def =
+    soundtable::LoopDefinition& def =
         loops[static_cast<std::size_t>(slotIndex)];
 
     switch (entry.kind) {
@@ -397,7 +397,7 @@ void LoopFileBrowser::handleSelectionChanged(const std::string& moduleId,
             kAutoDetectBeats, &error);
         if (!ok) {
             juce::Logger::writeToLog(
-                juce::String("[rectai-core] Loop: failed to load "
+                juce::String("[soundtable-core] Loop: failed to load "
                              "sample from browser: ") +
                 fullPath + " (" + juce::String(error) + ")");
         } else {

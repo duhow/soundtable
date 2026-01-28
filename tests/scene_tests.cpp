@@ -12,21 +12,21 @@
 // Very small tests for the Scene/Module/Connection model.
 // They run as a normal binary and are integrated with CTest.
 
-using rectai::AudioModule;
-using rectai::Connection;
-using rectai::FilterModule;
-using rectai::ObjectInstance;
-using rectai::OscillatorModule;
-using rectai::OutputModule;
-using rectai::ReactablePatchMetadata;
-using rectai::Scene;
-using rectai::SampleplayModule;
-using rectai::SequencerModule;
-using rectai::SequencerPreset;
-using rectai::SequencerStep;
-using rectai::TempoModule;
-using rectai::TonalizerModule;
-using rectai::VolumeModule;
+using soundtable::AudioModule;
+using soundtable::Connection;
+using soundtable::FilterModule;
+using soundtable::ObjectInstance;
+using soundtable::OscillatorModule;
+using soundtable::OutputModule;
+using soundtable::ReactablePatchMetadata;
+using soundtable::Scene;
+using soundtable::SampleplayModule;
+using soundtable::SequencerModule;
+using soundtable::SequencerPreset;
+using soundtable::SequencerStep;
+using soundtable::TempoModule;
+using soundtable::TonalizerModule;
+using soundtable::VolumeModule;
 
 int main()
 {
@@ -139,7 +139,7 @@ int main()
     // Basic serialization smoke test.
     const auto serialized = SerializeScene(scene);
     assert(!serialized.empty());
-    assert(serialized.find("rectai_scene_v1") != std::string::npos);
+    assert(serialized.find("soundtable_scene_v1") != std::string::npos);
 
     // Reactable .rtp loader smoke test (string-based).
     {
@@ -160,7 +160,7 @@ int main()
         Scene loaded_scene;
         ReactablePatchMetadata metadata;
         std::string error;
-        const bool ok = rectai::LoadReactablePatchFromString(kRtp, loaded_scene,
+        const bool ok = soundtable::LoadReactablePatchFromString(kRtp, loaded_scene,
                                                              &metadata, &error);
         assert(ok);
         assert(error.empty());
@@ -173,7 +173,7 @@ int main()
         const auto& modules = loaded_scene.modules();
         const auto module_it = modules.find("46");
         assert(module_it != modules.end());
-        const rectai::AudioModule* module = module_it->second.get();
+        const soundtable::AudioModule* module = module_it->second.get();
         assert(module != nullptr);
         assert(module->id() == "46");
 
@@ -283,7 +283,7 @@ int main()
         Scene loaded_scene;
         ReactablePatchMetadata metadata;
         std::string error;
-        const bool ok = rectai::LoadReactablePatchFromString(
+        const bool ok = soundtable::LoadReactablePatchFromString(
             kRtpSequencerV1, loaded_scene, &metadata, &error);
         assert(ok);
         assert(error.empty());
@@ -364,7 +364,7 @@ int main()
         Scene loaded_scene;
         ReactablePatchMetadata metadata;
         std::string error;
-        const bool ok = rectai::LoadReactablePatchFromString(
+        const bool ok = soundtable::LoadReactablePatchFromString(
             kRtpColours, loaded_scene, &metadata, &error);
         assert(ok);
         assert(error.empty());
@@ -412,7 +412,7 @@ int main()
         Scene loaded_scene;
         ReactablePatchMetadata metadata;
         std::string error;
-        const bool ok = rectai::LoadReactablePatchFromString(
+        const bool ok = soundtable::LoadReactablePatchFromString(
             kRtpWithHardlink, loaded_scene, &metadata, &error);
         assert(ok);
         assert(error.empty());
@@ -427,7 +427,7 @@ int main()
         const Connection& c = connections.front();
         assert(c.from_module_id == "10");
         assert(c.from_port_name == "out");
-        assert(c.to_module_id == rectai::MASTER_OUTPUT_ID);
+        assert(c.to_module_id == soundtable::MASTER_OUTPUT_ID);
         assert(c.to_port_name == "in");
         // Connections derived from <hardlink> should be marked as
         // hardlinks in the Scene model.
@@ -443,7 +443,7 @@ int main()
         Connection duplicateHard{
             .from_module_id = "10",
             .from_port_name = "out",
-            .to_module_id = rectai::MASTER_OUTPUT_ID,
+            .to_module_id = soundtable::MASTER_OUTPUT_ID,
             .to_port_name = "in",
             .is_hardlink = true};
         assert(!loaded_scene.AddConnection(duplicateHard));
@@ -451,7 +451,7 @@ int main()
         Connection duplicateDynamic{
             .from_module_id = "10",
             .from_port_name = "out",
-            .to_module_id = rectai::MASTER_OUTPUT_ID,
+            .to_module_id = soundtable::MASTER_OUTPUT_ID,
             .to_port_name = "in",
             .is_hardlink = false};
         assert(!loaded_scene.AddConnection(duplicateDynamic));
@@ -477,7 +477,7 @@ int main()
         Scene loaded_scene;
         ReactablePatchMetadata metadata;
         std::string error;
-        const bool ok = rectai::LoadReactablePatchFromString(
+        const bool ok = soundtable::LoadReactablePatchFromString(
             kRtpWithMutedHardlink, loaded_scene, &metadata, &error);
         assert(ok);
         assert(error.empty());
@@ -508,7 +508,7 @@ int main()
         Scene loaded_scene;
         ReactablePatchMetadata metadata;
         std::string error;
-        const bool ok = rectai::LoadReactablePatchFromString(
+        const bool ok = soundtable::LoadReactablePatchFromString(
             kRtpWithMasterAuto, loaded_scene, &metadata, &error);
         assert(ok);
         assert(error.empty());
@@ -524,7 +524,7 @@ int main()
         const Connection& c2 = connections2.front();
         assert(c2.from_module_id == "46");
         assert(c2.from_port_name == "out");
-        assert(c2.to_module_id == rectai::MASTER_OUTPUT_ID);
+        assert(c2.to_module_id == soundtable::MASTER_OUTPUT_ID);
         assert(c2.to_port_name == "in");
         assert(!c2.is_hardlink);
     }
@@ -629,7 +629,7 @@ int main()
         auto sample = std::make_unique<SampleplayModule>("sp1");
         auto filter1 = std::make_unique<FilterModule>("filter1");
         auto filter2 = std::make_unique<FilterModule>("filter2");
-        auto output = std::make_unique<OutputModule>(rectai::MASTER_OUTPUT_ID);
+        auto output = std::make_unique<OutputModule>(soundtable::MASTER_OUTPUT_ID);
 
         assert(s.AddModule(std::move(sample)));
         assert(s.AddModule(std::move(filter1)));
@@ -658,7 +658,7 @@ int main()
         // must still be accepted.
         Connection toMaster{.from_module_id = "sp1",
                             .from_port_name = "out",
-                            .to_module_id = rectai::MASTER_OUTPUT_ID,
+                            .to_module_id = soundtable::MASTER_OUTPUT_ID,
                             .to_port_name = "in",
                             .is_hardlink = false};
         assert(s.AddConnection(toMaster));
@@ -794,7 +794,7 @@ int main()
 
         auto osc = std::make_unique<OscillatorModule>("osc1");
         auto filter = std::make_unique<FilterModule>("filter1");
-        auto output = std::make_unique<OutputModule>(rectai::MASTER_OUTPUT_ID);
+        auto output = std::make_unique<OutputModule>(soundtable::MASTER_OUTPUT_ID);
 
         assert(s.AddModule(std::move(osc)));
         assert(s.AddModule(std::move(filter)));
@@ -813,7 +813,7 @@ int main()
         // per-module dynamic limit.
         Connection toMaster{.from_module_id = "osc1",
                             .from_port_name = "out",
-                            .to_module_id = rectai::MASTER_OUTPUT_ID,
+                            .to_module_id = soundtable::MASTER_OUTPUT_ID,
                             .to_port_name = "in",
                             .is_hardlink = false};
         assert(s.AddConnection(toMaster));
@@ -910,7 +910,7 @@ int main()
         Scene loaded_scene;
         ReactablePatchMetadata metadata;
         std::string error;
-        const bool ok = rectai::LoadReactablePatchFromString(
+        const bool ok = soundtable::LoadReactablePatchFromString(
             kRtpVolume, loaded_scene, &metadata, &error);
         assert(ok);
         assert(error.empty());
@@ -991,7 +991,7 @@ int main()
         ReactablePatchMetadata metadata;
         std::string error;
 
-        const bool ok = rectai::LoadReactablePatchFromFile(foundPath,
+        const bool ok = soundtable::LoadReactablePatchFromFile(foundPath,
             loaded_scene, &metadata, &error);
         assert(ok);
         assert(error.empty());
@@ -1042,6 +1042,6 @@ int main()
         assert(!connections.empty());
     }
 
-    std::cout << "rectai-core-tests: OK" << std::endl;
+    std::cout << "soundtable-core-tests: OK" << std::endl;
     return 0;
 }

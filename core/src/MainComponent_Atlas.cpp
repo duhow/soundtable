@@ -2,7 +2,7 @@
 
 #include "MainComponentHelpers.h"
 
-using rectai::ui::colourFromArgb;
+using soundtable::ui::colourFromArgb;
 
 // Return false as result of failed loading resources.
 bool MainComponent::unloadAtlasResources() {
@@ -15,12 +15,12 @@ bool MainComponent::unloadAtlasResources() {
 
 bool MainComponent::loadAtlasResources()
 {
-    const juce::File pngFile = rectai::ui::loadFile("Resources/atlas_2048.png");
+    const juce::File pngFile = soundtable::ui::loadFile("Resources/atlas_2048.png");
     if (!pngFile.existsAsFile()) {
         return unloadAtlasResources();
     }
 
-    const juce::File xmlFile = rectai::ui::loadFile("Resources/atlas_2048.xml");
+    const juce::File xmlFile = soundtable::ui::loadFile("Resources/atlas_2048.xml");
     if (!xmlFile.existsAsFile()) {
         return unloadAtlasResources();
     }

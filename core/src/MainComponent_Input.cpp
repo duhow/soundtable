@@ -10,8 +10,8 @@
 #include "MainComponent_ModulePanelEnvelope.h"
 #include "core/AudioModules.h"
 
-using rectai::ui::isConnectionGeometricallyActive;
-using rectai::ui::makeConnectionKey;
+using soundtable::ui::isConnectionGeometricallyActive;
+using soundtable::ui::makeConnectionKey;
 
 void MainComponent::mouseMove(const juce::MouseEvent& event)
 {
@@ -41,7 +41,7 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent& event)
         juce::ignoreUnused(id);
 
         if (object.docked() ||
-            object.logical_id() == rectai::MASTER_OUTPUT_ID) {
+            object.logical_id() == soundtable::MASTER_OUTPUT_ID) {
             continue;
         }
 
@@ -77,7 +77,7 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent& event)
             auto* modulePtr = modIt->second.get();
             const auto& tabs = modulePtr->supported_settings_tabs();
             if (!tabs.empty()) {
-                using Kind = rectai::AudioModule::SettingsTabKind;
+                using Kind = soundtable::AudioModule::SettingsTabKind;
                 const Kind kind = tabs.front().kind;
                 switch (kind) {
                 case Kind::kEnvelope:
@@ -115,25 +115,25 @@ void MainComponent::mouseWheelMove(const juce::MouseEvent& event,
     // interaction mapping.
     juce::Component::mouseWheelMove(event, wheel);
 
-    rectai::ui::InteractionSystem::WheelEvent normalised{};
+    soundtable::ui::InteractionSystem::WheelEvent normalised{};
     normalised.position = event.position;
     normalised.deltaY = static_cast<float>(wheel.deltaY);
     normalised.isCtrlDown = event.mods.isCtrlDown();
     normalised.isShiftDown = event.mods.isShiftDown();
-    normalised.source = rectai::ui::InteractionSystem::WheelEvent::Source::kMouse;
+    normalised.source = soundtable::ui::InteractionSystem::WheelEvent::Source::kMouse;
 
     interactionSystem_.handleWheel(normalised);
 }
 
 void MainComponent::mouseDown(const juce::MouseEvent& event)
 {
-    rectai::ui::InteractionSystem::PointerEvent normalised{};
+    soundtable::ui::InteractionSystem::PointerEvent normalised{};
     normalised.position = event.position;
     normalised.isPrimary = true;
     normalised.isRightButton = event.mods.isRightButtonDown();
     normalised.isCtrlDown = event.mods.isCtrlDown();
     normalised.isShiftDown = event.mods.isShiftDown();
-    normalised.source = rectai::ui::InteractionSystem::PointerEvent::Source::kMouse;
+    normalised.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kMouse;
 
     interactionSystem_.handlePointerDown(normalised);
 }
@@ -141,26 +141,26 @@ void MainComponent::mouseDown(const juce::MouseEvent& event)
 void MainComponent::handlePointerDown(juce::Point<float> position,
                                       const juce::ModifierKeys& mods)
 {
-    rectai::ui::InteractionSystem::PointerEvent event{};
+    soundtable::ui::InteractionSystem::PointerEvent event{};
     event.position = position;
     event.isPrimary = true;
     event.isRightButton = mods.isRightButtonDown();
     event.isCtrlDown = mods.isCtrlDown();
     event.isShiftDown = mods.isShiftDown();
-    event.source = rectai::ui::InteractionSystem::PointerEvent::Source::kMouse;
+    event.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kMouse;
 
     interactionSystem_.handlePointerDown(event);
 }
 
 void MainComponent::mouseDrag(const juce::MouseEvent& event)
 {
-    rectai::ui::InteractionSystem::PointerEvent normalised{};
+    soundtable::ui::InteractionSystem::PointerEvent normalised{};
     normalised.position = event.position;
     normalised.isPrimary = true;
     normalised.isRightButton = event.mods.isRightButtonDown();
     normalised.isCtrlDown = event.mods.isCtrlDown();
     normalised.isShiftDown = event.mods.isShiftDown();
-    normalised.source = rectai::ui::InteractionSystem::PointerEvent::Source::kMouse;
+    normalised.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kMouse;
 
     interactionSystem_.handlePointerDrag(normalised);
 }
@@ -168,24 +168,24 @@ void MainComponent::mouseDrag(const juce::MouseEvent& event)
 void MainComponent::handlePointerDrag(juce::Point<float> position,
                                       const juce::ModifierKeys& mods)
 {
-    rectai::ui::InteractionSystem::PointerEvent event{};
+    soundtable::ui::InteractionSystem::PointerEvent event{};
     event.position = position;
     event.isPrimary = true;
     event.isRightButton = mods.isRightButtonDown();
     event.isCtrlDown = mods.isCtrlDown();
     event.isShiftDown = mods.isShiftDown();
-    event.source = rectai::ui::InteractionSystem::PointerEvent::Source::kMouse;
+    event.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kMouse;
 
     interactionSystem_.handlePointerDrag(event);
 }
 
 void MainComponent::maybeRetriggerOscillatorOnFreqChange(
-    const std::string& moduleId, rectai::AudioModule* module)
+    const std::string& moduleId, soundtable::AudioModule* module)
 {
     // Only Oscillator modules expose a per-voice amplitude envelope
     // that we can explicitly retrigger on pitch/frequency changes.
     if (module == nullptr ||
-        !module->is<rectai::OscillatorModule>()) {
+        !module->is<soundtable::OscillatorModule>()) {
         return;
     }
 
@@ -217,7 +217,7 @@ void MainComponent::updateOscillatorSustainFromEnvelope(
     }
 
     auto* module = modIt->second.get();
-    auto* oscModule = dynamic_cast<rectai::OscillatorModule*>(module);
+    auto* oscModule = dynamic_cast<soundtable::OscillatorModule*>(module);
     if (oscModule == nullptr) {
         return;
     }
@@ -292,13 +292,13 @@ void MainComponent::updateOscillatorSustainFromEnvelope(
 
 void MainComponent::mouseUp(const juce::MouseEvent& event)
 {
-    rectai::ui::InteractionSystem::PointerEvent normalised{};
+    soundtable::ui::InteractionSystem::PointerEvent normalised{};
     normalised.position = lastPointerPosition_;
     normalised.isPrimary = true;
     normalised.isRightButton = event.mods.isRightButtonDown();
     normalised.isCtrlDown = event.mods.isCtrlDown();
     normalised.isShiftDown = event.mods.isShiftDown();
-    normalised.source = rectai::ui::InteractionSystem::PointerEvent::Source::kMouse;
+    normalised.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kMouse;
 
     interactionSystem_.handlePointerUp(normalised);
 }
@@ -307,13 +307,13 @@ void MainComponent::handlePointerUp(const juce::ModifierKeys& mods)
 {
     juce::ignoreUnused(mods);
 
-    rectai::ui::InteractionSystem::PointerEvent event{};
+    soundtable::ui::InteractionSystem::PointerEvent event{};
     event.position = lastPointerPosition_;
     event.isPrimary = true;
     event.isRightButton = false;
     event.isCtrlDown = false;
     event.isShiftDown = false;
-    event.source = rectai::ui::InteractionSystem::PointerEvent::Source::kMouse;
+    event.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kMouse;
 
     interactionSystem_.handlePointerUp(event);
 }
@@ -326,17 +326,17 @@ void MainComponent::handleTuioCursorDown(const float normX,
                                 bounds.getY() + normY * bounds.getHeight()};
 
     juce::Logger::writeToLog(
-        "[rectai-core] TUIO cursor DOWN at px=" +
+        "[soundtable-core] TUIO cursor DOWN at px=" +
         juce::String(position.x, 1) + "," +
         juce::String(position.y, 1));
 
-    rectai::ui::InteractionSystem::PointerEvent normalised{};
+    soundtable::ui::InteractionSystem::PointerEvent normalised{};
     normalised.position = position;
     normalised.isPrimary = true;
     normalised.isRightButton = false;
     normalised.isCtrlDown = false;
     normalised.isShiftDown = false;
-    normalised.source = rectai::ui::InteractionSystem::PointerEvent::Source::kTuio;
+    normalised.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kTuio;
 
     interactionSystem_.handlePointerDown(normalised);
 }
@@ -349,30 +349,30 @@ void MainComponent::handleTuioCursorMove(const float normX,
                                 bounds.getY() + normY * bounds.getHeight()};
 
     juce::Logger::writeToLog(
-        "[rectai-core] TUIO cursor MOVE at px=" +
+        "[soundtable-core] TUIO cursor MOVE at px=" +
         juce::String(position.x, 1) + "," +
         juce::String(position.y, 1));
 
-    rectai::ui::InteractionSystem::PointerEvent normalised{};
+    soundtable::ui::InteractionSystem::PointerEvent normalised{};
     normalised.position = position;
     normalised.isPrimary = true;
     normalised.isRightButton = false;
     normalised.isCtrlDown = false;
     normalised.isShiftDown = false;
-    normalised.source = rectai::ui::InteractionSystem::PointerEvent::Source::kTuio;
+    normalised.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kTuio;
 
     interactionSystem_.handlePointerDrag(normalised);
 }
 
 void MainComponent::handleTuioCursorUp()
 {
-    rectai::ui::InteractionSystem::PointerEvent normalised{};
+    soundtable::ui::InteractionSystem::PointerEvent normalised{};
     normalised.position = lastPointerPosition_;
     normalised.isPrimary = true;
     normalised.isRightButton = false;
     normalised.isCtrlDown = false;
     normalised.isShiftDown = false;
-    normalised.source = rectai::ui::InteractionSystem::PointerEvent::Source::kTuio;
+    normalised.source = soundtable::ui::InteractionSystem::PointerEvent::Source::kTuio;
 
     interactionSystem_.handlePointerUp(normalised);
 }
@@ -409,10 +409,10 @@ void MainComponent::applyControlDropMuteIfNeeded(
 
     // Only apply this behaviour to Loop, Oscillator and Sampleplay
     // modules, mapping to their respective gain/amp parameters.
-    if (module->is<rectai::OscillatorModule>()) {
+    if (module->is<soundtable::OscillatorModule>()) {
         scene_.SetModuleParameter(obj.logical_id(), "gain", 0.0F);
-    } else if (module->is<rectai::LoopModule>() ||
-               module->is<rectai::SampleplayModule>()) {
+    } else if (module->is<soundtable::LoopModule>() ||
+               module->is<soundtable::SampleplayModule>()) {
         scene_.SetModuleParameter(obj.logical_id(), "amp", 0.0F);
     }
 }

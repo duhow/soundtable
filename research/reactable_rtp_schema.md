@@ -1,6 +1,6 @@
 # Esquema del formato Reactable `.rtp` y mapeo a Rectai
 
-Este documento describe la estructura del archivo `.rtp` de Reactable (formato XML), tomando como ejemplo `Loopdemo.rtp`, y define cómo se mapeará a nuestro modelo actual (`rectai::Scene`, `AudioModule`, `ObjectInstance` y extensiones futuras).
+Este documento describe la estructura del archivo `.rtp` de Reactable (formato XML), tomando como ejemplo `Loopdemo.rtp`, y define cómo se mapeará a nuestro modelo actual (`soundtable::Scene`, `AudioModule`, `ObjectInstance` y extensiones futuras).
 
 El objetivo es **consumir directamente archivos `.rtp` originales**, sin modificar su estructura, y extraer de ellos toda la información necesaria para reconstruir un estado de la aplicación Rectai.
 
@@ -63,7 +63,7 @@ Atributos conocidos:
 
 ### Mapeo a Rectai
 
-A corto plazo, el `<background>` **no se mapea directamente** a `rectai::Scene` (que se centra en módulos/conexiones/objetos). Será la base para definir una futura estructura, por ejemplo:
+A corto plazo, el `<background>` **no se mapea directamente** a `soundtable::Scene` (que se centra en módulos/conexiones/objetos). Será la base para definir una futura estructura, por ejemplo:
 
 - `struct BackgroundSettings { ... };`
 - Posible integración en un contenedor de escena ampliado (por ejemplo, `ScenePresentation` o similar).
@@ -86,7 +86,7 @@ El parser `.rtp` debe, como mínimo, ser capaz de:
 
 Cada `<tangible>` representa **una entidad física/virtual en la mesa Reactable**, que en Rectai se descompone conceptualmente en:
 
-- Una **instancia física** (`rectai::ObjectInstance`): posición, ángulo, color, estado de dock/mute, etc.
+- Una **instancia física** (`soundtable::ObjectInstance`): posición, ángulo, color, estado de dock/mute, etc.
 - Un **módulo lógico de audio/control** (`AudioModule` derivado): tipo de módulo (oscilador, filtro, secuenciador, etc.), parámetros, envelopes, secuencias, loops, etc.
 
 ### 3.1. Atributos comunes de `<tangible>`
@@ -397,7 +397,7 @@ Subelementos:
 Implicación:
 
 - `DelayModule` con soporte para estas variantes y parámetros.
-- Un mecanismo para traducir `<hardlink>` a **conexiones en nuestro modelo** (`rectai::Connection`) hacia módulos especiales como el de salida.
+- Un mecanismo para traducir `<hardlink>` a **conexiones en nuestro modelo** (`soundtable::Connection`) hacia módulos especiales como el de salida.
 
 ### 4.10. `type="Modulator"`
 
@@ -612,7 +612,7 @@ Atributos:
 
 Implicación:
 
-- Debe traducirse a una conexión en nuestro modelo (`rectai::Connection`) entre el módulo del tangible actual y el módulo objetivo (`Output` u otros).
+- Debe traducirse a una conexión en nuestro modelo (`soundtable::Connection`) entre el módulo del tangible actual y el módulo objetivo (`Output` u otros).
 
 ### 5.4. `<tone>`
 
@@ -653,7 +653,7 @@ Implicación:
   };
   ```
 
-- No forman parte de `rectai::Scene` hoy, pero se pueden mantener junto al `Scene` cargado.
+- No forman parte de `soundtable::Scene` hoy, pero se pueden mantener junto al `Scene` cargado.
 
 ---
 
@@ -680,7 +680,7 @@ A partir del análisis de `Loopdemo.rtp`, se identifican las siguientes necesida
    - O si estos campos se gestionan como parámetros de módulo o en una estructura separada.
 
 4. **Conexiones implícitas por `hardlink`**:
-   - Diseñar una traducción de `<hardlink to="id">` a `rectai::Connection`.
+   - Diseñar una traducción de `<hardlink to="id">` a `soundtable::Connection`.
 
 5. **Metadatos globales y fondo**:
    - Definir estructuras para `BackgroundSettings` y `SceneMetadata`.

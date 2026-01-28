@@ -10,7 +10,7 @@
 
 #include "core/AudioModules.h"
 
-namespace rectai {
+namespace soundtable {
 namespace {
 
 using AttributeMap = std::unordered_map<std::string, std::string>;
@@ -1018,7 +1018,7 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
   // centre-origin system where the table centre is (0,0) and the table
   // border lies at radius 1 (left edge X = -1, right edge X = +1, etc.).
   //
-  // For hand-built Rectai scenes and small tests that already use
+  // For hand-built Soundtable scenes and small tests that already use
   // centre-origin coordinates within [-1,1] we keep positions as-is. When a
   // Reactable patch contains undocked tangibles with coordinates clearly
   // outside that range (e.g. x ≈ 2.6 for dock elements), we clamp their
@@ -1066,7 +1066,7 @@ bool LoadReactablePatchFromString(const std::string& xml, Scene& scene,
     }
   }
 
-  // Derive rectai::Connection instances from hardlinks declared in
+  // Derive soundtable::Connection instances from hardlinks declared in
   // the original Reactable patch. For each hardlink `to` id we
   // connect the source module's audio output to the target module's
   // main audio input. These connections are marked as hardlinks in
@@ -1247,4 +1247,4 @@ bool LoadReactablePatchFromFile(const std::string& path, Scene& scene,
   return LoadReactablePatchFromString(xml, scene, metadata, error_message);
 }
 
-}  // namespace rectai
+}  // namespace soundtable

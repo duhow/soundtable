@@ -16,7 +16,7 @@
 
 #include "core/Voices.h"
 
-namespace rectai {
+namespace soundtable {
 class SampleplaySynth;
 class Scene;
 class AudioGraph;
@@ -25,16 +25,16 @@ class AudioGraph;
 {
     return static_cast<std::uint64_t>(std::hash<std::string>{}(id));
 }
-}  // namespace rectai
+}  // namespace soundtable
 
-// Minimal audio engine for the RectaiTable core.
+// Minimal audio engine for the Soundtable core.
 //
 // Responsibilities (for now):
 //   - Own a JUCE AudioDeviceManager.
 //   - Produce a simple sine tone so that the audio pipeline is live.
 //
 // Future extensions:
-//   - Map rectai::Scene / AudioModule metadata to an AudioProcessorGraph.
+//   - Map soundtable::Scene / AudioModule metadata to an AudioProcessorGraph.
 //   - Control parameters from the UI and tracking state.
 class AudioEngine : public juce::AudioIODeviceCallback {
 public:
@@ -215,12 +215,12 @@ public:
     // Scene snapshot. This keeps the engine aware of modules and
     // typed connections (audio/MIDI/control) even though the DSP
     // backend is still voice-based for now.
-    void rebuildAudioGraphFromScene(const rectai::Scene& scene);
+    void rebuildAudioGraphFromScene(const soundtable::Scene& scene);
 
     // Exposes the current logical audio graph so that higher layers
     // (e.g. MainComponent) can reason about audio edges without
     // reparsing the Scene.
-    [[nodiscard]] const rectai::AudioGraph& audioGraph() const noexcept
+    [[nodiscard]] const soundtable::AudioGraph& audioGraph() const noexcept
     {
         return *audioGraph_;
     }
@@ -342,12 +342,12 @@ public:
     // routing and mapping are ready. For now this is only used as a
     // sink from the audio thread; the UI still relies on the legacy
     // waveform buffers.
-    [[nodiscard]] rectai::Voices* visualVoices() noexcept
+    [[nodiscard]] soundtable::Voices* visualVoices() noexcept
     {
         return &visualVoices_;
     }
 
-    [[nodiscard]] const rectai::Voices* visualVoices() const noexcept
+    [[nodiscard]] const soundtable::Voices* visualVoices() const noexcept
     {
         return &visualVoices_;
     }
@@ -356,7 +356,7 @@ private:
     juce::AudioDeviceManager deviceManager_;
 
     // Guards the one-time shutdown path so that both an explicit
-    // call from RectaiApplication::shutdown and the AudioEngine
+    // call from SoundtableApplication::shutdown and the AudioEngine
     // destructor can safely trigger the cleanup sequence without
     // double-closing the underlying device.
     bool isShutdown_{false};
@@ -385,7 +385,7 @@ private:
     // waveform history in a unified structure. The UI samples these
     // histories via lightweight wrappers that expose per-voice and
     // per-bus snapshots.
-    rectai::Voices visualVoices_{kNumVisualVoices, kWaveformHistorySize};
+    soundtable::Voices visualVoices_{kNumVisualVoices, kWaveformHistorySize};
 
     // Separate pre-filter visual history for generator voices. This
     // mirrors the per-voice signal after envelope/level but before the
@@ -393,7 +393,7 @@ private:
     // Filter to display the original generator waveform while
     // downstream segments (Filter → Master) use the post-filter
     // history stored in `visualVoices_`.
-    rectai::Voices oscPreVoices_{kMaxVoices, kWaveformHistorySize};
+    soundtable::Voices oscPreVoices_{kMaxVoices, kWaveformHistorySize};
 
     // Maximum delay time supported by the global Delay FX bus, in
     // seconds. This is intentionally conservative to keep memory
@@ -544,7 +544,7 @@ private:
     // Optional FluidSynth-based synthesiser used by Sampleplay
     // modules. Owned by the audio engine and rendered alongside the
     // procedural oscillators.
-    std::unique_ptr<rectai::SampleplaySynth> sampleplaySynth_;
+    std::unique_ptr<soundtable::SampleplaySynth> sampleplaySynth_;
 
     // Scratch buffers used to pull stereo audio from SampleplaySynth
     // before mixing it with the oscillator voices.
@@ -586,7 +586,7 @@ private:
     // Logical audio graph snapshot owned by the engine. Built from
     // the Scene and used as the canonical representation of modules
     // and typed connections on the audio side.
-    std::unique_ptr<rectai::AudioGraph> audioGraph_;
+    std::unique_ptr<soundtable::AudioGraph> audioGraph_;
 
     // ------------------------------------------------------------------
     // Loop modules

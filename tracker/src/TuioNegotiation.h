@@ -4,13 +4,13 @@
 
 class OscSender;
 
-namespace rectai::tracker {
+namespace soundtable::tracker {
 
-// Output mode used by rectai-tracker to decide whether it should emit
+// Output mode used by soundtable-tracker to decide whether it should emit
 // the current proprietary OSC format or TUIO 1.1 messages.
 enum class TuioOutputMode {
     LegacyOsc,
     Tuio11
 };
 
-} // namespace rectai::tracker
+} // namespace soundtable::tracker

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace rectai::ui {
+namespace soundtable::ui {
 
 juce::Colour colourFromArgb(const std::uint32_t argb)
 {
@@ -13,7 +13,7 @@ juce::Colour colourFromArgb(const std::uint32_t argb)
     return juce::Colour(static_cast<juce::uint32>(argb));
 }
 
-std::string makeConnectionKey(const rectai::Connection& c)
+std::string makeConnectionKey(const soundtable::Connection& c)
 {
     std::string key;
     key.reserve(c.from_module_id.size() + c.from_port_name.size() +
@@ -49,7 +49,7 @@ std::string makeModulePairKey(const std::string& fromId,
     return key;
 }
 
-std::string makeModulePairKey(const rectai::Connection& conn)
+std::string makeModulePairKey(const soundtable::Connection& conn)
 {
     std::string key;
     key.reserve(conn.from_module_id.size() + conn.to_module_id.size() + 1U);
@@ -57,8 +57,8 @@ std::string makeModulePairKey(const rectai::Connection& conn)
     return key;
 }
 
-bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
-                                     const rectai::ObjectInstance& toObj)
+bool isConnectionGeometricallyActive(const soundtable::ObjectInstance& fromObj,
+                                     const soundtable::ObjectInstance& toObj)
 {
     // ObjectInstance positions are expressed in a centre-origin table
     // coordinate system where the table centre is (0,0) and the table
@@ -198,4 +198,4 @@ bool generateConnectionFromModules(
 }
 
 
-}  // namespace rectai::ui
+}  // namespace soundtable::ui

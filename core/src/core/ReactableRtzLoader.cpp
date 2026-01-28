@@ -8,13 +8,13 @@
 #include <utility>
 #include <vector>
 
-#if defined(RECTAI_HAVE_LIBZIP)
+#if defined(SOUNDTABLE_HAVE_LIBZIP)
 #include <zip.h>
 #endif
 
 #include "core/ReactableRtpLoader.h"
 
-namespace rectai {
+namespace soundtable {
 namespace {
 
 namespace fs = std::filesystem;
@@ -120,7 +120,7 @@ bool FilesAreIdentical(const fs::path& existing,
   return true;
 }
 
-#if defined(RECTAI_HAVE_LIBZIP)
+#if defined(SOUNDTABLE_HAVE_LIBZIP)
 
 bool ExtractEntryToMemory(zip_t* archive,
                           zip_uint64_t index,
@@ -214,7 +214,7 @@ bool WriteFilePossiblySkippingIdentical(const fs::path& destPath,
   return true;
 }
 
-#endif  // RECTAI_HAVE_LIBZIP
+#endif  // SOUNDTABLE_HAVE_LIBZIP
 
 }  // namespace
 
@@ -224,7 +224,7 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
                                  ReactablePatchMetadata* const metadata,
                                  std::string* const error_message)
 {
-#if !defined(RECTAI_HAVE_LIBZIP)
+#if !defined(SOUNDTABLE_HAVE_LIBZIP)
   if (error_message != nullptr) {
     *error_message =
         "RTZ support is not available (libzip not enabled at build time)";
@@ -465,7 +465,7 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
   }
 
   return true;
-#endif  // RECTAI_HAVE_LIBZIP
+#endif  // SOUNDTABLE_HAVE_LIBZIP
 }
 
-}  // namespace rectai
+}  // namespace soundtable

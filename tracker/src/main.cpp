@@ -1,4 +1,4 @@
-// rectai-tracker entry point.
+// soundtable-tracker entry point.
 // Supports two modes:
 //   --mode=synthetic (default): send a single synthetic object.
 //   --mode=live:      delegate per-frame processing to TrackerEngine.
@@ -83,7 +83,7 @@ std::optional<PixelFormat> parseCameraFormatString(const std::string& input)
 		return std::nullopt;
 	}
 
-	std::cerr << "[rectai-tracker] Invalid --camera-format '" << value
+	std::cerr << "[soundtable-tracker] Invalid --camera-format '" << value
 	          << "'. Supported values: mjpg, yuyv." << std::endl;
 	return std::nullopt;
 }
@@ -112,7 +112,7 @@ std::optional<int> parseFilterIndexString(const std::string& input)
 		return 3;
 	}
 
-	std::cerr << "[rectai-tracker] Invalid --filter value '" << value
+	std::cerr << "[soundtable-tracker] Invalid --filter value '" << value
 	          << "'. Supported values: otsu, otsu-inv, adaptive, adaptive-inv." << std::endl;
 	return std::nullopt;
 }
@@ -158,8 +158,8 @@ std::string mapLogicalId(int markerId)
 
 int main(int argc, char** argv)
 {
-	argparse::ArgumentParser program("rectai-tracker", "0.1.0", argparse::default_arguments::all, true);
-	program.add_description("rectai-tracker: camera fiducial tracker for RectaiTable.");
+	argparse::ArgumentParser program("soundtable-tracker", "0.1.0", argparse::default_arguments::all, true);
+	program.add_description("soundtable-tracker: camera fiducial tracker for Soundtable.");
 	program.add_argument("-m", "--mode")
 	    .help("Select run mode (live tracking or synthetic object).")
 	    .default_value(std::string{"live"})
@@ -219,7 +219,7 @@ int main(int argc, char** argv)
 		if (fpsValue > 0) {
 			requestedFps = fpsValue;
 		} else if (fpsValue < 0) {
-			std::cerr << "[rectai-tracker] Invalid --fps '" << fpsValue
+			std::cerr << "[soundtable-tracker] Invalid --fps '" << fpsValue
 			          << "' (must be > 0). Using camera default fps." << std::endl;
 		}
 	}
@@ -250,7 +250,7 @@ int main(int argc, char** argv)
 	capture.open(cameraIndex);
 #endif
 	if (!capture.isOpened()) {
-		std::cerr << "[rectai-tracker] Failed to open camera index " << cameraIndex << "." << std::endl;
+		std::cerr << "[soundtable-tracker] Failed to open camera index " << cameraIndex << "." << std::endl;
 		return 1;
 	}
 
@@ -275,9 +275,9 @@ int main(int argc, char** argv)
 
 	if (disableAutofocus) {
 		if (!capture.set(cv::CAP_PROP_AUTOFOCUS, 0.0)) {
-			std::cerr << "[rectai-tracker] Warning: failed to disable autofocus on this camera/backend." << std::endl;
+			std::cerr << "[soundtable-tracker] Warning: failed to disable autofocus on this camera/backend." << std::endl;
 		} else {
-			std::cout << "[rectai-tracker] Continuous autofocus disabled via --no-autofocus." << std::endl;
+			std::cout << "[soundtable-tracker] Continuous autofocus disabled via --no-autofocus." << std::endl;
 		}
 	}
 
@@ -298,48 +298,48 @@ int main(int argc, char** argv)
 	{
 		cv::Mat probeFrame;
 		if (!capture.read(probeFrame) || probeFrame.empty()) {
-			std::cerr << "[rectai-tracker] Failed to start camera stream on index "
+			std::cerr << "[soundtable-tracker] Failed to start camera stream on index "
 			          << cameraIndex
 			          << " with the requested settings (format/resolution/fps)." << std::endl;
 			return 1;
 		}
 	}
 
-	std::cout << "[rectai-tracker] Camera opened. Press Ctrl+C to exit." << std::endl;
+	std::cout << "[soundtable-tracker] Camera opened. Press Ctrl+C to exit." << std::endl;
 
 	// OSC sender towards the JUCE core (localhost:3333 by default).
 	OscSender oscSender{"127.0.0.1", 3333};
 	if (!oscSender.isOk()) {
-		std::cerr << "[rectai-tracker] OSC sender is not available."
+		std::cerr << "[soundtable-tracker] OSC sender is not available."
 				  << " Core will not receive tracking updates." << std::endl;
 	}
 
-	rectai::tracker::TuioOutputMode outputMode = rectai::tracker::TuioOutputMode::LegacyOsc;
+	soundtable::tracker::TuioOutputMode outputMode = soundtable::tracker::TuioOutputMode::LegacyOsc;
 	if (oscSender.isOk()) {
 		if (forceOsc) {
-			std::cout << "[rectai-tracker] Forcing legacy OSC output via --osc" << std::endl;
-			outputMode = rectai::tracker::TuioOutputMode::LegacyOsc;
+			std::cout << "[soundtable-tracker] Forcing legacy OSC output via --osc" << std::endl;
+			outputMode = soundtable::tracker::TuioOutputMode::LegacyOsc;
 		} else {
-			outputMode = rectai::tracker::TuioOutputMode::Tuio11;
+			outputMode = soundtable::tracker::TuioOutputMode::Tuio11;
 			// Fire a best-effort TUIO hello so the core can log
 			// tracker identity and version. We no longer wait for an ACK.
-			if (!oscSender.sendHelloTuio11("rectai-tracker", "0.1.0")) {
-				std::cerr << "[rectai-tracker] Failed to send /tuio/hello announcement" << std::endl;
+			if (!oscSender.sendHelloTuio11("soundtable-tracker", "0.1.0")) {
+				std::cerr << "[soundtable-tracker] Failed to send /tuio/hello announcement" << std::endl;
 			}
 		}
 	}
 
-	rectai::tracker::TrackerEngine trackerEngine;
+	soundtable::tracker::TrackerEngine trackerEngine;
 	if (filterIndex.has_value()) {
 		trackerEngine.setOnlySingleFilterByIndex(true, *filterIndex);
-		std::cout << "[rectai-tracker] Using single-threshold mode via --filter" << std::endl;
+		std::cout << "[soundtable-tracker] Using single-threshold mode via --filter" << std::endl;
 	} else if (onlyFilter) {
 		trackerEngine.setOnlySingleFilter(true);
-		std::cout << "[rectai-tracker] Using single-threshold mode via --only-filter" << std::endl;
+		std::cout << "[soundtable-tracker] Using single-threshold mode via --only-filter" << std::endl;
 	}
-	rectai::tracker::TrackerState trackerState;
-	rectai::tracker::TrackedObjectList lastStableObjectsForDebug;
-	std::unordered_map<int, rectai::tracker::TrackedObject> lastStableById;
+	soundtable::tracker::TrackerState trackerState;
+	soundtable::tracker::TrackedObjectList lastStableObjectsForDebug;
+	std::unordered_map<int, soundtable::tracker::TrackedObject> lastStableById;
 	std::string initError;
 	int tuioFrameSeq = 0;
 	int tuioQuietFrameModuloCounter = 0;
@@ -365,11 +365,11 @@ int main(int argc, char** argv)
 		int height = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_HEIGHT));
 		const double fps = capture.get(cv::CAP_PROP_FPS);
 		if (!trackerEngine.initialise(cameraIndex, width, height, initError, !noDownscale)) {
-			std::cerr << "[rectai-tracker] Failed to initialise TrackerEngine: "
+			std::cerr << "[soundtable-tracker] Failed to initialise TrackerEngine: "
 					  << initError << std::endl;
 			return 1;
 		}
-		std::cout << "[rectai-tracker] Starting engine with resolution="
+		std::cout << "[soundtable-tracker] Starting engine with resolution="
 				  << width << "x" << height;
 		if (fps > 0.0) {
 			std::cout << " @ " << fps << " FPS";
@@ -387,7 +387,7 @@ int main(int argc, char** argv)
 
 	while (true) {
 		if (!capture.read(frame) || frame.empty()) {
-			std::cerr << "[rectai-tracker] Error capturing frame." << std::endl;
+			std::cerr << "[soundtable-tracker] Error capturing frame." << std::endl;
 			break;
 		}
 
@@ -407,7 +407,7 @@ int main(int argc, char** argv)
 				const float y = 0.5F;
 				const float angleDegrees = 0.0F;
 
-				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11) {
+				if (outputMode == soundtable::tracker::TuioOutputMode::Tuio11) {
 					const float angleRad = angleDegrees *
 						( static_cast<float>(M_PI) / 180.0F );
 					std::vector<OscSender::Message> messages;
@@ -419,12 +419,12 @@ int main(int argc, char** argv)
 				} else {
 					std::vector<OscSender::Message> messages;
 					messages.reserve(1);
-					messages.push_back(oscSender.buildRectaiObject(1, "osc1", x, y, angleDegrees));
+					messages.push_back(oscSender.buildSoundtableObject(1, "osc1", x, y, angleDegrees));
 					(void)oscSender.sendBundle(messages);
 				}
 			}
 		} else {
-			rectai::tracker::TrackedObjectList objects;
+			soundtable::tracker::TrackedObjectList objects;
 			bool processedThisFrame = false;
 
 			// Decide whether to run the tracker on this frame based on
@@ -499,7 +499,7 @@ int main(int argc, char** argv)
 			// Build the list of "stable" objects that have been seen in at
 			// least three consecutive frames. Only these will be reflected in
 			// lifetime tracking and OSC messages.
-			rectai::tracker::TrackedObjectList stableObjects;
+			soundtable::tracker::TrackedObjectList stableObjects;
 			stableObjects.reserve(objects.size());
 			for (const auto& obj : objects) {
 				const auto it = consecutiveDetectionsById.find(obj.id);
@@ -521,10 +521,10 @@ int main(int argc, char** argv)
 
 			if (!lowProcessingRate && framesWithoutDetections >= 100) {
 				lowProcessingRate = true;
-				std::cout << "[rectai-tracker] No fiducials detected for 100 frames, throttling processing to ~15 FPS." << std::endl;
+				std::cout << "[soundtable-tracker] No fiducials detected for 100 frames, throttling processing to ~15 FPS." << std::endl;
 			} else if (lowProcessingRate && !objects.empty()) {
 				lowProcessingRate = false;
-				std::cout << "[rectai-tracker] Fiducials detected again, resuming full-rate processing." << std::endl;
+				std::cout << "[soundtable-tracker] Fiducials detected again, resuming full-rate processing." << std::endl;
 			}
 
 			// Update lifetime tracking only with stable objects so that
@@ -541,7 +541,7 @@ int main(int argc, char** argv)
 
 			if (oscSender.isOk()) {
 				bool shouldSendTuioThisFrame = true;
-				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11) {
+				if (outputMode == soundtable::tracker::TuioOutputMode::Tuio11) {
 					// When running in low processing rate mode (~15 FPS) and
 					// no tangible objects are detected, reduce the frequency
 					// of TUIO events to ~5 Hz by only sending one out of
@@ -556,7 +556,7 @@ int main(int argc, char** argv)
 					}
 				}
 
-				if (outputMode == rectai::tracker::TuioOutputMode::Tuio11 && shouldSendTuioThisFrame) {
+				if (outputMode == soundtable::tracker::TuioOutputMode::Tuio11 && shouldSendTuioThisFrame) {
 					std::vector<OscSender::Message> messages;
 					messages.reserve(stableObjects.size() + 2U);
 
@@ -615,7 +615,7 @@ int main(int argc, char** argv)
 					messages.push_back(oscSender.buildTuio2DobjFseq(tuioFrameSeq++));
 					(void)oscSender.sendBundle(messages);
 
-				} else if (outputMode == rectai::tracker::TuioOutputMode::LegacyOsc) {
+				} else if (outputMode == soundtable::tracker::TuioOutputMode::LegacyOsc) {
 					std::vector<OscSender::Message> messages;
 					messages.reserve(stableObjects.size() + 8U);
 
@@ -623,13 +623,13 @@ int main(int argc, char** argv)
 						const std::string logicalId = mapLogicalId(obj.id);
 						const float angleDegrees = obj.angle_rad *
 							(180.0F / static_cast<float>(M_PI));
-						std::cout << "[rectai-tracker] fiducial " << obj.id
+						std::cout << "[soundtable-tracker] fiducial " << obj.id
 								<< " -> logicalId=" << logicalId
 								<< " x=" << obj.x_norm
 								<< " y=" << obj.y_norm
 								<< " angle_deg=" << angleDegrees << '\n';
 						messages.push_back(
-						    oscSender.buildRectaiObject(
+						    oscSender.buildSoundtableObject(
 						        obj.id, logicalId, obj.x_norm, obj.y_norm,
 						        angleDegrees));
 					}
@@ -638,9 +638,9 @@ int main(int argc, char** argv)
 					// removed from the musical area, similar to a TUIO remove event.
 					const auto removedIds = trackerState.collectRemovals(15);
 					for (const int id : removedIds) {
-						std::cout << "[rectai-tracker] fiducial " << id
+						std::cout << "[soundtable-tracker] fiducial " << id
 							      << " removed from tracking" << '\n';
-						messages.push_back(oscSender.buildRectaiRemove(id));
+						messages.push_back(oscSender.buildSoundtableRemove(id));
 					}
 
 					if (!messages.empty()) {
@@ -661,7 +661,7 @@ int main(int argc, char** argv)
 		const double elapsed_sec = (now - start_time) / cv::getTickFrequency();
 		if (elapsed_sec >= 1.0) {
 			const double fps = static_cast<double>(frames) / elapsed_sec;
-			std::cout << "[rectai-tracker] Approx FPS: " << fps << '\n';
+			std::cout << "[soundtable-tracker] Approx FPS: " << fps << '\n';
 
 			// Reset counters so we can keep reporting periodically.
 			start_time = now;
@@ -718,17 +718,17 @@ int main(int argc, char** argv)
 				}
 			}
 
-			cv::imshow("rectai-tracker debug", displayColor);
+			cv::imshow("soundtable-tracker debug", displayColor);
 			const int key = cv::waitKey(1);
 			if (key == 27 || key == 'q' || key == 'Q') {
-				std::cout << "[rectai-tracker] Debug view exit requested by user" << '\n';
+				std::cout << "[soundtable-tracker] Debug view exit requested by user" << '\n';
 				break;
 			}
 		}
 	}
 
 	if (debugView) {
-		cv::destroyWindow("rectai-tracker debug");
+		cv::destroyWindow("soundtable-tracker debug");
 	}
 
 	return 0;

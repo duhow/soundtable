@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(rectai-table VERSION 0.1.0 LANGUAGES C CXX)
+project(soundtable VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Project-wide options
-option(RECTAI_ENABLE_TRACKER "Build the tracker service" ON)
-option(RECTAI_BUILD_TESTS "Build C++ tests" ON)
+option(SOUNDTABLE_ENABLE_TRACKER "Build the tracker service" ON)
+option(SOUNDTABLE_BUILD_TESTS "Build C++ tests" ON)
 
 # External reacTIVision/libfidtrack sources that generate many
 # conversion/sign-conversion/float-conversion warnings. Treat them as
@@ -29,24 +29,24 @@ if (NOT MSVC)
 endif()
 
 # Optional CPU-specific optimization flags (non-MSVC toolchains).
-option(RECTAI_ENABLE_CPU_OPTIMIZATIONS "Enable CPU-specific optimization flags (e.g. -march/-mtune)" ON)
+option(SOUNDTABLE_ENABLE_CPU_OPTIMIZATIONS "Enable CPU-specific optimization flags (e.g. -march/-mtune)" ON)
 
-if (RECTAI_ENABLE_CPU_OPTIMIZATIONS AND NOT MSVC)
+if (SOUNDTABLE_ENABLE_CPU_OPTIMIZATIONS AND NOT MSVC)
     include(CheckCXXCompilerFlag)
 
-    set(RECTAI_CPU_OPT_FLAGS "")
+    set(SOUNDTABLE_CPU_OPT_FLAGS "")
 
-    check_cxx_compiler_flag("-march=native" RECTAI_HAS_MARCH_NATIVE)
-    if (RECTAI_HAS_MARCH_NATIVE)
-        list(APPEND RECTAI_CPU_OPT_FLAGS "-march=native")
+    check_cxx_compiler_flag("-march=native" SOUNDTABLE_HAS_MARCH_NATIVE)
+    if (SOUNDTABLE_HAS_MARCH_NATIVE)
+        list(APPEND SOUNDTABLE_CPU_OPT_FLAGS "-march=native")
     endif()
 
-    check_cxx_compiler_flag("-mtune=native" RECTAI_HAS_MTUNE_NATIVE)
-    if (RECTAI_HAS_MTUNE_NATIVE)
-        list(APPEND RECTAI_CPU_OPT_FLAGS "-mtune=native")
+    check_cxx_compiler_flag("-mtune=native" SOUNDTABLE_HAS_MTUNE_NATIVE)
+    if (SOUNDTABLE_HAS_MTUNE_NATIVE)
+        list(APPEND SOUNDTABLE_CPU_OPT_FLAGS "-mtune=native")
     endif()
 
-    foreach(flag IN LISTS RECTAI_CPU_OPT_FLAGS)
+    foreach(flag IN LISTS SOUNDTABLE_CPU_OPT_FLAGS)
         add_compile_options(
             "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:${flag}>"
         )
@@ -83,10 +83,10 @@ endif()
 
 add_subdirectory(core)
 
-if(RECTAI_ENABLE_TRACKER)
+if(SOUNDTABLE_ENABLE_TRACKER)
     add_subdirectory(tracker)
 endif()
 
-if(RECTAI_BUILD_TESTS)
+if(SOUNDTABLE_BUILD_TESTS)
     add_subdirectory(tests)
 endif()

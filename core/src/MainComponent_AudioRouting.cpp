@@ -9,8 +9,8 @@
 #include "MainComponentHelpers.h"
 #include "core/AudioModules.h"
 
-using rectai::ui::isConnectionGeometricallyActive;
-using rectai::ui::makeConnectionKey;
+using soundtable::ui::isConnectionGeometricallyActive;
+using soundtable::ui::makeConnectionKey;
 
 namespace {
 
@@ -22,7 +22,7 @@ struct EnvelopeAnalysis {
     bool hasSustainPlateau{false};
 };
 
-[[nodiscard]] EnvelopeAnalysis analyseEnvelope(const rectai::Envelope& e)
+[[nodiscard]] EnvelopeAnalysis analyseEnvelope(const soundtable::Envelope& e)
 {
     EnvelopeAnalysis result{};
 
@@ -88,9 +88,9 @@ struct EnvelopeAnalysis {
 }  // namespace
 
 void MainComponent::updateAudioRoutingAndVoices(
-    const std::unordered_map<std::int64_t, rectai::ObjectInstance>& objects,
-    const std::unordered_map<std::string, std::unique_ptr<rectai::AudioModule>>& modules,
-    const std::vector<rectai::AudioGraph::Edge>& audioEdges,
+    const std::unordered_map<std::int64_t, soundtable::ObjectInstance>& objects,
+    const std::unordered_map<std::string, std::unique_ptr<soundtable::AudioModule>>& modules,
+    const std::vector<soundtable::AudioGraph::Edge>& audioEdges,
     const std::unordered_map<std::string, std::int64_t>& moduleToObjectId,
     const float globalVolumeGain)
 {
@@ -136,13 +136,13 @@ void MainComponent::updateAudioRoutingAndVoices(
                 const auto modIt = modules.find(obj.logical_id());
                 if (modIt != modules.end() &&
                     modIt->second != nullptr &&
-                    modIt->second->is<rectai::SampleplayModule>()) {
+                    modIt->second->is<soundtable::SampleplayModule>()) {
                     holdBlocksSampleplay = true;
                 }
             }
         } else if (!hold.connection_key.empty()) {
             for (const auto& edge : audioEdges) {
-                rectai::Connection tmpConn{edge.from_module_id,
+                soundtable::Connection tmpConn{edge.from_module_id,
                                            edge.from_port_name,
                                            edge.to_module_id,
                                            edge.to_port_name,
@@ -155,7 +155,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                 const auto modIt = modules.find(edge.from_module_id);
                 if (modIt != modules.end() &&
                     modIt->second != nullptr &&
-                    modIt->second->is<rectai::SampleplayModule>()) {
+                    modIt->second->is<soundtable::SampleplayModule>()) {
                     holdBlocksSampleplay = true;
                 }
                 break;
@@ -181,7 +181,7 @@ void MainComponent::updateAudioRoutingAndVoices(
             }
 
             auto* module = modIt->second.get();
-            if (!module->is<rectai::SampleplayModule>()) {
+            if (!module->is<soundtable::SampleplayModule>()) {
                 continue;
             }
 
@@ -197,11 +197,11 @@ void MainComponent::updateAudioRoutingAndVoices(
                                              // found.
             for (const auto& edge : audioEdges) {
                 if (edge.from_module_id != module->id() ||
-                    edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                    edge.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
-                rectai::Connection tmpConn{
+                soundtable::Connection tmpConn{
                     edge.from_module_id,
                     edge.from_port_name,
                     edge.to_module_id,
@@ -242,7 +242,7 @@ void MainComponent::updateAudioRoutingAndVoices(
     {
         auto maybeInitialiseSelection =
             [](DelaySelection& selection,
-               const rectai::DelayModule& module,
+               const soundtable::DelayModule& module,
                const bool isReverb) {
                 if (selection.active) {
                     return;
@@ -263,8 +263,8 @@ void MainComponent::updateAudioRoutingAndVoices(
             };
 
         auto accumulateDelaySources =
-            [&](rectai::DelayModule* delayModule,
-                const rectai::ObjectInstance& delayObj,
+            [&](soundtable::DelayModule* delayModule,
+                const soundtable::ObjectInstance& delayObj,
                 DelaySelection& selection) {
                 for (const auto& edge : audioEdges) {
                     if (edge.to_module_id != delayModule->id()) {
@@ -299,7 +299,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                         }
                     }
 
-                    rectai::Connection tmpConn{
+                    soundtable::Connection tmpConn{
                         edge.from_module_id,
                         edge.from_port_name,
                         edge.to_module_id,
@@ -312,14 +312,14 @@ void MainComponent::updateAudioRoutingAndVoices(
                     }
 
                     auto* sourceModule = srcModIt->second.get();
-                    if (sourceModule->is<rectai::LoopModule>()) {
+                    if (sourceModule->is<soundtable::LoopModule>()) {
                         if (selection.loopModuleIdSet
                                 .insert(sourceModule->id())
                                 .second) {
                             selection.loopModuleIds.push_back(
                                 sourceModule->id());
                         }
-                    } else if (sourceModule->is<rectai::SampleplayModule>()) {
+                    } else if (sourceModule->is<soundtable::SampleplayModule>()) {
                         selection.includeSampleplay = true;
                     } else {
                         if (selection.voiceModuleIdSet
@@ -342,7 +342,7 @@ void MainComponent::updateAudioRoutingAndVoices(
 
             auto* module = modIt->second.get();
             auto* delayModule =
-                dynamic_cast<rectai::DelayModule*>(module);
+                dynamic_cast<soundtable::DelayModule*>(module);
             if (delayModule == nullptr) {
                 continue;
             }
@@ -356,13 +356,13 @@ void MainComponent::updateAudioRoutingAndVoices(
 
             for (const auto& edge : audioEdges) {
                 if (edge.from_module_id != delayModule->id() ||
-                    edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                    edge.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
                 hasMasterRoute = true;
 
-                rectai::Connection tmpConn{
+                soundtable::Connection tmpConn{
                     edge.from_module_id,
                     edge.from_port_name,
                     edge.to_module_id,
@@ -413,7 +413,7 @@ void MainComponent::updateAudioRoutingAndVoices(
 
         auto* module = modIt->second.get();
         auto* loopModule =
-            dynamic_cast<rectai::LoopModule*>(module);
+            dynamic_cast<soundtable::LoopModule*>(module);
         if (loopModule == nullptr) {
             continue;
         }
@@ -442,7 +442,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                         continue;
                     }
 
-                    rectai::Connection tmpConn{edge.from_module_id,
+                    soundtable::Connection tmpConn{edge.from_module_id,
                                                edge.from_port_name,
                                                edge.to_module_id,
                                                edge.to_port_name,
@@ -474,11 +474,11 @@ void MainComponent::updateAudioRoutingAndVoices(
         bool routeToMasterMuted = true;
         for (const auto& edge : audioEdges) {
             if (edge.from_module_id != loopModule->id() ||
-                edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                edge.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                 continue;
             }
 
-            rectai::Connection tmpConn{edge.from_module_id,
+            soundtable::Connection tmpConn{edge.from_module_id,
                                        edge.from_port_name,
                                        edge.to_module_id,
                                        edge.to_port_name,
@@ -521,7 +521,7 @@ void MainComponent::updateAudioRoutingAndVoices(
         bool routeThroughLoopFilter = false;
         for (const auto& edge : audioEdges) {
             if (edge.from_module_id != loopModule->id() ||
-                edge.to_module_id == rectai::MASTER_OUTPUT_ID) {
+                edge.to_module_id == soundtable::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -532,7 +532,7 @@ void MainComponent::updateAudioRoutingAndVoices(
             }
 
             auto* candidateFilter =
-                dynamic_cast<rectai::FilterModule*>(
+                dynamic_cast<soundtable::FilterModule*>(
                     destModIt->second.get());
             if (candidateFilter == nullptr) {
                 continue;
@@ -559,7 +559,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                 continue;
             }
 
-            rectai::Connection tmpConn{edge.from_module_id,
+            soundtable::Connection tmpConn{edge.from_module_id,
                                        edge.from_port_name,
                                        edge.to_module_id,
                                        edge.to_port_name,
@@ -614,7 +614,7 @@ void MainComponent::updateAudioRoutingAndVoices(
     float sampleplayFilterQ = 0.7071F;
     std::string sampleplayFilterModuleId;
     {
-        const rectai::FilterModule* bestFilter = nullptr;
+        const soundtable::FilterModule* bestFilter = nullptr;
         float bestDistSq = std::numeric_limits<float>::max();
 
         for (const auto& [objId, obj] : objects) {
@@ -626,7 +626,7 @@ void MainComponent::updateAudioRoutingAndVoices(
             }
 
             auto* srcModule = modIt->second.get();
-            if (!srcModule->is<rectai::SampleplayModule>()) {
+            if (!srcModule->is<soundtable::SampleplayModule>()) {
                 continue;
             }
 
@@ -650,7 +650,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                 }
 
                 auto* candidateFilter =
-                    dynamic_cast<rectai::FilterModule*>(
+                    dynamic_cast<soundtable::FilterModule*>(
                         destModIt->second.get());
                 if (candidateFilter == nullptr) {
                     continue;
@@ -677,7 +677,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                     continue;
                 }
 
-                rectai::Connection tmpConn{
+                soundtable::Connection tmpConn{
                     edge.from_module_id,
                     edge.from_port_name,
                     edge.to_module_id,
@@ -732,7 +732,7 @@ void MainComponent::updateAudioRoutingAndVoices(
     float loopFilterQ = 0.7071F;
     std::string loopFilterModuleId;
     {
-        const rectai::FilterModule* bestFilter = nullptr;
+        const soundtable::FilterModule* bestFilter = nullptr;
         float bestDistSq = std::numeric_limits<float>::max();
 
         for (const auto& [objId, obj] : objects) {
@@ -745,7 +745,7 @@ void MainComponent::updateAudioRoutingAndVoices(
 
             auto* srcModule = modIt->second.get();
             auto* loopModule =
-                dynamic_cast<rectai::LoopModule*>(srcModule);
+                dynamic_cast<soundtable::LoopModule*>(srcModule);
             if (loopModule == nullptr) {
                 continue;
             }
@@ -770,7 +770,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                 }
 
                 auto* candidateFilter =
-                    dynamic_cast<rectai::FilterModule*>(
+                    dynamic_cast<soundtable::FilterModule*>(
                         destModIt->second.get());
                 if (candidateFilter == nullptr) {
                     continue;
@@ -797,7 +797,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                     continue;
                 }
 
-                rectai::Connection tmpConn{
+                soundtable::Connection tmpConn{
                     edge.from_module_id,
                     edge.from_port_name,
                     edge.to_module_id,
@@ -899,7 +899,7 @@ void MainComponent::updateAudioRoutingAndVoices(
     }
 
     if (emitBusFilterLog) {
-        juce::String msg("[rectai-core][filter-routing] spModule=");
+        juce::String msg("[soundtable-core][filter-routing] spModule=");
         if (!sampleplayFilterModuleId.empty()) {
             msg << sampleplayFilterModuleId.c_str();
         } else {
@@ -943,7 +943,7 @@ void MainComponent::updateAudioRoutingAndVoices(
         }
 
         const auto* module = modIt->second.get();
-        if (module->type() != rectai::ModuleType::kGenerator) {
+        if (module->type() != soundtable::ModuleType::kGenerator) {
             continue;
         }
 
@@ -964,13 +964,13 @@ void MainComponent::updateAudioRoutingAndVoices(
 
             for (const auto& edge : audioEdges) {
                 if (edge.from_module_id != module->id() ||
-                    edge.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                    edge.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
                 hasMasterRoute = true;
 
-                rectai::Connection tmpConn{
+                soundtable::Connection tmpConn{
                     edge.from_module_id,
                     edge.from_port_name,
                     edge.to_module_id,
@@ -1000,7 +1000,7 @@ void MainComponent::updateAudioRoutingAndVoices(
         // that hardlinks and multiple downstream modules can all carry
         // audio.
         struct GeneratorRoute {
-            const rectai::AudioModule* module{nullptr};
+            const soundtable::AudioModule* module{nullptr};
             std::int64_t objId{0};
             bool inside{false};
             bool connectionMuted{false};
@@ -1018,7 +1018,7 @@ void MainComponent::updateAudioRoutingAndVoices(
             // treating it as a downstream target here would change
             // behaviour compared to scenes without auto-wiring
             // (generators direct to master).
-            if (edge.to_module_id == rectai::MASTER_OUTPUT_ID) {
+            if (edge.to_module_id == soundtable::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -1061,7 +1061,7 @@ void MainComponent::updateAudioRoutingAndVoices(
             route.module = candidate;
             route.objId = objIt->first;
             route.inside = true;
-            rectai::Connection tmpConn{
+            soundtable::Connection tmpConn{
                 edge.from_module_id,
                 edge.from_port_name,
                 edge.to_module_id,
@@ -1083,7 +1083,7 @@ void MainComponent::updateAudioRoutingAndVoices(
         }
 
         const auto* oscModule =
-            dynamic_cast<const rectai::OscillatorModule*>(module);
+            dynamic_cast<const soundtable::OscillatorModule*>(module);
 
         const float freqParam = module->GetParameterOrDefault(
             "freq", module->default_parameter_value("freq"));
@@ -1133,7 +1133,7 @@ void MainComponent::updateAudioRoutingAndVoices(
 
                         hasMasterRoute = true;
 
-                        rectai::Connection tmpConn{
+                        soundtable::Connection tmpConn{
                             edge.from_module_id,
                             edge.from_port_name,
                             edge.to_module_id,
@@ -1160,7 +1160,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                 // resonance (Q), not output volume, so it should not
                 // affect the overall level used here.
                 if (downstreamModule->type() !=
-                    rectai::ModuleType::kFilter) {
+                    soundtable::ModuleType::kFilter) {
                     gainParam = downstreamModule->GetParameterOrDefault(
                         "gain", gainParam);
                 }
@@ -1225,7 +1225,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                 // state without flooding the log: only log the first
                 // active generator per timer tick.
                 if (!loggedGeneratorDebug) {
-                    juce::String msg("[rectai-core][audio-debug] gen=");
+                    juce::String msg("[soundtable-core][audio-debug] gen=");
                     msg << module->id().c_str() << " freqHz="
                         << frequency << " level=" << calculatedLevel
                         << " out=" << outputLevel
@@ -1257,9 +1257,9 @@ void MainComponent::updateAudioRoutingAndVoices(
 
                 if (downstreamModule != nullptr && downstreamInside &&
                     downstreamModule->type() ==
-                        rectai::ModuleType::kFilter) {
+                        soundtable::ModuleType::kFilter) {
                     const auto* filterModule =
-                        dynamic_cast<const rectai::FilterModule*>(
+                        dynamic_cast<const soundtable::FilterModule*>(
                             downstreamModule);
 
                     float filterFreqParam =
@@ -1418,7 +1418,7 @@ void MainComponent::updateAudioRoutingAndVoices(
                 }
 
                 config.loopHashes[config.loopTargetCount] =
-                    rectai::HashModuleId(loopId);
+                    soundtable::HashModuleId(loopId);
                 ++config.loopTargetCount;
             }
 

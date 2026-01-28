@@ -7,13 +7,13 @@
 
 #include "core/Scene.h"
 
-namespace rectai::ui {
+namespace soundtable::ui {
 
 // Convert a 32-bit ARGB integer into a JUCE colour.
 juce::Colour colourFromArgb(std::uint32_t argb);
 
 // Build a stable textual key that identifies a connection uniquely.
-std::string makeConnectionKey(const rectai::Connection& connection);
+std::string makeConnectionKey(const soundtable::Connection& connection);
 
 // Build a stable key for an unordered pair of object ids
 // (order-independent).
@@ -26,8 +26,8 @@ std::string makeModulePairKey(const Connection& conn);
 
 // Returns true if `toObj` lies inside a ~120º cone whose vertex is at
 // the centre of the table and whose axis points towards `fromObj`.
-bool isConnectionGeometricallyActive(const rectai::ObjectInstance& fromObj,
-                                     const rectai::ObjectInstance& toObj);
+bool isConnectionGeometricallyActive(const soundtable::ObjectInstance& fromObj,
+                                     const soundtable::ObjectInstance& toObj);
 
 // Check if line segment (p1->p2) intersects with segment (q1->q2).
 // Uses a threshold distance to account for near-misses (touching).
@@ -54,4 +54,4 @@ bool generateConnectionFromModules(
     bool isHardlink,
     Connection& outConnection);
 
-}  // namespace rectai::ui
+}  // namespace soundtable::ui

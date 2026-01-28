@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace rectai {
+namespace soundtable {
 
 // Lightweight, JUCE-free helper that owns circular mono buffers for
 // visual "voices". Each voice represents the audio output of a
@@ -90,4 +90,4 @@ private:
     std::vector<float> buffer_;
 };
 
-}  // namespace rectai
+}  // namespace soundtable

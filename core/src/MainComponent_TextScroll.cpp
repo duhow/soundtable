@@ -1,6 +1,6 @@
 #include "MainComponent_TextScroll.h"
 
-namespace rectai::ui {
+namespace soundtable::ui {
 
 TextScrollList::TextScrollList()
 {
@@ -321,4 +321,4 @@ void TextScrollList::handleWheelDelta(const float deltaY)
     setScrollOffset(scrollOffset_ + delta);
 }
 
-}  // namespace rectai::ui
+}  // namespace soundtable::ui

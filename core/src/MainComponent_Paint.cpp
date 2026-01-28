@@ -9,9 +9,9 @@
 #include "MainComponent_ModulePanelEnvelope.h"
 #include "core/AudioModules.h"
 
-using rectai::ui::colourFromArgb;
-using rectai::ui::isConnectionGeometricallyActive;
-using rectai::ui::makeConnectionKey;
+using soundtable::ui::colourFromArgb;
+using soundtable::ui::isConnectionGeometricallyActive;
+using soundtable::ui::makeConnectionKey;
 
 namespace {
 
@@ -124,7 +124,7 @@ struct VisualFrameState {
     const std::unordered_map<std::string, std::int64_t>* moduleToObjectId{nullptr};
 
     struct ConnectionDerived {
-        const rectai::Connection* connection{nullptr};
+        const soundtable::Connection* connection{nullptr};
         bool sourceMutedToMaster{false};
         bool explicitlyMuted{false};
         bool involvesSampleplay{false};
@@ -177,7 +177,7 @@ namespace {
 }  // namespace
 
 bool MainComponent::isInsideMusicArea(
-    const rectai::ObjectInstance& obj) const
+    const soundtable::ObjectInstance& obj) const
 {
     if (obj.docked()) {
         return false;
@@ -192,7 +192,7 @@ bool MainComponent::isInsideMusicArea(
 }
 
 bool MainComponent::computeInsideMusicArea(
-    const rectai::ObjectInstance& obj) const
+    const soundtable::ObjectInstance& obj) const
 {
     if (obj.docked()) {
         return false;
@@ -209,7 +209,7 @@ bool MainComponent::computeInsideMusicArea(
 // Helper to map an ObjectInstance on the table (centre-origin
 // coordinates with radius 1) to component-space pixels.
 juce::Point<float> MainComponent::objectTableToScreen(
-    const rectai::ObjectInstance& obj,
+    const soundtable::ObjectInstance& obj,
     const juce::Rectangle<float>& bounds)
 {
     const auto centre = bounds.getCentre();
@@ -276,13 +276,13 @@ void MainComponent::paint(juce::Graphics& g)
     audioFrame.moduleVoiceIndex = &moduleVoiceIndex_;
     audioFrame.connectionVisualSources = &connectionVisualSources_;
 
-    auto isAudioConnection = [&modules](const rectai::Connection& conn) {
+    auto isAudioConnection = [&modules](const soundtable::Connection& conn) {
         const auto fromModuleIt = modules.find(conn.from_module_id);
         if (fromModuleIt != modules.end() && fromModuleIt->second != nullptr) {
             const auto& fromModule = *fromModuleIt->second;
             for (const auto& port : fromModule.output_ports()) {
                 if (port.name == conn.from_port_name) {
-                    return port.kind == rectai::PortSignalKind::kAudio;
+                    return port.kind == soundtable::PortSignalKind::kAudio;
                 }
             }
 
@@ -296,7 +296,7 @@ void MainComponent::paint(juce::Graphics& g)
             const auto& toModule = *toModuleIt->second;
             for (const auto& port : toModule.input_ports()) {
                 if (port.name == conn.to_port_name) {
-                    return port.kind == rectai::PortSignalKind::kAudio;
+                    return port.kind == soundtable::PortSignalKind::kAudio;
                 }
             }
 
@@ -308,25 +308,25 @@ void MainComponent::paint(juce::Graphics& g)
         return false;
     };
 
-    auto getModuleVisualLevel = [](const rectai::AudioModule* module) {
+    auto getModuleVisualLevel = [](const soundtable::AudioModule* module) {
         if (module == nullptr) {
             return 1.0F;
         }
 
-        if (module->is<rectai::VolumeModule>()) {
+        if (module->is<soundtable::VolumeModule>()) {
             const float volume =
                 module->GetParameterOrDefault("volume", 0.9F);
             return juce::jlimit(0.0F, 1.0F, volume);
         }
 
-        if (module->is<rectai::SampleplayModule>() ||
-            module->is<rectai::LoopModule>() ||
-            module->is<rectai::InputModule>()) {
+        if (module->is<soundtable::SampleplayModule>() ||
+            module->is<soundtable::LoopModule>() ||
+            module->is<soundtable::InputModule>()) {
             const float amp = module->GetParameterOrDefault("amp", 1.0F);
             return juce::jlimit(0.0F, 1.0F, amp);
         }
 
-        if (module->is<rectai::OscillatorModule>()) {
+        if (module->is<soundtable::OscillatorModule>()) {
             const float gain = module->GetParameterOrDefault("gain", 0.5F);
             return juce::jlimit(0.0F, 1.0F, gain);
         }
@@ -459,7 +459,7 @@ void MainComponent::paint(juce::Graphics& g)
     visualFrame.connectionDerived.clear();
     visualFrame.connectionDerived.reserve(scene_.connections().size());
     for (const auto& conn : scene_.connections()) {
-        if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+        if (conn.to_module_id == soundtable::MASTER_OUTPUT_ID) {
             continue;
         }
 
@@ -505,7 +505,7 @@ void MainComponent::paint(juce::Graphics& g)
             for (const auto& mconn : scene_.connections()) {
                 if (mconn.from_module_id != conn.from_module_id ||
                     mconn.to_module_id !=
-                        rectai::MASTER_OUTPUT_ID) {
+                        soundtable::MASTER_OUTPUT_ID) {
                     continue;
                 }
 
@@ -537,8 +537,8 @@ void MainComponent::paint(juce::Graphics& g)
                  conn.to_module_id) !=
                  audioFrame.modulesWithActiveAudio->end());
 
-        const rectai::AudioModule* fromModulePtr = nullptr;
-        const rectai::AudioModule* toModulePtr = nullptr;
+        const soundtable::AudioModule* fromModulePtr = nullptr;
+        const soundtable::AudioModule* toModulePtr = nullptr;
         if (const auto it = modules.find(conn.from_module_id);
             it != modules.end() && it->second != nullptr) {
             fromModulePtr = it->second.get();
@@ -550,9 +550,9 @@ void MainComponent::paint(juce::Graphics& g)
 
         const bool involvesSampleplay =
             (fromModulePtr != nullptr &&
-             fromModulePtr->is<rectai::SampleplayModule>()) ||
+             fromModulePtr->is<soundtable::SampleplayModule>()) ||
             (toModulePtr != nullptr &&
-             toModulePtr->is<rectai::SampleplayModule>());
+             toModulePtr->is<soundtable::SampleplayModule>());
 
         const bool isMutedConnection =
             explicitlyMuted ||
@@ -603,7 +603,7 @@ void MainComponent::paint(juce::Graphics& g)
         // master bus.
         // -----------------------------------------------------------------
         for (const auto& [id, object] : objects) {
-            if (object.logical_id() == rectai::MASTER_OUTPUT_ID) {
+            if (object.logical_id() == soundtable::MASTER_OUTPUT_ID) {
                 continue;  // Output (master) is not drawn as a module.
             }
 
@@ -613,7 +613,7 @@ void MainComponent::paint(juce::Graphics& g)
 
             const auto modForConnectionIt =
                 modules.find(object.logical_id());
-            const rectai::AudioModule* moduleForConnection = nullptr;
+            const soundtable::AudioModule* moduleForConnection = nullptr;
             if (modForConnectionIt != modules.end() &&
                 modForConnectionIt->second != nullptr) {
                 moduleForConnection = modForConnectionIt->second.get();
@@ -627,8 +627,8 @@ void MainComponent::paint(juce::Graphics& g)
             const bool isGeneratorLike =
                 moduleForConnection != nullptr &&
                 (moduleForConnection->type() ==
-                     rectai::ModuleType::kGenerator ||
-                 moduleForConnection->is<rectai::LoopModule>());
+                     soundtable::ModuleType::kGenerator ||
+                 moduleForConnection->is<soundtable::LoopModule>());
             const bool isGlobalController =
                 moduleForConnection != nullptr &&
                 moduleForConnection->is_global_controller();
@@ -640,16 +640,16 @@ void MainComponent::paint(juce::Graphics& g)
 
             const bool isSampleplayModule =
                 moduleForConnection != nullptr &&
-                moduleForConnection->is<rectai::SampleplayModule>();
+                moduleForConnection->is<soundtable::SampleplayModule>();
 
             const bool isLoopModule =
                 moduleForConnection != nullptr &&
-                moduleForConnection->is<rectai::LoopModule>();
+                moduleForConnection->is<soundtable::LoopModule>();
 
             const bool isFilterModule =
                 moduleForConnection != nullptr &&
                 moduleForConnection->type() ==
-                    rectai::ModuleType::kFilter;
+                    soundtable::ModuleType::kFilter;
 
             // Modules that expose a true volume-like control (right
             // arc) keep using their parameter to drive waveform
@@ -659,11 +659,11 @@ void MainComponent::paint(juce::Graphics& g)
             // in the AudioEngine.
             const bool hasExplicitVolumeBar =
                 moduleForConnection != nullptr &&
-                (moduleForConnection->is<rectai::VolumeModule>() ||
-                 moduleForConnection->is<rectai::OscillatorModule>() ||
-                 moduleForConnection->is<rectai::SampleplayModule>() ||
-                 moduleForConnection->is<rectai::LoopModule>() ||
-                 moduleForConnection->is<rectai::InputModule>());
+                (moduleForConnection->is<soundtable::VolumeModule>() ||
+                 moduleForConnection->is<soundtable::OscillatorModule>() ||
+                 moduleForConnection->is<soundtable::SampleplayModule>() ||
+                 moduleForConnection->is<soundtable::LoopModule>() ||
+                 moduleForConnection->is<soundtable::InputModule>());
 
             const float visualLevel = getModuleVisualLevel(moduleForConnection);
 
@@ -675,7 +675,7 @@ void MainComponent::paint(juce::Graphics& g)
             // area to keep noise low.
             if (moduleForConnection != nullptr &&
                 isInsideMusicArea(object) && isAudioModule) {
-                juce::String msg("[rectai-core][paint-debug] radial id=");
+                juce::String msg("[soundtable-core][paint-debug] radial id=");
                 msg << object.logical_id().c_str()
                     << " isGenLike=" << (isGeneratorLike ? "1" : "0")
                     << " hasConn="
@@ -777,7 +777,7 @@ void MainComponent::paint(juce::Graphics& g)
                     bool hasConnectionToMaster = false;
                     for (const auto& conn : scene_.connections()) {
                         if (conn.from_module_id != object.logical_id() ||
-                            conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                            conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                             continue;
                         }
 
@@ -953,7 +953,7 @@ void MainComponent::paint(juce::Graphics& g)
             {
                 for (const auto& conn : scene_.connections()) {
                     if (conn.from_module_id != object.logical_id() ||
-                        conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                        conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -993,7 +993,7 @@ void MainComponent::paint(juce::Graphics& g)
                     if (modItFrom == modules.end() ||
                         modItFrom->second == nullptr ||
                         !modItFrom->second
-                             ->is<rectai::SampleplayModule>()) {
+                             ->is<soundtable::SampleplayModule>()) {
                         continue;
                     }
 
@@ -1110,7 +1110,7 @@ void MainComponent::paint(juce::Graphics& g)
                     if (fromModuleIt != modules.end() &&
                         fromModuleIt->second != nullptr &&
                         fromModuleIt->second
-                             ->is<rectai::LoopModule>()) {
+                             ->is<soundtable::LoopModule>()) {
                         audioEngine_.getLoopModuleWaveformSnapshot(
                             conn.from_module_id, temp,
                             kWaveformPoints, 0.05);
@@ -1216,7 +1216,7 @@ void MainComponent::paint(juce::Graphics& g)
                     for (const auto& conn : scene_.connections()) {
                         if (conn.from_module_id !=
                                 object.logical_id() ||
-                            conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                            conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                             continue;
                         }
 
@@ -1566,7 +1566,7 @@ void MainComponent::paint(juce::Graphics& g)
     // These modules live outside the main musical surface but remain
     // visible and accessible in a dedicated side strip.
     // ---------------------------------------------------------------------
-    std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+    std::vector<std::pair<std::int64_t, const soundtable::ObjectInstance*>>
         dockedObjects;
     dockedObjects.reserve(objects.size());
     for (const auto& [id, obj] : objects) {
@@ -1577,7 +1577,7 @@ void MainComponent::paint(juce::Graphics& g)
 
     if (!dockedObjects.empty()) {
         auto getDockBodyColourForObject = [&modules](
-                                                       const rectai::ObjectInstance& obj,
+                                                       const soundtable::ObjectInstance& obj,
                                                        const bool isMuted) {
             juce::Colour activeBase =
                 juce::Colour::fromRGB(0x20, 0x90, 0xFF);
@@ -1671,7 +1671,7 @@ void MainComponent::paint(juce::Graphics& g)
                 bool isBodyMuted = false;
                 for (const auto& conn : scene_.connections()) {
                     if (conn.from_module_id != obj->logical_id() ||
-                        conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                        conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -1706,7 +1706,7 @@ void MainComponent::paint(juce::Graphics& g)
                               nodeRadiusDock * 2.0F - outlineThickness,
                               outlineThickness);
 
-                const rectai::AudioModule* moduleForObject = nullptr;
+                const soundtable::AudioModule* moduleForObject = nullptr;
                 if (const auto moduleEntryIt = modules.find(
                         obj->logical_id());
                     moduleEntryIt != modules.end()) {
@@ -1842,7 +1842,7 @@ void MainComponent::paint(juce::Graphics& g)
                 // Tempo tangible still reveals the current session tempo.
                 if (moduleForObject != nullptr && bpmLabelAlpha > 0.0) {
                     const auto* tempoModule =
-                        dynamic_cast<const rectai::TempoModule*>(
+                        dynamic_cast<const soundtable::TempoModule*>(
                             moduleForObject);
                     if (tempoModule != nullptr) {
                         const int bpmInt = static_cast<int>(
@@ -1986,7 +1986,7 @@ void MainComponent::paintModuleConnections(
 
     // Local helpers copied from MainComponent::paint so that the
     // connection rendering logic remains behaviourally identical.
-    auto isAudioConnection = [&modules](const rectai::Connection& conn) {
+    auto isAudioConnection = [&modules](const soundtable::Connection& conn) {
         const auto fromModuleIt = modules.find(conn.from_module_id);
         if (fromModuleIt != modules.end() &&
             fromModuleIt->second != nullptr) {
@@ -1994,7 +1994,7 @@ void MainComponent::paintModuleConnections(
             for (const auto& port : fromModule.output_ports()) {
                 if (port.name == conn.from_port_name) {
                     return port.kind ==
-                           rectai::PortSignalKind::kAudio;
+                           soundtable::PortSignalKind::kAudio;
                 }
             }
 
@@ -2010,7 +2010,7 @@ void MainComponent::paintModuleConnections(
             for (const auto& port : toModule.input_ports()) {
                 if (port.name == conn.to_port_name) {
                     return port.kind ==
-                           rectai::PortSignalKind::kAudio;
+                           soundtable::PortSignalKind::kAudio;
                 }
             }
 
@@ -2022,26 +2022,26 @@ void MainComponent::paintModuleConnections(
         return false;
     };
 
-    auto getModuleVisualLevel = [](const rectai::AudioModule* module) {
+    auto getModuleVisualLevel = [](const soundtable::AudioModule* module) {
         if (module == nullptr) {
             return 1.0F;
         }
 
-        if (module->is<rectai::VolumeModule>()) {
+        if (module->is<soundtable::VolumeModule>()) {
             const float volume =
                 module->GetParameterOrDefault("volume", 0.9F);
             return juce::jlimit(0.0F, 1.0F, volume);
         }
 
-        if (module->is<rectai::SampleplayModule>() ||
-            module->is<rectai::LoopModule>() ||
-            module->is<rectai::InputModule>()) {
+        if (module->is<soundtable::SampleplayModule>() ||
+            module->is<soundtable::LoopModule>() ||
+            module->is<soundtable::InputModule>()) {
             const float amp =
                 module->GetParameterOrDefault("amp", 1.0F);
             return juce::jlimit(0.0F, 1.0F, amp);
         }
 
-        if (module->is<rectai::OscillatorModule>()) {
+        if (module->is<soundtable::OscillatorModule>()) {
             const float gain =
                 module->GetParameterOrDefault("gain", 0.5F);
             return juce::jlimit(0.0F, 1.0F, gain);
@@ -2182,8 +2182,8 @@ void MainComponent::paintModuleConnections(
         const bool involvesSampleplay =
             derivedState.involvesSampleplay;
 
-        const rectai::AudioModule* fromModulePtr = nullptr;
-        const rectai::AudioModule* toModulePtr = nullptr;
+        const soundtable::AudioModule* fromModulePtr = nullptr;
+        const soundtable::AudioModule* toModulePtr = nullptr;
         if (const auto it = modules.find(conn.from_module_id);
             it != modules.end() && it->second != nullptr) {
             fromModulePtr = it->second.get();
@@ -2203,11 +2203,11 @@ void MainComponent::paintModuleConnections(
 
         const bool fromIsLoop =
             (fromModulePtr != nullptr &&
-             fromModulePtr->is<rectai::LoopModule>());
+             fromModulePtr->is<soundtable::LoopModule>());
         const bool fromIsGenerator =
             (fromModulePtr != nullptr &&
              fromModulePtr->type() ==
-                 rectai::ModuleType::kGenerator);
+                 soundtable::ModuleType::kGenerator);
 
         const juce::Colour activeColour =
             isConnectionMarkedForCut
@@ -2341,7 +2341,7 @@ void MainComponent::paintModuleConnections(
             if (const auto loopIt = modules.find(fromModuleId);
                 loopIt != modules.end() &&
                 loopIt->second != nullptr &&
-                loopIt->second->is<rectai::LoopModule>()) {
+                loopIt->second->is<soundtable::LoopModule>()) {
                 audioEngine_.getLoopModuleWaveformSnapshot(
                     fromModuleId, dst, kWaveformPoints, 0.05);
 
@@ -2739,7 +2739,7 @@ void MainComponent::paintObjectsAndPanels(
     const float nodeRadius = 26.0F;
 
     auto getBodyColourForObject = [&modules](
-                                               const rectai::ObjectInstance& obj,
+                                               const soundtable::ObjectInstance& obj,
                                                const bool isMuted) {
         juce::Colour activeBase = juce::Colour::fromRGB(0x20, 0x90, 0xFF);
 
@@ -2772,7 +2772,7 @@ void MainComponent::paintObjectsAndPanels(
     for (const auto& entry : objects) {
         const auto& object = entry.second;
         if (object.docked() ||
-            object.logical_id() == rectai::MASTER_OUTPUT_ID) {
+            object.logical_id() == soundtable::MASTER_OUTPUT_ID) {
             continue;
         }
 
@@ -2788,7 +2788,7 @@ void MainComponent::paintObjectsAndPanels(
         bool isBodyMuted = false;
         for (const auto& conn : scene_.connections()) {
             if (conn.from_module_id != object.logical_id() ||
-                conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                 continue;
             }
 
@@ -2837,7 +2837,7 @@ void MainComponent::paintObjectsAndPanels(
         // node body so that the playhead bar can live between both.
         const float ringRadius = nodeRadius + 10.0F;
 
-        const rectai::AudioModule* moduleForObject = nullptr;
+        const soundtable::AudioModule* moduleForObject = nullptr;
         if (const auto moduleEntryIt = modules.find(object.logical_id());
             moduleEntryIt != modules.end()) {
             moduleForObject = moduleEntryIt->second.get();
@@ -2845,11 +2845,11 @@ void MainComponent::paintObjectsAndPanels(
 
         const bool isTempoModule =
             (moduleForObject != nullptr &&
-             moduleForObject->is<rectai::TempoModule>());
+             moduleForObject->is<soundtable::TempoModule>());
 
         const bool isDelayModule =
             (moduleForObject != nullptr &&
-             moduleForObject->is<rectai::DelayModule>());
+             moduleForObject->is<soundtable::DelayModule>());
 
         float freqValue = 0.5F;
         float gainValue = 0.5F;
@@ -2857,8 +2857,8 @@ void MainComponent::paintObjectsAndPanels(
         bool showGainControl = false;
         if (moduleForObject != nullptr) {
             if (isTempoModule) {
-                freqValue = rectai::TempoModule::NormalisedFromBpm(bpm_);
-            } else if (moduleForObject->is<rectai::LoopModule>()) {
+                freqValue = soundtable::TempoModule::NormalisedFromBpm(bpm_);
+            } else if (moduleForObject->is<soundtable::LoopModule>()) {
                 // For Loop modules, the left bar represents the
                 // currently selected sample slot via the normalised
                 // "sample" parameter.
@@ -2889,17 +2889,17 @@ void MainComponent::paintObjectsAndPanels(
             }
 
             if (const auto* volumeModule =
-                    dynamic_cast<const rectai::VolumeModule*>(
+                    dynamic_cast<const soundtable::VolumeModule*>(
                         moduleForObject)) {
                 gainValue = volumeModule->GetParameterOrDefault(
                     "volume", 0.9F);
             } else if (moduleForObject->type() ==
-                       rectai::ModuleType::kFilter) {
+                       soundtable::ModuleType::kFilter) {
                 gainValue = moduleForObject->GetParameterOrDefault(
                     "q",
                     moduleForObject->default_parameter_value("q"));
-            } else if (moduleForObject->is<rectai::LoopModule>() ||
-                       moduleForObject->is<rectai::SampleplayModule>()) {
+            } else if (moduleForObject->is<soundtable::LoopModule>() ||
+                       moduleForObject->is<soundtable::SampleplayModule>()) {
                 // Loop and Sampleplay modules expose an "amp"
                 // parameter that behaves as their primary level
                 // control.
@@ -2915,7 +2915,7 @@ void MainComponent::paintObjectsAndPanels(
                 moduleForObject->uses_frequency_control() ||
                 moduleForObject->uses_pitch_control() ||
                 isTempoModule ||
-                moduleForObject->is<rectai::LoopModule>() ||
+                moduleForObject->is<soundtable::LoopModule>() ||
                 isDelayModule;
             showGainControl = moduleForObject->uses_gain_control();
         }
@@ -3008,7 +3008,7 @@ MainComponent::computeObjectsWithOutgoingActiveConnection(
         // (id MASTER_OUTPUT_ID). Auto-wired master connections should not be
         // treated as "outgoing" for the purpose of hiding generator →
         // master radials.
-        if (conn.to_module_id == rectai::MASTER_OUTPUT_ID) {
+        if (conn.to_module_id == soundtable::MASTER_OUTPUT_ID) {
             continue;
         }
 
@@ -3070,7 +3070,7 @@ void MainComponent::paintNodeBodyAndOutline(juce::Graphics& g,
 
 void MainComponent::paintNodeDebugOverlay(
     juce::Graphics& g,
-    const rectai::ObjectInstance& object,
+    const soundtable::ObjectInstance& object,
     float cx,
     float cy,
     float nodeRadius) const
@@ -3092,7 +3092,7 @@ void MainComponent::paintNodeDebugOverlay(
 
 void MainComponent::paintNodeTempoOverlay(
     juce::Graphics& g,
-    const rectai::AudioModule* moduleForObject,
+    const soundtable::AudioModule* moduleForObject,
     float cx,
     float cy,
     float nodeRadius,
@@ -3103,7 +3103,7 @@ void MainComponent::paintNodeTempoOverlay(
    }
 
    const auto* tempoModule =
-       dynamic_cast<const rectai::TempoModule*>(moduleForObject);
+       dynamic_cast<const soundtable::TempoModule*>(moduleForObject);
    if (tempoModule == nullptr) {
        return;
    }
@@ -3127,7 +3127,7 @@ void MainComponent::paintNodeTempoOverlay(
 
 void MainComponent::paintDelayNoteOverlay(
     juce::Graphics& g,
-    const rectai::AudioModule* moduleForObject,
+    const soundtable::AudioModule* moduleForObject,
     const std::string& moduleId,
     float cx,
     float cy,
@@ -3135,7 +3135,7 @@ void MainComponent::paintDelayNoteOverlay(
     double nowSeconds)
 {
     if (moduleForObject == nullptr ||
-        !moduleForObject->is<rectai::DelayModule>()) {
+        !moduleForObject->is<soundtable::DelayModule>()) {
         return;
     }
 
@@ -3230,8 +3230,8 @@ void MainComponent::paintDelayNoteOverlay(
 
 void MainComponent::paintNodeSideControls(
     juce::Graphics& g,
-    const rectai::ObjectInstance& object,
-    const rectai::AudioModule* moduleForObject,
+    const soundtable::ObjectInstance& object,
+    const soundtable::AudioModule* moduleForObject,
     float cx,
     float cy,
     float ringRadius,
@@ -3510,7 +3510,7 @@ void MainComponent::paintNodeSideControls(
             g.setColour(freqForegroundColour);
             g.fillPath(tri);
         } else if (moduleForObject != nullptr &&
-               moduleForObject->is<rectai::LoopModule>()) {
+               moduleForObject->is<soundtable::LoopModule>()) {
             const int segmentsCount = 4;
             const float gap = 1.0F;
 
@@ -3617,7 +3617,7 @@ void MainComponent::paintNodeSideControls(
                 g.fillPath(tri);
             }
              } else if (moduleForObject != nullptr &&
-                  moduleForObject->is<rectai::DelayModule>()) {
+                  moduleForObject->is<soundtable::DelayModule>()) {
             const auto* mode = moduleForObject->current_mode();
             const bool isFeedbackMode =
                 (mode != nullptr && mode->type == "feedback");
@@ -3898,7 +3898,7 @@ void MainComponent::paintNodeSideControls(
         }
 
         if (sequencerControlsVolume_ && moduleForObject != nullptr &&
-            moduleForObject->is<rectai::OscillatorModule>()) {
+            moduleForObject->is<soundtable::OscillatorModule>()) {
             float seqGain = 1.0F;
             const auto it = oscillatorSequencerGain_.find(
                 moduleForObject->id());
@@ -3930,8 +3930,8 @@ void MainComponent::paintNodeSideControls(
 void MainComponent::paintNodeModulePanel(
     juce::Graphics& g,
     const juce::Rectangle<float>& bounds,
-    const rectai::ObjectInstance& object,
-    const rectai::AudioModule* moduleForObject,
+    const soundtable::ObjectInstance& object,
+    const soundtable::AudioModule* moduleForObject,
     float cx,
     float cy,
     bool insideMusic)
@@ -3981,7 +3981,7 @@ void MainComponent::paintNodeModulePanel(
         panelBounds.getX(), panelBounds.getBottom(),
         panelBounds.getWidth(), kTabStripHeight);
 
-    const rectai::AudioModule::SettingsTabs* settingsTabsPtr = nullptr;
+    const soundtable::AudioModule::SettingsTabs* settingsTabsPtr = nullptr;
     if (moduleForObject != nullptr) {
         settingsTabsPtr = &moduleForObject->supported_settings_tabs();
     }
@@ -4028,8 +4028,8 @@ void MainComponent::paintNodeModulePanel(
     };
 
     auto mapSettingsKindToPanelTab =
-        [](rectai::AudioModule::SettingsTabKind kind) {
-            using Kind = rectai::AudioModule::SettingsTabKind;
+        [](soundtable::AudioModule::SettingsTabKind kind) {
+            using Kind = soundtable::AudioModule::SettingsTabKind;
             switch (kind) {
             case Kind::kEnvelope:
                 return ModulePanelState::Tab::kEnvelope;
@@ -4063,7 +4063,7 @@ void MainComponent::paintNodeModulePanel(
 
     if (panelState.activeTab == ModulePanelState::Tab::kEnvelope) {
         const auto* envModule =
-            dynamic_cast<const rectai::AudioModuleWithEnvelope*>(
+            dynamic_cast<const soundtable::AudioModuleWithEnvelope*>(
                 moduleForObject);
 
         if (envModule != nullptr) {
@@ -4085,8 +4085,8 @@ void MainComponent::paintNodeModulePanel(
         }
     } else if (panelState.activeTab ==
                ModulePanelState::Tab::kLoopFiles) {
-        auto* loopModule = dynamic_cast<rectai::LoopModule*>(
-            const_cast<rectai::AudioModule*>(moduleForObject));
+        auto* loopModule = dynamic_cast<soundtable::LoopModule*>(
+            const_cast<soundtable::AudioModule*>(moduleForObject));
         if (loopModule == nullptr) {
             g.drawFittedText("Loop files not available",
                               textBounds.toNearestInt(),
@@ -4167,7 +4167,7 @@ void MainComponent::paintNodeModulePanel(
         }
     } else {
         const auto* tempoModule =
-            dynamic_cast<const rectai::TempoModule*>(moduleForObject);
+            dynamic_cast<const soundtable::TempoModule*>(moduleForObject);
 
         if (tempoModule != nullptr) {
             juce::Rectangle<float> listBounds =
@@ -4177,12 +4177,12 @@ void MainComponent::paintNodeModulePanel(
                 getOrCreateTempoPresetList(panelState.moduleId);
             if (list != nullptr) {
                 const auto& presets =
-                    rectai::TempoModule::bpm_presets();
-                std::vector<rectai::ui::TextScrollList::Item> items;
+                    soundtable::TempoModule::bpm_presets();
+                std::vector<soundtable::ui::TextScrollList::Item> items;
                 items.reserve(presets.size());
 
                 for (const auto& preset : presets) {
-                    rectai::ui::TextScrollList::Item item;
+                    soundtable::ui::TextScrollList::Item item;
                     item.text = preset.label;
                     items.push_back(std::move(item));
                 }
@@ -4226,8 +4226,8 @@ void MainComponent::paintNodeModulePanel(
 
 void MainComponent::paintNodeIconAndModeButton(
     juce::Graphics& g,
-    const rectai::ObjectInstance& object,
-    const rectai::AudioModule* moduleForObject,
+    const soundtable::ObjectInstance& object,
+    const soundtable::AudioModule* moduleForObject,
     float cx,
     float cy,
     float nodeRadius,
@@ -4263,7 +4263,7 @@ void MainComponent::paintNodeIconAndModeButton(
 
             const bool isTempoIcon =
                 (moduleForObject != nullptr &&
-                 moduleForObject->is<rectai::TempoModule>());
+                 moduleForObject->is<soundtable::TempoModule>());
             if (isTempoIcon) {
                 juce::Graphics::ScopedSaveState tempoIconState(g);
                 g.addTransform(juce::AffineTransform::rotation(
@@ -4422,8 +4422,8 @@ void MainComponent::paintNodeIconAndModeButton(
 
 void MainComponent::paintNodeModeOverlayAndIcons(
     juce::Graphics& g,
-    const rectai::ObjectInstance& object,
-    const rectai::AudioModule* moduleForObject,
+    const soundtable::ObjectInstance& object,
+    const soundtable::AudioModule* moduleForObject,
     float cx,
     float cy,
     float ringRadius,
@@ -4521,7 +4521,7 @@ void MainComponent::paintNodeModeOverlayAndIcons(
 
 void MainComponent::paintNodeLabelsAndLoopTrail(
     juce::Graphics& g,
-    const rectai::AudioModule* moduleForObject,
+    const soundtable::AudioModule* moduleForObject,
     float cx,
     float cy,
     float nodeRadius,
@@ -4530,7 +4530,7 @@ void MainComponent::paintNodeLabelsAndLoopTrail(
     double nowSeconds)
 {
     if (const auto* sampleModule =
-            dynamic_cast<const rectai::SampleplayModule*>(
+            dynamic_cast<const soundtable::SampleplayModule*>(
                 moduleForObject)) {
         const auto* activeInstrument =
             sampleModule->active_instrument();
@@ -4583,7 +4583,7 @@ void MainComponent::paintNodeLabelsAndLoopTrail(
     }
 
     if (const auto* loopModule =
-            dynamic_cast<const rectai::LoopModule*>(moduleForObject)) {
+            dynamic_cast<const soundtable::LoopModule*>(moduleForObject)) {
         const auto& loops = loopModule->loops();
         if (!loops.empty()) {
             float sampleParam = loopModule->GetParameterOrDefault(
@@ -4597,7 +4597,7 @@ void MainComponent::paintNodeLabelsAndLoopTrail(
                 selectedIndex = 3;
             }
 
-            const rectai::LoopDefinition* chosen = nullptr;
+            const soundtable::LoopDefinition* chosen = nullptr;
             if (selectedIndex < static_cast<int>(loops.size())) {
                 chosen = &loops[static_cast<std::size_t>(
                     selectedIndex)];
@@ -4672,7 +4672,7 @@ void MainComponent::paintNodeLabelsAndLoopTrail(
                 selectedIndex = 3;
             }
 
-            const rectai::LoopDefinition* chosenTrail = nullptr;
+            const soundtable::LoopDefinition* chosenTrail = nullptr;
             if (selectedIndex < static_cast<int>(loopsForTrail.size())) {
                 chosenTrail = &loopsForTrail[static_cast<std::size_t>(
                     selectedIndex)];
@@ -4787,7 +4787,7 @@ void MainComponent::paintSequencerOverlays(
     for (const auto& entry : objects) {
         const auto& object = entry.second;
         if (object.docked() ||
-            object.logical_id() == rectai::MASTER_OUTPUT_ID) {
+            object.logical_id() == soundtable::MASTER_OUTPUT_ID) {
             continue;
         }
 
@@ -4861,7 +4861,7 @@ void MainComponent::paintDockAndHud(
     // Dock bar: stacked modules that are marked as docked in the .rtp.
     // These modules live outside the main musical surface but remain
     // visible and accessible in a dedicated side strip.
-    std::vector<std::pair<std::int64_t, const rectai::ObjectInstance*>>
+    std::vector<std::pair<std::int64_t, const soundtable::ObjectInstance*>>
         dockedObjects;
     dockedObjects.reserve(objects.size());
     for (const auto& [id, obj] : objects) {
@@ -4874,7 +4874,7 @@ void MainComponent::paintDockAndHud(
 
     if (!dockedObjects.empty()) {
         auto getDockBodyColourForObject = [&modules](
-                                                       const rectai::ObjectInstance& obj,
+                                                       const soundtable::ObjectInstance& obj,
                                                        const bool isMuted) {
             juce::Colour activeBase =
                 juce::Colour::fromRGB(0x20, 0x90, 0xFF);
@@ -4964,7 +4964,7 @@ void MainComponent::paintDockAndHud(
                 bool isBodyMuted = false;
                 for (const auto& conn : scene_.connections()) {
                     if (conn.from_module_id != obj->logical_id() ||
-                        conn.to_module_id != rectai::MASTER_OUTPUT_ID) {
+                        conn.to_module_id != soundtable::MASTER_OUTPUT_ID) {
                         continue;
                     }
 
@@ -4999,7 +4999,7 @@ void MainComponent::paintDockAndHud(
                               nodeRadiusDock * 2.0F - outlineThickness,
                               outlineThickness);
 
-                const rectai::AudioModule* moduleForObject = nullptr;
+                const soundtable::AudioModule* moduleForObject = nullptr;
                 if (const auto moduleEntryIt = modules.find(
                         obj->logical_id());
                     moduleEntryIt != modules.end()) {
@@ -5135,7 +5135,7 @@ void MainComponent::paintDockAndHud(
                 // Tempo tangible still reveals the current session tempo.
                 if (moduleForObject != nullptr && bpmLabelAlpha > 0.0) {
                     const auto* tempoModule =
-                        dynamic_cast<const rectai::TempoModule*>(
+                        dynamic_cast<const soundtable::TempoModule*>(
                             moduleForObject);
                     if (tempoModule != nullptr) {
                         const int bpmInt = static_cast<int>(

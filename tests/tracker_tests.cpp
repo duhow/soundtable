@@ -7,8 +7,8 @@
 
 #include "TrackerEngine.h"
 
-using rectai::tracker::TrackerEngine;
-using rectai::tracker::TrackedObjectList;
+using soundtable::tracker::TrackerEngine;
+using soundtable::tracker::TrackedObjectList;
 
 namespace {
 
@@ -21,8 +21,8 @@ cv::Mat loadFiducialImage(const std::string& filename)
         "../../tests/" + filename,
     };
 
-#ifdef RECTAI_SOURCE_DIR
-    candidates.push_back(std::string(RECTAI_SOURCE_DIR) + "/tests/" + filename);
+#ifdef SOUNDTABLE_SOURCE_DIR
+    candidates.push_back(std::string(SOUNDTABLE_SOURCE_DIR) + "/tests/" + filename);
 #endif
 
     for (const auto& path : candidates) {
@@ -32,7 +32,7 @@ cv::Mat loadFiducialImage(const std::string& filename)
         }
     }
 
-    std::cerr << "rectai-tracker-tests: could not load fiducial image '"
+    std::cerr << "soundtable-tracker-tests: could not load fiducial image '"
               << filename << "' from any known path" << std::endl;
     assert(false && "Failed to load fiducial PNG for tracker test");
     return {};
@@ -71,7 +71,7 @@ int main()
         assert(!objects.empty());
 
         const int expectedId = expectedIdFromFilename(file);
-        std::cout << "rectai-tracker-tests: file " << file << " (expected ID "
+        std::cout << "soundtable-tracker-tests: file " << file << " (expected ID "
                   << expectedId << ") -> IDs:";
 
         bool foundExpectedId = false;
@@ -86,6 +86,6 @@ int main()
         assert(foundExpectedId && "Expected amoeba ID matching filename in TrackerEngine output");
     }
 
-    std::cout << "rectai-tracker-tests: OK" << std::endl;
+    std::cout << "soundtable-tracker-tests: OK" << std::endl;
     return 0;
 }
