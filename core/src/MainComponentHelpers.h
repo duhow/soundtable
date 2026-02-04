@@ -38,13 +38,12 @@ bool lineSegmentsIntersect(const juce::Point<float>& p1,
                           float threshold = 5.0F);
 
 // Try to locate a Reactable resource file given a relative path such as
-// "Resources/default.rtp". The helper will internally prefix the path
-// with "com.reactable/" so that callers only need to specify the
-// subfolder and file within the Reactable content tree.
-//
-// Resources are searched first in the user data directory ($HOME/.local/share/soundtable,
-// or XDG_DATA_HOME/soundtable), then in the current working directory and executable
-// location as fallbacks, attempting a series of plausible prefixes.
+// "Resources/default.rtp". The helper resolves the path relative to the
+// user data directory managed by ResourceManager (typically
+// $XDG_DATA_HOME/soundtable or $HOME/.local/share/soundtable) and then
+// falls back to a series of locations relative to the current working
+// directory and executable. Legacy layouts where resources live under a
+// com.reactable/ subtree are still probed as fallbacks.
 //
 // Returns a valid juce::File if found; otherwise returns an empty file
 // (for which existsAsFile() will be false).

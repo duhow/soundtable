@@ -103,44 +103,46 @@ bool isConnectionGeometricallyActive(const soundtable::ObjectInstance& fromObj,
 
 juce::File loadFile(const juce::String& relativePath)
 {
-    static constexpr const char* kReactableRoot = "com.reactable/";
-
-    const juce::String fullRelativePath = juce::String(kReactableRoot) +
-                                          relativePath;
-
     // First, try to load from the user resource directory (XDG-based).
+    // Callers pass paths like "Resources/default.rtp", "Samples/foo.wav",
+    // etc., which are resolved relative to the ResourceManager root
+    // (typically $XDG_DATA_HOME/soundtable or $HOME/.local/share/soundtable).
     const ResourceManager& resourceMgr = ResourceManager::getInstance();
     if (resourceMgr.isInitialized()) {
-        const juce::File userResourceFile = resourceMgr.getResourceFile(fullRelativePath);
+        const juce::File userResourceFile =
+            resourceMgr.getResourceFile(relativePath);
         if (userResourceFile.existsAsFile()) {
             return userResourceFile;
         }
     }
 
     // Fallback: search in predefined locations relative to cwd and executable.
-    // This maintains backward compatibility with embedded resources or build output.
-    juce::File candidates[8];
+    // Maintain backward compatibility with legacy layouts where resources
+    // lived under a com.reactable/ subtree next to the executable or repo.
+    juce::File candidates[10];
     int candidateCount = 0;
 
     const juce::File cwd = juce::File::getCurrentWorkingDirectory();
-    candidates[candidateCount++] = cwd.getChildFile(fullRelativePath);
+    candidates[candidateCount++] = cwd.getChildFile(relativePath);
     candidates[candidateCount++] =
-        cwd.getChildFile("../" + fullRelativePath);
+        cwd.getChildFile("../" + relativePath);
     candidates[candidateCount++] =
-        cwd.getChildFile("../../" + fullRelativePath);
+        cwd.getChildFile("../../" + relativePath);
+    candidates[candidateCount++] =
+        cwd.getChildFile("com.reactable/" + relativePath);
 
     const juce::File exeDir = juce::File::getSpecialLocation(
                                       juce::File::currentExecutableFile)
                                       .getParentDirectory();
-    candidates[candidateCount++] = exeDir.getChildFile(fullRelativePath);
+    candidates[candidateCount++] = exeDir.getChildFile(relativePath);
     candidates[candidateCount++] =
-        exeDir.getChildFile("../" + fullRelativePath);
+        exeDir.getChildFile("../" + relativePath);
     candidates[candidateCount++] =
-        exeDir.getChildFile("../../" + fullRelativePath);
+        exeDir.getChildFile("../../" + relativePath);
     candidates[candidateCount++] =
-        exeDir.getParentDirectory().getChildFile(fullRelativePath);
+        exeDir.getParentDirectory().getChildFile(relativePath);
     candidates[candidateCount++] = exeDir.getParentDirectory().getChildFile(
-        "../" + fullRelativePath);
+        "../" + relativePath);
 
     for (int i = 0; i < candidateCount; ++i) {
         const juce::File& f = candidates[i];

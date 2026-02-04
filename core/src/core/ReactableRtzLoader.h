@@ -10,7 +10,7 @@ namespace soundtable {
 
 struct ReactablePatchMetadata;
 
-// Import a Reactable .rtz archive into the local com.reactable tree and
+// Import a Reactable .rtz archive into the local Reactable content tree and
 // load the contained .rtp session into the provided Scene.
 //
 // The .rtz file is a ZIP archive that must contain at least one .rtp file

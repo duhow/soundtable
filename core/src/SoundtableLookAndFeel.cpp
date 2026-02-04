@@ -1,4 +1,5 @@
 #include "SoundtableLookAndFeel.h"
+#include "ResourceManager.h"
 
 namespace {
 
@@ -8,18 +9,19 @@ namespace {
 // best-effort.
 [[nodiscard]] juce::File findEmbeddedFontFile()
 {
-    const auto appFile = juce::File::getSpecialLocation(
-        juce::File::currentApplicationFile);
-    auto root = appFile.getParentDirectory();
-
-    // The binary usually lives under build/; go one level up to
-    // reach the repository root and probe a couple of stable
-    // resource locations.
-    root = root.getParentDirectory();
-
     const juce::File candidates[] = {
-        root.getChildFile("com.reactable/Resources/default.ttf"),
-        root.getChildFile("resources/default.ttf"),
+        // Preferred location: user resource directory managed by
+        // ResourceManager, typically
+        // ~/.local/share/soundtable/Resources/default.ttf.
+        soundtable::ResourceManager::getInstance()
+            .getResourceFile("Resources/default.ttf"),
+
+        // Development-time fallbacks next to the repository or binary.
+        juce::File::getSpecialLocation(
+            juce::File::currentApplicationFile)
+            .getParentDirectory()
+            .getParentDirectory()
+            .getChildFile("resources/default.ttf"),
     };
 
     for (const auto& file : candidates) {

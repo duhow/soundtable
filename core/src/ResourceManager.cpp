@@ -43,7 +43,7 @@ bool ResourceManager::initialize()
 
     // Check if resources have already been extracted.
     if (hasExtractionMarker()) {
-        juce::Logger::writeToLog("[ResourceManager] Extraction marker found, skipping ZIP extraction");
+        // juce::Logger::writeToLog("[ResourceManager] Extraction marker found, skipping ZIP extraction");
         initialized_ = true;
         return true;
     }

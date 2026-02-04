@@ -711,7 +711,9 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     // 1) If an explicit session path was provided on startup, try
     //    to load it and validate that it is a proper Reactable
     //    .rtp project.
-    if (initialSessionPath.isNotEmpty()) {
+    const bool hasExplicitSessionArg =
+        initialSessionPath.isNotEmpty();
+    if (hasExplicitSessionArg) {
         const juce::File userFile =
             juce::File::getCurrentWorkingDirectory().getChildFile(
                 initialSessionPath);
@@ -725,12 +727,26 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
     }
 
     // 2) If no file was provided or loading the explicit file
-    //    failed, fall back to the bundled default patch.
+    //    failed, fall back to a bundled patch. When resources are
+    //    available and no explicit session was requested, prefer the
+    //    Loopdemo session; otherwise keep the original default.
     if (!loaded) {
-        const juce::File defaultFile =
-            soundtable::ui::loadFile("Resources/default.rtp");
-        if (defaultFile.existsAsFile()) {
-            loaded = loadPatchFromFile(defaultFile);
+        juce::File fallbackFile;
+
+        if (!hasExplicitSessionArg) {
+            const juce::File loopdemoFile =
+                soundtable::ui::loadFile("Sessions/Loopdemo.rtp");
+            if (loopdemoFile.existsAsFile()) {
+                fallbackFile = loopdemoFile;
+            }
+        }
+
+        if (!fallbackFile.existsAsFile()) {
+            fallbackFile = soundtable::ui::loadFile("Resources/default.rtp");
+        }
+
+        if (fallbackFile.existsAsFile()) {
+            loaded = loadPatchFromFile(fallbackFile);
         }
     }
 
