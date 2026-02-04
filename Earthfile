@@ -2,12 +2,24 @@ VERSION 0.8
 
 # Target base con toolchain y dependencias
 
-the-base:
+base-system:
     FROM ubuntu:22.04
+
+    RUN rm -f /etc/apt/apt.conf.d/docker-clean && \
+        echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
 
     ENV DEBIAN_FRONTEND=noninteractive
 
-    RUN apt-get update && \
+    RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+        --mount=type=cache,target=/var/lib/apt,sharing=locked \
+        apt-get update
+
+the-base:
+    FROM +base-system
+
+    RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+        --mount=type=cache,target=/var/lib/apt,sharing=locked \
+        apt-get update && \
         apt-get install -y --no-install-recommends \
             build-essential \
             cmake \
@@ -34,25 +46,20 @@ the-base:
             libfluidsynth-dev \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
-            libopencv-dev && \
-        rm -rf /var/lib/apt/lists/*
+            libopencv-dev
 
     WORKDIR /opt/soundtable
 
-    # Copiamos código del proyecto
+    COPY reacTIVision ./reacTIVision
+    COPY JUCE ./JUCE
+    COPY external ./external
+
     COPY CMakeLists.txt ./
+    COPY resources ./resources
     COPY core ./core
     COPY tracker ./tracker
     COPY tests ./tests
-    COPY resources ./resources
-    COPY reacTIVision ./reacTIVision
     COPY research ./research
-    COPY external ./external
-
-    # JUCE: se espera que exista como submódulo JUCE/ en el repo host.
-    # Si no existe, puede clonarse dentro del entorno Earthly manualmente.
-    COPY JUCE ./JUCE
-
 
 # Target principal: compila soundtable-core (JUCE) y soundtable-tracker (OpenCV)
 
@@ -71,41 +78,21 @@ build:
 # Target AppImage: genera un AppImage con todas las dependencias necesarias
 
 appimage:
-    FROM +build
+    FROM +base-system
 
     # Herramientas adicionales necesarias para crear AppImage (incluye ImageMagick para redimensionar el icono)
-    RUN apt-get update && \
+    RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+        --mount=type=cache,target=/var/lib/apt,sharing=locked \
+        apt-get update && \
         apt-get install -y --no-install-recommends \
             curl \
             file \
             ca-certificates \
-            imagemagick && \
-        rm -rf /var/lib/apt/lists/*
-
-    # Preparamos AppDir con los binarios principales e iconos en ruta hicolor
-    RUN mkdir -p /AppDir/usr/bin /AppDir/usr/share/applications /AppDir/usr/share/icons/hicolor/256x256/apps
-    # Icono principal: se ajusta a 256x256 para cumplir con el tamaño del tema hicolor
-    COPY resources/reactable-logo.png /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png
-    RUN convert /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png \
-        -resize 256x256^ -gravity center -extent 256x256 \
-        /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png
-    # Copia/symlink en la raíz del AppDir para que appimagetool/linuxdeploy lo detecten como icono de AppImage
-    RUN ln -sf usr/share/icons/hicolor/256x256/apps/Soundtable.png /AppDir/Soundtable.png && \
-        ln -sf Soundtable.png /AppDir/.DirIcon
-
-    RUN cp build/core/soundtable-core_artefacts/Release/Soundtable /AppDir/usr/bin/Soundtable && \
-        cp build/soundtable-tracker /AppDir/usr/bin/soundtable-tracker
-
-    # Archivo .desktop mínimo para el lanzador principal (sin heredoc para evitar problemas de indentación)
-    RUN printf '%s\n' \
-        '[Desktop Entry]' \
-        'Type=Application' \
-        'Name=Soundtable' \
-        'Exec=Soundtable' \
-        'Icon=Soundtable' \
-        'StartupWMClass=Soundtable' \
-        'Categories=AudioVideo;Audio;' \
-        > /AppDir/usr/share/applications/Soundtable.desktop
+            libzip4 \
+            libfluidsynth3 \
+            libopencv-core4.5d \
+            libopencv-highgui4.5d \
+            libopencv-videoio4.5d
 
     # Descargamos linuxdeploy y appimagetool como AppImages
     RUN curl -L https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -o /usr/local/bin/linuxdeploy && \
@@ -113,8 +100,27 @@ appimage:
         curl -L https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -o /usr/local/bin/appimagetool && \
         chmod +x /usr/local/bin/appimagetool
 
+    RUN mkdir -p \
+        /AppDir/resources \
+        /AppDir/usr/bin \
+        /AppDir/usr/share/applications \
+        /AppDir/usr/share/icons/hicolor/256x256/apps
+
+    COPY --if-exists resources/reactableresources.zip /AppDir/resources/
+
+    COPY resources/reactable-logo.png /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png
+
+    # Copia/symlink en la raíz del AppDir para que appimagetool/linuxdeploy lo detecten como icono de AppImage
+    RUN ln -sf usr/share/icons/hicolor/256x256/apps/Soundtable.png /AppDir/Soundtable.png && \
+        ln -sf Soundtable.png /AppDir/.DirIcon
+
+    COPY resources/app.desktop /AppDir/usr/share/applications/Soundtable.desktop
+
     ENV APPIMAGE_EXTRACT_AND_RUN=1
     ENV ARCH=x86_64
+
+    COPY +build/Soundtable /AppDir/usr/bin/Soundtable
+    COPY +build/soundtable-tracker /AppDir/usr/bin/soundtable-tracker
 
     # linuxdeploy analiza los binarios, registra el .desktop y el icono, y copia dependencias compartidas
     RUN /usr/local/bin/linuxdeploy \

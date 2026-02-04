@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Soundtable
+Exec=Soundtable
+Icon=Soundtable
+StartupWMClass=Soundtable
+Categories=AudioVideo;Audio;
