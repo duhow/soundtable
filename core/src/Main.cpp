@@ -2,6 +2,7 @@
 
 #include "AudioEngine.h"
 #include "MainComponent.h"
+#include "ResourceManager.h"
 #include "SoundtableLookAndFeel.h"
 #include "BinaryData.h"
 
@@ -101,6 +102,18 @@ public:
 
     void initialise(const juce::String& commandLineParameters) override
     {
+        // Initialize resource manager before any UI components are created.
+        // This will set up the user resource directory and extract bundled
+        // resources if needed.
+        soundtable::ResourceManager& resourceMgr = 
+            soundtable::ResourceManager::getInstance();
+        if (!resourceMgr.initialize()) {
+            // Log the error but continue; the app may still work with
+            // fallback resources from the build output.
+            juce::Logger::writeToLog(
+                "[SoundtableApplication] Warning: Resource manager initialization failed");
+        }
+
         // Install a custom LookAndFeel that, when a bundled font is
         // present, uses a single embedded typeface instead of
         // querying all system fonts via fontconfig.

@@ -104,6 +104,12 @@ juce_add_gui_app(${PROJECT_NAME}
 
 juce_generate_juce_header(${PROJECT_NAME})
 
+target_include_directories(${PROJECT_NAME}
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        $<$<BOOL:${LIBZIP_FOUND}>:${LIBZIP_INCLUDE_DIRS}>
+)
+
 target_sources(${PROJECT_NAME}
     PRIVATE
         src/Main.cpp
@@ -126,6 +132,8 @@ target_sources(${PROJECT_NAME}
         src/MainComponentHelpers.h
         src/InteractionSystem.cpp
         src/InteractionSystem.h
+        src/ResourceManager.cpp
+        src/ResourceManager.h
         src/SoundtableLookAndFeel.cpp
         src/AudioEngine.cpp
         src/AudioEngine.h
@@ -158,6 +166,7 @@ target_link_libraries(${PROJECT_NAME}
         juce::juce_dsp
         juce::juce_osc
     $<$<AND:$<BOOL:${CURL_FOUND}>,$<PLATFORM_ID:Linux>>:CURL::libcurl>
+    $<$<BOOL:${LIBZIP_FOUND}>:${LIBZIP_LIBRARIES}>
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags

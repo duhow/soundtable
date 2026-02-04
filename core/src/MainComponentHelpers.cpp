@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "ResourceManager.h"
+
 namespace soundtable::ui {
 
 juce::Colour colourFromArgb(const std::uint32_t argb)
@@ -106,6 +108,17 @@ juce::File loadFile(const juce::String& relativePath)
     const juce::String fullRelativePath = juce::String(kReactableRoot) +
                                           relativePath;
 
+    // First, try to load from the user resource directory (XDG-based).
+    const ResourceManager& resourceMgr = ResourceManager::getInstance();
+    if (resourceMgr.isInitialized()) {
+        const juce::File userResourceFile = resourceMgr.getResourceFile(fullRelativePath);
+        if (userResourceFile.existsAsFile()) {
+            return userResourceFile;
+        }
+    }
+
+    // Fallback: search in predefined locations relative to cwd and executable.
+    // This maintains backward compatibility with embedded resources or build output.
     juce::File candidates[8];
     int candidateCount = 0;
 
