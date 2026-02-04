@@ -70,6 +70,21 @@ endif()
 
 include(CTest)
 
+# Export project version to a generated header so that core, tracker and
+# tooling (e.g. AppImage metadata) can share a single source of truth.
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+
+file(WRITE "${CMAKE_BINARY_DIR}/generated/soundtable_version.h" "// Generated from top-level CMakeLists.txt project version.\n"
+                                          "// Do not edit manually.\n\n"
+                                          "#pragma once\n\n"
+                                          "#define SOUNDTABLE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR}\n"
+                                          "#define SOUNDTABLE_VERSION_MINOR ${PROJECT_VERSION_MINOR}\n"
+                                          "#define SOUNDTABLE_VERSION_PATCH ${PROJECT_VERSION_PATCH}\n\n"
+                                          "#define SOUNDTABLE_VERSION_STRING \"${PROJECT_VERSION}\"\n")
+
+set(SOUNDTABLE_VERSION_STRING "${PROJECT_VERSION}" CACHE STRING "Soundtable version string")
+
+
 # Path to JUCE as a submodule (expected at JUCE/)
 set(JUCE_DIR "${CMAKE_SOURCE_DIR}/JUCE" CACHE PATH "Path to JUCE source directory")
 

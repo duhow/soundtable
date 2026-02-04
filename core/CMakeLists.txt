@@ -66,6 +66,7 @@ add_library(soundtable-core-lib STATIC
 target_include_directories(soundtable-core-lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_BINARY_DIR}/generated
     $<$<AND:$<BOOL:${FLUIDSYNTH_FOUND}>,$<PLATFORM_ID:Linux>>:${FLUIDSYNTH_INCLUDE_DIRS}>
     $<$<BOOL:${LIBZIP_FOUND}>:${LIBZIP_INCLUDE_DIRS}>
 )
@@ -107,6 +108,7 @@ juce_generate_juce_header(${PROJECT_NAME})
 target_include_directories(${PROJECT_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_BINARY_DIR}/generated
         $<$<BOOL:${LIBZIP_FOUND}>:${LIBZIP_INCLUDE_DIRS}>
 )
 

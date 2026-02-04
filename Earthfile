@@ -1,5 +1,12 @@
 VERSION 0.8
 
+# Metadatos de AppImage (pueden sobreescribirse vía --build-arg)
+# APP_VERSION por defecto se toma de la variable de CMake SOUNDTABLE_VERSION_STRING
+# cuando Earthly se ejecuta desde un árbol ya configurado con CMake. Si se construye
+# desde cero, se puede sobreescribir manualmente.
+ARG APP_VERSION=${SOUNDTABLE_VERSION_STRING:-dev}
+ARG APPIMAGE_UPDATE_INFORMATION="gh-releases-zsync|duhow|soundtable|latest|Soundtable-*-x86_64.AppImage.zsync"
+
 # Target base con toolchain y dependencias
 
 base-system:
@@ -92,7 +99,8 @@ appimage:
             libfluidsynth3 \
             libopencv-core4.5d \
             libopencv-highgui4.5d \
-            libopencv-videoio4.5d
+            libopencv-videoio4.5d \
+            appstream
 
     # Descargamos linuxdeploy y appimagetool como AppImages
     RUN curl -L https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -o /usr/local/bin/linuxdeploy && \
@@ -104,7 +112,8 @@ appimage:
         /AppDir/resources \
         /AppDir/usr/bin \
         /AppDir/usr/share/applications \
-        /AppDir/usr/share/icons/hicolor/256x256/apps
+        /AppDir/usr/share/icons/hicolor/256x256/apps \
+        /AppDir/usr/share/metainfo
 
     COPY --if-exists resources/reactableresources.zip /AppDir/resources/
 
@@ -115,9 +124,14 @@ appimage:
         ln -sf Soundtable.png /AppDir/.DirIcon
 
     COPY resources/app.desktop /AppDir/usr/share/applications/Soundtable.desktop
+    #COPY resources/appstream.xml /AppDir/usr/share/metainfo/Soundtable.appdata.xml
 
     ENV APPIMAGE_EXTRACT_AND_RUN=1
     ENV ARCH=x86_64
+
+    # appimagetool/AppImageUpdate
+    ENV VERSION=${APP_VERSION}
+    ENV UPDATE_INFORMATION=${APPIMAGE_UPDATE_INFORMATION}
 
     COPY +build/Soundtable /AppDir/usr/bin/Soundtable
     COPY +build/soundtable-tracker /AppDir/usr/bin/soundtable-tracker

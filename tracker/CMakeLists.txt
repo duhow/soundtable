@@ -67,6 +67,7 @@ endif()
 
 target_include_directories(soundtable-tracker PRIVATE
     ${OpenCV_INCLUDE_DIRS}
+    ${CMAKE_BINARY_DIR}/generated
     ${CMAKE_SOURCE_DIR}/external/argparse/include
     ${CMAKE_SOURCE_DIR}/reacTIVision/ext/libfidtrack
 )

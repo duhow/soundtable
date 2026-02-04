@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.duhow.soundtable</id>
+  
+  <name>Soundtable</name>
+  <summary>A vibe-coded Reactable clone for Linux</summary>
+  
+  <metadata_license>MIT</metadata_license>
+  
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  
+  <description>
+    <p>
+      Play with sound in a new way! Soundtable is a Reactable clone for Linux,
+      where you can play with sound by moving objects on a table.
+      It uses computer vision to track markers and generate sound based on their position and type.
+    </p>
+  </description>
+  
+  <launchable type="desktop-id">Soundtable.desktop</launchable>
+</component>

@@ -5,3 +5,4 @@ Exec=Soundtable
 Icon=Soundtable
 StartupWMClass=Soundtable
 Categories=AudioVideo;Audio;
+Terminal=false

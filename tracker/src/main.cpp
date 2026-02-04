@@ -21,6 +21,8 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "soundtable_version.h"
+
 #include "OscSender.h"
 #include "TrackerEngine.h"
 #include "TrackerState.h"
@@ -158,7 +160,7 @@ std::string mapLogicalId(int markerId)
 
 int main(int argc, char** argv)
 {
-	argparse::ArgumentParser program("soundtable-tracker", "0.1.0", argparse::default_arguments::all, true);
+	argparse::ArgumentParser program("soundtable-tracker", SOUNDTABLE_VERSION_STRING, argparse::default_arguments::all, true);
 	program.add_description("soundtable-tracker: camera fiducial tracker for Soundtable.");
 	program.add_argument("-m", "--mode")
 	    .help("Select run mode (live tracking or synthetic object).")
@@ -323,7 +325,7 @@ int main(int argc, char** argv)
 			outputMode = soundtable::tracker::TuioOutputMode::Tuio11;
 			// Fire a best-effort TUIO hello so the core can log
 			// tracker identity and version. We no longer wait for an ACK.
-			if (!oscSender.sendHelloTuio11("soundtable-tracker", "0.1.0")) {
+			if (!oscSender.sendHelloTuio11("soundtable-tracker", SOUNDTABLE_VERSION_STRING)) {
 				std::cerr << "[soundtable-tracker] Failed to send /tuio/hello announcement" << std::endl;
 			}
 		}
