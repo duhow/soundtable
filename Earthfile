@@ -1,12 +1,5 @@
 VERSION 0.8
 
-# Metadatos de AppImage (pueden sobreescribirse vía --build-arg)
-# APP_VERSION por defecto se toma de la variable de CMake SOUNDTABLE_VERSION_STRING
-# cuando Earthly se ejecuta desde un árbol ya configurado con CMake. Si se construye
-# desde cero, se puede sobreescribir manualmente.
-ARG APP_VERSION=${SOUNDTABLE_VERSION_STRING:-dev}
-ARG APPIMAGE_UPDATE_INFORMATION="gh-releases-zsync|duhow|soundtable|latest|Soundtable-*-x86_64.AppImage.zsync"
-
 # Target base con toolchain y dependencias
 
 base-system:
@@ -130,6 +123,9 @@ appimage:
     ENV ARCH=x86_64
 
     # appimagetool/AppImageUpdate
+    ARG APP_VERSION=${SOUNDTABLE_VERSION_STRING:-dev}
+    ARG APPIMAGE_UPDATE_INFORMATION="gh-releases-zsync|duhow|soundtable|latest|Soundtable-*-x86_64.AppImage.zsync"
+
     ENV VERSION=${APP_VERSION}
     ENV UPDATE_INFORMATION=${APPIMAGE_UPDATE_INFORMATION}
 
@@ -145,7 +141,7 @@ appimage:
         --icon-file /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png
 
     # Empaquetamos el AppDir en un AppImage con nombre fijo
-    RUN /usr/local/bin/appimagetool /AppDir Soundtable-x86_64.AppImage
+    RUN /usr/local/bin/appimagetool -u "${UPDATE_INFORMATION}" /AppDir Soundtable-x86_64.AppImage
 
     # Exportamos el AppImage como artefacto local
     SAVE ARTIFACT Soundtable-x86_64.AppImage AS LOCAL build/Soundtable-x86_64.AppImage
