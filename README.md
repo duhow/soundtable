@@ -8,9 +8,21 @@ Based on [JUCE Framework](https://juce.com/), [Fluidsynth](https://www.fluidsynt
   <img src="resources/snapshot.png" height="300">
 </p>
 
+> Soundtable uses a tangible interface where the player controls the system by manipulating objects.
+> By putting these objects on the surface, turning them or connecting them to each other,
+> players can combine different elements like synthesisers, effects, samples and control elements in order
+> to create a unique composition.
+> 
+> The resulting sonic flows are represented graphically on the table surface,
+> always showing the real waveforms that travel from one object to the other,
+> turning music into something visible and tangible.
+
+## Features
+
 - Supports TUIO 1.1 (OSC `UDP/3333`) and works with TUIO Simulator
 - Use fiducials with your camera (`tracker`)
 - Load sessions from [Reactable Community](http://community.reactable.com/community/) (`.rtz` files)
+- Play **Loop** audio samples in WAV, FLAC, Opus formats
 
 > [!IMPORTANT]
 > Implementation is still work in progress.
