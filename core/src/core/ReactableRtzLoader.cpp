@@ -345,11 +345,31 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
     rtpEntryIndex = allRtpEntries[0].index;
   }
 
-  const std::string rtpLower = ToLower(rtpEntryName);
-  const std::size_t dotPos = rtpLower.rfind('.');
-  const std::string rtpBaseName =
+    // Derive the session basename from the .rtp entry so that it can be
+    // matched against folder names regardless of where the .rtp lives
+    // inside the archive. For example:
+    //   "Loopdemo.rtp"           -> basename "Loopdemo"
+    //   "sub/Loopdemo.rtp"      -> basename "Loopdemo"
+    //   "a/b/Loop.demo.v1.rtp"  -> basename "Loop.demo.v1"
+    const std::string rtpLower = ToLower(rtpEntryName);
+    const std::size_t dotPos = rtpLower.rfind('.');
+    const std::string rtpNameNoExt =
       (dotPos == std::string::npos) ? rtpEntryName
-                                     : rtpEntryName.substr(0U, dotPos);
+                     : rtpEntryName.substr(0U, dotPos);
+
+    const std::size_t slashPos = rtpNameNoExt.find_last_of('/');
+    const std::string rtpBaseName =
+      (slashPos == std::string::npos)
+        ? rtpNameNoExt
+        : rtpNameNoExt.substr(slashPos + 1U);
+
+    // Directory portion (if any) where the .rtp itself lives, used to
+    // also accept sample folders nested alongside the .rtp, e.g.:
+    //   "sub/Loopdemo.rtp" and "sub/Loopdemo/Demoloops/...".
+    const std::string rtpDirPrefix =
+      (slashPos == std::string::npos)
+        ? std::string()
+        : rtpNameNoExt.substr(0U, slashPos);
 
   fs::path comRoot = com_reactable_root.empty()
                          ? fs::path("com.reactable")
@@ -386,8 +406,20 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
     return false;
   }
 
-  // 2) Extract optional sample folder that matches the .rtp basename.
-  const std::string baseFolderPrefix = rtpBaseName + "/";
+  // 2) Extract optional sample folders whose last component matches the
+  //    .rtp basename. We support both layouts:
+  //      "Loopdemo/Loopdemo.rtp" and "Loopdemo/Demoloops/..."
+  //      "sub/Loopdemo.rtp" and "Loopdemo/Demoloops/..." (at root)
+  //      "sub/Loopdemo.rtp" and "sub/Loopdemo/Demoloops/...".
+  //
+  // In all cases, files under the matching folder are mapped so that a
+  // loop filename like "Demoloops/pl_padloop1.wav" from the .rtp is
+  // resolved as "Samples/Demoloops/pl_padloop1.wav" on disk.
+
+  const std::string rootFolderPrefix = rtpBaseName + "/";
+  const std::string nestedFolderPrefix =
+      rtpDirPrefix.empty() ? std::string()
+                           : (rtpDirPrefix + "/" + rtpBaseName + "/");
 
   for (zip_uint64_t i = 0; i < static_cast<zip_uint64_t>(numEntries); ++i) {
     const char* nameCStr = zip_get_name(archive, i, 0);
@@ -400,9 +432,42 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
       continue;  // already handled.
     }
 
-    // We only care about entries under the folder whose name matches
-    // the .rtp basename, e.g. "Loopdemo/..." for Loopdemo.rtp.
-    if (entryName.rfind(baseFolderPrefix, 0U) != 0U) {
+    // We only care about entries under folders associated with this
+    // session:
+    //  - A folder whose name matches the .rtp basename at the root of
+    //    the archive ("Loopdemo/..." for Loopdemo.rtp).
+    //  - A folder with that name nested alongside the .rtp (e.g.
+    //    "sub/Loopdemo/...").
+    //  - When the .rtp lives inside a single top-level folder
+    //    (e.g. "Minimal/proyecto.rtp"), any entries under that folder
+    //    (e.g. "Minimal/Minimal/sample.wav"). In this last case we
+    //    drop the top-level folder so that samples end up under
+    //    "Samples/Minimal/sample.wav" instead of
+    //    "Samples/Minimal/Minimal/sample.wav".
+
+    std::string relativeSubPath;
+    bool useProjectDirMapping = false;
+    if (!nestedFolderPrefix.empty() &&
+        entryName.rfind(nestedFolderPrefix, 0U) == 0U) {
+      // "sub/Loopdemo/..." → "Demoloops/..." etc.
+      relativeSubPath = entryName.substr(nestedFolderPrefix.size());
+    } else if (entryName.rfind(rootFolderPrefix, 0U) == 0U) {
+      // "Loopdemo/..." → "Demoloops/..." etc.
+      relativeSubPath = entryName.substr(rootFolderPrefix.size());
+    } else if (!rtpDirPrefix.empty()) {
+      // Generic project-folder case when the .rtp is inside a
+      // top-level directory such as "Minimal/proyecto.rtp" and
+      // samples live somewhere under that directory. We strip the
+      // first path component so that, for example,
+      //   "Minimal/Minimal/sample.wav" → "Minimal/sample.wav".
+      const std::string dirPrefixWithSlash = rtpDirPrefix + "/";
+      if (entryName.rfind(dirPrefixWithSlash, 0U) == 0U) {
+        relativeSubPath = entryName.substr(dirPrefixWithSlash.size());
+        useProjectDirMapping = true;
+      } else {
+        continue;
+      }
+    } else {
       continue;
     }
 
@@ -431,10 +496,17 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
       return false;
     }
 
-    // Preserve the folder name as is under com.reactable/Samples/.
-    const std::string relativeSubPath =
-        entryName.substr(baseFolderPrefix.size());
-    const fs::path dest = samplesDir / rtpBaseName / relativeSubPath;
+    // Map the subpath into the Samples/ tree. For the generic
+    // "project folder" case where the .rtp lives inside a single
+    // top-level directory (e.g. Minimal/proyecto.rtp), we already
+    // stripped that directory above, so we write directly under
+    // Samples/<relativeSubPath>. For the classic Reactable layout
+    // where samples live under a folder named after the session
+    // (e.g. Loopdemo/...), keep that folder under Samples/ to avoid
+    // changing existing imports.
+    const fs::path dest = useProjectDirMapping
+                  ? samplesDir / relativeSubPath
+                  : samplesDir / rtpBaseName / relativeSubPath;
 
     if (!WriteFilePossiblySkippingIdentical(dest, data, ioError)) {
       zip_close(archive);
