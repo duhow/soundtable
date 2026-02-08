@@ -120,6 +120,50 @@ bool FilesAreIdentical(const fs::path& existing,
   return true;
 }
 
+// Heuristic helper to detect whether loop/sample filenames inside the
+// .rtp use the session basename as a leading folder component, e.g. a
+// Gui Boratto style project where both the ZIP and the .rtp reference
+// files as "Gui_Boratto/boratto sonar bass 125.wav".
+//
+// When this returns true for a given basename `B`, entries under the
+// corresponding ZIP folder `B/` are mapped to
+//   Samples/B/...
+// so that the path on disk matches exactly the filenames declared in the
+// .rtp. Otherwise, those entries are treated as belonging to the generic
+// "project folder" and the leading `B/` component is stripped.
+bool RtpFilenamesUseBaseFolder(const std::vector<unsigned char>& rtpData,
+                               const std::string& rtpBaseName)
+{
+  if (rtpData.empty() || rtpBaseName.empty()) {
+    return false;
+  }
+
+  const std::string needle = "filename=\"";
+  const std::string prefix = rtpBaseName + "/";
+  const std::string text(
+      reinterpret_cast<const char*>(rtpData.data()), rtpData.size());
+
+  std::size_t pos = 0;
+  while (true) {
+    pos = text.find(needle, pos);
+    if (pos == std::string::npos) {
+      break;
+    }
+    pos += needle.size();
+    const std::size_t end = text.find('"', pos);
+    if (end == std::string::npos) {
+      break;
+    }
+
+    const std::string value = text.substr(pos, end - pos);
+    if (value.rfind(prefix, 0U) == 0U) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 #if defined(SOUNDTABLE_HAVE_LIBZIP)
 
 bool ExtractEntryToMemory(zip_t* archive,
@@ -397,6 +441,9 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
     return false;
   }
 
+  const bool filenamesUseBaseFolder =
+      RtpFilenamesUseBaseFolder(rtpData, rtpBaseName);
+
   const fs::path rtpDest = sessionsDir / rtpEntryName;
   if (!WriteFilePossiblySkippingIdentical(rtpDest, rtpData, ioError)) {
     zip_close(archive);
@@ -447,7 +494,6 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
 
     std::string relativeSubPath;
     bool useProjectDirMapping = false;
-    bool alsoWriteUnderBaseFolder = false;
     if (!nestedFolderPrefix.empty() &&
         entryName.rfind(nestedFolderPrefix, 0U) == 0U) {
       // "sub/Loopdemo/..." → "Demoloops/..." etc.
@@ -469,27 +515,32 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
         relativeSubPath = tail;
       }
     } else if (entryName.rfind(rootFolderPrefix, 0U) == 0U) {
-      // "Loopdemo/..." → "Demoloops/..." etc.
-      //
-      // By default we drop the session folder prefix and keep only
-      // the tail inside it, so that layouts like
-      //   "Loopdemo/Demoloops/..." map to
-      //   Samples/Demoloops/...
-      // which matches loop filenames such as
-      //   "Demoloops/pl_padloop1.wav".
-      //
-      // Some sessions (e.g. Gui Boratto) store samples directly
-      // under a folder whose name is used as part of the filename
-      // in the .rtp, for example
-      //   entryName  = "Gui_Boratto/boratto sonar bass 125.wav"
-      //   filename   = "Gui_Boratto/boratto sonar bass 125.wav".
-      // For these we also create a copy under
-      //   Samples/Gui_Boratto/boratto sonar bass 125.wav
-      // so that loadLoopSamples can resolve the path exactly as
-      // written in the .rtp while still keeping the simpler
-      // Samples/<tail> layout available.
-      relativeSubPath = entryName.substr(rootFolderPrefix.size());
-      alsoWriteUnderBaseFolder = true;
+      // Entries under a folder whose name matches the .rtp basename
+      // at the root of the archive (e.g. "Loopdemo/..." for
+      // Loopdemo.rtp or "Gui_Boratto/..." for Gui_Boratto.rtp).
+      const std::string tail =
+          entryName.substr(rootFolderPrefix.size());
+
+      if (filenamesUseBaseFolder) {
+        // Pack-style projects where the filenames in the .rtp
+        // already include the basename as a leading folder, e.g.:
+        //   entryName = "Gui_Boratto/boratto sonar bass 125.wav"
+        //   filename  = "Gui_Boratto/boratto sonar bass 125.wav".
+        // In this case we keep the full path so that the extracted
+        // WAVs live under:
+        //   Samples/Gui_Boratto/...
+        // matching exactly what loadLoopSamples expects.
+        relativeSubPath = entryName;
+      } else {
+        // Classic layout where the .rtp refers to samples without
+        // the basename prefix (e.g. filenames like
+        // "Demoloops/pl_padloop1.wav" while the ZIP uses
+        // "Loopdemo/Demoloops/..."). Here we drop the leading
+        // session folder so that the on-disk path is:
+        //   Samples/Demoloops/...
+        // which aligns with the filenames in the .rtp.
+        relativeSubPath = tail;
+      }
     } else if (!rtpDirPrefix.empty()) {
       // Generic project-folder case when the .rtp is inside a
       // top-level directory such as "Minimal/proyecto.rtp" and
@@ -539,13 +590,12 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
     // named after the session (e.g. Loopdemo/...), we always write
     // files under
     //   Samples/<relativeSubPath>
-    // where `relativeSubPath` is the path inside the project/session
-    // folder. This ensures that loop filenames from the .rtp, which
-    // are already relative to that folder (for example
-    // "Demoloops/pl_padloop1.wav" or "Ed Deviate/Ed-Amb-Alas.wav"),
-    // map directly to
-    //   Samples/Demoloops/pl_padloop1.wav
-    //   Samples/Ed Deviate/Ed-Amb-Alas.wav
+    // where `relativeSubPath` is the path inside the logical
+    // project/session folder. This ensures that loop filenames from
+    // the .rtp (for example "Demoloops/pl_padloop1.wav",
+    // "Gui_Boratto/boratto sonar bass 125.wav" or
+    // "Ed Deviate/Ed-Amb-Alas.wav") map directly to
+    //   Samples/<filename>
     // as expected by loadLoopSamples.
     (void)useProjectDirMapping;
     const fs::path dest = samplesDir / relativeSubPath;
@@ -556,24 +606,6 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
         *error_message = ioError;
       }
       return false;
-    }
-
-    if (alsoWriteUnderBaseFolder && !rtpBaseName.empty()) {
-      const std::string basePrefix = rtpBaseName + "/";
-      // Avoid duplicating an extra basename component if the
-      // relativeSubPath already starts with it.
-      if (relativeSubPath.rfind(basePrefix, 0U) != 0U) {
-        const fs::path altDest = samplesDir / rtpBaseName /
-                                 fs::path(relativeSubPath);
-        if (!WriteFilePossiblySkippingIdentical(altDest, data,
-                                                ioError)) {
-          zip_close(archive);
-          if (error_message != nullptr) {
-            *error_message = ioError;
-          }
-          return false;
-        }
-      }
     }
   }
 
