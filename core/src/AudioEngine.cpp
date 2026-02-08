@@ -1068,9 +1068,24 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const bool matchesReverbLoop =
                         loopMatchesReverb(loopModuleId);
 
+                    const int wfIndex = instance.visualWaveformIndex;
+
                     if (slotIndex < 0 ||
                         slotIndex >= static_cast<int>(
                                          instance.slots.size())) {
+                        // Selected slot is out of range: expose
+                        // silence in the visual voice so that the
+                        // Loop radial and connection waveforms go
+                        // flat when a slot without audio is
+                        // selected.
+                        if (wfIndex >= 0 &&
+                            wfIndex < kMaxLoopWaveforms) {
+                            const int loopVoiceId =
+                                kMaxVoices + wfIndex;
+                            const float zero = 0.0F;
+                            visualVoices_.writeSamples(loopVoiceId,
+                                                       &zero, 1);
+                        }
                         continue;
                     }
 
@@ -1080,6 +1095,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     if (buffer == nullptr ||
                         buffer->numFrames <= 0 ||
                         buffer->sourceSampleRate <= 0.0) {
+                        if (wfIndex >= 0 &&
+                            wfIndex < kMaxLoopWaveforms) {
+                            const int loopVoiceId =
+                                kMaxVoices + wfIndex;
+                            const float zero = 0.0F;
+                            visualVoices_.writeSamples(loopVoiceId,
+                                                       &zero, 1);
+                        }
                         continue;
                     }
 
@@ -1319,12 +1342,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                                             envAmp));
                         const float monoDry = l;
                         const float monoWithGain = monoDry * finalGain;
-                        const int wfIndex = instance.visualWaveformIndex;
                         if (wfIndex >= 0 &&
                             wfIndex < kMaxLoopWaveforms) {
                             const int loopVoiceId =
                                 kMaxVoices + wfIndex;
-                            const float loopVisualSample = monoWithGain;
+                            const float loopVisualSample =
+                                monoWithGain;
                             visualVoices_.writeSamples(loopVoiceId,
                                                         &loopVisualSample,
                                                         1);
@@ -1562,9 +1585,24 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const bool matchesReverbLoop =
                         loopMatchesReverb(loopModuleId);
 
+                    const int wfIndex = instance.visualWaveformIndex;
+
                     if (slotIndex < 0 ||
                         slotIndex >= static_cast<int>(
                                          instance.slots.size())) {
+                        // Selected slot is out of range: keep the
+                        // per-module Loop visual voice updated with
+                        // silence so that the radial/connection
+                        // waveforms become flat when there is no
+                        // audio for this module.
+                        if (wfIndex >= 0 &&
+                            wfIndex < kMaxLoopWaveforms) {
+                            const int loopVoiceId =
+                                kMaxVoices + wfIndex;
+                            const float zero = 0.0F;
+                            visualVoices_.writeSamples(loopVoiceId,
+                                                       &zero, 1);
+                        }
                         continue;
                     }
 
@@ -1574,6 +1612,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     if (buffer == nullptr ||
                         buffer->numFrames <= 0 ||
                         buffer->sourceSampleRate <= 0.0) {
+                        if (wfIndex >= 0 &&
+                            wfIndex < kMaxLoopWaveforms) {
+                            const int loopVoiceId =
+                                kMaxVoices + wfIndex;
+                            const float zero = 0.0F;
+                            visualVoices_.writeSamples(loopVoiceId,
+                                                       &zero, 1);
+                        }
                         continue;
                     }
 
@@ -1804,12 +1850,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                                             envAmp));
                         const float monoDry = l;
                         const float monoWithGain = monoDry * finalGain;
-                        const int wfIndex = instance.visualWaveformIndex;
                         if (wfIndex >= 0 &&
                             wfIndex < kMaxLoopWaveforms) {
                             const int loopVoiceId =
                                 kMaxVoices + wfIndex;
-                            const float loopVisualSample = monoWithGain;
+                            const float loopVisualSample =
+                                monoWithGain;
                             visualVoices_.writeSamples(loopVoiceId,
                                                         &loopVisualSample,
                                                         1);
@@ -2267,9 +2313,10 @@ void AudioEngine::setLoopModuleParams(const std::string& moduleId,
             instance.visualWaveformIndex = newIndex;
         }
     }
-    const int clampedIndex =
-        std::max(0, std::min(selectedIndex,
-                             static_cast<int>(instance.slots.size()) - 1));
+    int clampedIndex = selectedIndex;
+    if (clampedIndex < 0) {
+        clampedIndex = 0;
+    }
     instance.selectedIndex.store(clampedIndex,
                                  std::memory_order_relaxed);
     const float clampedGain = juce::jlimit(0.0F, 1.0F, linearGain);
