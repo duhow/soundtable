@@ -683,7 +683,7 @@ MainComponent::MainComponent(AudioEngine& audioEngine,
                     juce::Logger::writeToLog(
                         juce::String("[soundtable-core] Loop: sample not "
                                      "found: ") +
-                        audioFile.getFullPathName());
+                        loopDef.filename);
                     ++slotIndex;
                     continue;
                 }
