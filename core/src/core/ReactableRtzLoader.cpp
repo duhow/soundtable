@@ -447,13 +447,49 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
 
     std::string relativeSubPath;
     bool useProjectDirMapping = false;
+    bool alsoWriteUnderBaseFolder = false;
     if (!nestedFolderPrefix.empty() &&
         entryName.rfind(nestedFolderPrefix, 0U) == 0U) {
       // "sub/Loopdemo/..." → "Demoloops/..." etc.
-      relativeSubPath = entryName.substr(nestedFolderPrefix.size());
+      //
+      // For typical layouts where there is an extra subfolder for
+      // loops (e.g. "Loopdemo/Demoloops/..." or
+      // "sub/Loopdemo/Demoloops/..."), we drop the session folder
+      // and keep only the tail ("Demoloops/..."). For archives like
+      // 200Hz.rtz where samples live directly under the matching
+      // folder (e.g. "200Hz/200Hz/200Hz A1 -.wav"), there are no
+      // further subdirectories after nestedFolderPrefix; in that case
+      // we prepend the basename so that the relative path becomes
+      // "200Hz/200Hz A1 -.wav" and samples end up under
+      //   Samples/200Hz/200Hz A1 -.wav
+      const std::string tail = entryName.substr(nestedFolderPrefix.size());
+      if (tail.find('/') == std::string::npos) {
+        relativeSubPath = rtpBaseName + "/" + tail;
+      } else {
+        relativeSubPath = tail;
+      }
     } else if (entryName.rfind(rootFolderPrefix, 0U) == 0U) {
       // "Loopdemo/..." → "Demoloops/..." etc.
+      //
+      // By default we drop the session folder prefix and keep only
+      // the tail inside it, so that layouts like
+      //   "Loopdemo/Demoloops/..." map to
+      //   Samples/Demoloops/...
+      // which matches loop filenames such as
+      //   "Demoloops/pl_padloop1.wav".
+      //
+      // Some sessions (e.g. Gui Boratto) store samples directly
+      // under a folder whose name is used as part of the filename
+      // in the .rtp, for example
+      //   entryName  = "Gui_Boratto/boratto sonar bass 125.wav"
+      //   filename   = "Gui_Boratto/boratto sonar bass 125.wav".
+      // For these we also create a copy under
+      //   Samples/Gui_Boratto/boratto sonar bass 125.wav
+      // so that loadLoopSamples can resolve the path exactly as
+      // written in the .rtp while still keeping the simpler
+      // Samples/<tail> layout available.
       relativeSubPath = entryName.substr(rootFolderPrefix.size());
+      alsoWriteUnderBaseFolder = true;
     } else if (!rtpDirPrefix.empty()) {
       // Generic project-folder case when the .rtp is inside a
       // top-level directory such as "Minimal/proyecto.rtp" and
@@ -496,17 +532,23 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
       return false;
     }
 
-    // Map the subpath into the Samples/ tree. For the generic
+    // Map the subpath into the Samples/ tree. For both the generic
     // "project folder" case where the .rtp lives inside a single
-    // top-level directory (e.g. Minimal/proyecto.rtp), we already
-    // stripped that directory above, so we write directly under
-    // Samples/<relativeSubPath>. For the classic Reactable layout
-    // where samples live under a folder named after the session
-    // (e.g. Loopdemo/...), keep that folder under Samples/ to avoid
-    // changing existing imports.
-    const fs::path dest = useProjectDirMapping
-                  ? samplesDir / relativeSubPath
-                  : samplesDir / rtpBaseName / relativeSubPath;
+    // top-level directory (e.g. Minimal/proyecto.rtp) and the
+    // classic Reactable layout where samples live under a folder
+    // named after the session (e.g. Loopdemo/...), we always write
+    // files under
+    //   Samples/<relativeSubPath>
+    // where `relativeSubPath` is the path inside the project/session
+    // folder. This ensures that loop filenames from the .rtp, which
+    // are already relative to that folder (for example
+    // "Demoloops/pl_padloop1.wav" or "Ed Deviate/Ed-Amb-Alas.wav"),
+    // map directly to
+    //   Samples/Demoloops/pl_padloop1.wav
+    //   Samples/Ed Deviate/Ed-Amb-Alas.wav
+    // as expected by loadLoopSamples.
+    (void)useProjectDirMapping;
+    const fs::path dest = samplesDir / relativeSubPath;
 
     if (!WriteFilePossiblySkippingIdentical(dest, data, ioError)) {
       zip_close(archive);
@@ -514,6 +556,24 @@ bool LoadReactableSessionFromRtz(const std::string& rtz_path,
         *error_message = ioError;
       }
       return false;
+    }
+
+    if (alsoWriteUnderBaseFolder && !rtpBaseName.empty()) {
+      const std::string basePrefix = rtpBaseName + "/";
+      // Avoid duplicating an extra basename component if the
+      // relativeSubPath already starts with it.
+      if (relativeSubPath.rfind(basePrefix, 0U) != 0U) {
+        const fs::path altDest = samplesDir / rtpBaseName /
+                                 fs::path(relativeSubPath);
+        if (!WriteFilePossiblySkippingIdentical(altDest, data,
+                                                ioError)) {
+          zip_close(archive);
+          if (error_message != nullptr) {
+            *error_message = ioError;
+          }
+          return false;
+        }
+      }
     }
   }
 
