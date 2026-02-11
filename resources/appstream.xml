@@ -22,4 +22,14 @@
   </description>
   
   <launchable type="desktop-id">Soundtable.desktop</launchable>
+  
+  <provides>
+    <mediatype>application/x-rtz</mediatype>
+    <mediatype>application/x-rtp</mediatype>
+  </provides>
+  
+  <mimetypes>
+    <mimetype>application/x-rtz</mimetype>
+    <mimetype>application/x-rtp</mimetype>
+  </mimetypes>
 </component>

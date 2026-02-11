@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Soundtable
-Exec=Soundtable
+Comment=A vibe-coded Reactable clone for Linux.
+Exec=Soundtable %f
 Icon=Soundtable
 StartupWMClass=Soundtable
 Categories=AudioVideo;Audio;
 Terminal=false
+MimeType=application/x-rtz;application/x-rtp;

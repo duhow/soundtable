@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-rtz">
+    <comment>Reactable session file</comment>
+    <comment xml:lang="es">Archivo de sesión Reactable</comment>
+    <glob pattern="*.rtz"/>
+    <glob pattern="*.RTZ"/>
+    <sub-class-of type="application/zip"/>
+    <icon name="application-x-rtz"/>
+    <generic-icon name="audio-x-generic"/>
+  </mime-type>
+  <mime-type type="application/x-rtp">
+    <comment>Reactable patch file</comment>
+    <comment xml:lang="es">Archivo de patch Reactable</comment>
+    <glob pattern="*.rtp"/>
+    <glob pattern="*.RTP"/>
+    <sub-class-of type="application/xml"/>
+    <icon name="application-x-rtp"/>
+    <generic-icon name="audio-x-generic"/>
+  </mime-type>
+</mime-info>

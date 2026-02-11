@@ -106,7 +106,8 @@ appimage:
         /AppDir/usr/bin \
         /AppDir/usr/share/applications \
         /AppDir/usr/share/icons/hicolor/256x256/apps \
-        /AppDir/usr/share/metainfo
+        /AppDir/usr/share/metainfo \
+        /AppDir/usr/share/mime/packages
 
     COPY --if-exists resources/reactableresources.zip /AppDir/resources/
 
@@ -118,6 +119,7 @@ appimage:
 
     COPY resources/app.desktop /AppDir/usr/share/applications/Soundtable.desktop
     #COPY resources/appstream.xml /AppDir/usr/share/metainfo/Soundtable.appdata.xml
+    COPY resources/soundtable-rtz.xml /AppDir/usr/share/mime/packages/soundtable-rtz.xml
 
     ENV APPIMAGE_EXTRACT_AND_RUN=1
     ENV ARCH=x86_64
