@@ -27,6 +27,32 @@ Based on [JUCE Framework](https://juce.com/), [Fluidsynth](https://www.fluidsynt
 > [!IMPORTANT]
 > Implementation is still work in progress.
 
+## Running
+
+💾 [Download the latest release](https://github.com/duhow/soundtable/releases/latest) available and start playing!
+
+On first run, resource data is extracted to `$HOME/.local/share/soundtable`.
+
+To load a Reactable session:
+
+- Download any `.rtz` files from [Reactable Community](http://community.reactable.com/community/).
+- Drag the file to the AppImage executable, or open via terminal as argument.
+
+## Architecture overview
+
+The project is split into two main components, both built with CMake:
+
+### Core app
+
+- JUCE-based desktop application that renders the table UI, handles audio, MIDI and user interaction.
+- Owns the main domain model (scene, objects, audio modules, connections) and paints everything from that model.
+- Receives tracking data over TUIO/OSC (e.g. from the tracker or any TUIO 1.1 compatible source) and turns it into objects on the table.
+
+### Tracker
+
+- Standalone process that captures camera frames (OpenCV), detects fiducials and sends them as TUIO/OSC messages.
+- Can be replaced by any other TUIO 1.1 sender (e.g. reacTIVision, TUIO Simulator) as long as it targets the same port (`UDP/3333`).
+
 ## History
 
 Like any other fan of Reactable, I was amazed with the [psychosynth](https://github.com/arximboldi/psychosynth) project years ago, but it seemed to not gain enough attraction.
