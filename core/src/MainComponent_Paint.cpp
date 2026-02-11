@@ -4680,7 +4680,7 @@ void MainComponent::paintNodeLabelsAndLoopTrail(
                 chosenTrail = &loopsForTrail.front();
             }
 
-            if (chosenTrail != nullptr && chosenTrail->beats > 0) {
+            if (chosenTrail != nullptr && !chosenTrail->filename.empty()) {
                 const int beatsPerLoop = chosenTrail->beats;
                 const double totalBeats =
                     transportBeats_ + beatPhase_;

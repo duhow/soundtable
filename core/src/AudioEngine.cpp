@@ -1086,6 +1086,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             visualVoices_.writeSamples(loopVoiceId,
                                                        &zero, 1);
                         }
+                        instance.lastSelectedIndexForPlayback = -1;
                         continue;
                     }
 
@@ -1103,6 +1104,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             visualVoices_.writeSamples(loopVoiceId,
                                                        &zero, 1);
                         }
+                        instance.lastSelectedIndexForPlayback = -1;
                         continue;
                     }
 
@@ -1117,6 +1119,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const double srcSr = buffer->sourceSampleRate;
                     const int totalFrames = buffer->numFrames;
                     if (sr <= 0.0 || srcSr <= 0.0 || totalFrames <= 0) {
+                        instance.lastSelectedIndexForPlayback = -1;
                         continue;
                     }
 
@@ -1603,6 +1606,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             visualVoices_.writeSamples(loopVoiceId,
                                                        &zero, 1);
                         }
+                        instance.lastSelectedIndexForPlayback = -1;
                         continue;
                     }
 
@@ -1620,6 +1624,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             visualVoices_.writeSamples(loopVoiceId,
                                                        &zero, 1);
                         }
+                        instance.lastSelectedIndexForPlayback = -1;
                         continue;
                     }
 
@@ -1634,6 +1639,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     const double srcSr = buffer->sourceSampleRate;
                     const int totalFrames = buffer->numFrames;
                     if (sr <= 0.0 || srcSr <= 0.0 || totalFrames <= 0) {
+                        instance.lastSelectedIndexForPlayback = -1;
                         continue;
                     }
 
