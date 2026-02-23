@@ -29,6 +29,33 @@ std::string Trim(const std::string& s)
   return std::string(begin, end + 1);
 }
 
+// Decode a minimal subset of XML entities commonly used in Reactable
+// .rtp files so that attribute values (such as loop filenames) match
+// the literal characters used on disk. This avoids keeping HTML/XML
+// escapes like &apos; in filenames, which would break path resolution.
+std::string DecodeXmlEntities(std::string value)
+{
+  auto replaceAll = [](std::string& str, const std::string& from,
+                       const std::string& to) {
+    if (from.empty()) {
+      return;
+    }
+    std::size_t startPos = 0;
+    while ((startPos = str.find(from, startPos)) != std::string::npos) {
+      str.replace(startPos, from.length(), to);
+      startPos += to.length();
+    }
+  };
+
+  replaceAll(value, "&amp;", "&");
+  replaceAll(value, "&lt;", "<");
+  replaceAll(value, "&gt;", ">");
+  replaceAll(value, "&quot;", "\"");
+  replaceAll(value, "&apos;", "'");
+
+  return value;
+}
+
 AttributeMap ParseAttributes(const std::string& tag_content)
 {
   AttributeMap attrs;
@@ -75,7 +102,7 @@ AttributeMap ParseAttributes(const std::string& tag_content)
     }
     if (pos > value_start) {
       std::string value = tag_content.substr(value_start, pos - value_start);
-      attrs[name] = value;
+      attrs[name] = DecodeXmlEntities(std::move(value));
     }
     if (pos < tag_content.size() && tag_content[pos] == '"') {
       ++pos;  // skip closing quote
