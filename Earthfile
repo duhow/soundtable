@@ -61,6 +61,22 @@ the-base:
     COPY tests ./tests
     COPY research ./research
 
+# Stage auxiliar: calcula la versión por defecto a partir de git
+version-info:
+    FROM +the-base
+
+    WORKDIR /opt/soundtable
+
+    # Copiamos metadatos de git para poder obtener la versión del repositorio
+    COPY .git ./.git
+
+    RUN set -eux; \
+        VERSION="$(git describe --tags --always || echo dev)"; \
+        VERSION="${VERSION#v}"; \
+        printf '%s\n' "${VERSION}" > version.txt
+
+    SAVE ARTIFACT version.txt
+
 # Target principal: compila soundtable-core (JUCE) y soundtable-tracker (OpenCV)
 
 build:
@@ -125,14 +141,12 @@ appimage:
     ENV ARCH=x86_64
 
     # appimagetool/AppImageUpdate
-    ARG APP_VERSION=${SOUNDTABLE_VERSION_STRING:-dev}
+    ARG APP_VERSION
     ARG APPIMAGE_UPDATE_INFORMATION="gh-releases-zsync|duhow|soundtable|latest|Soundtable-*-x86_64.AppImage.zsync"
-
-    ENV VERSION=${APP_VERSION}
-    ENV UPDATE_INFORMATION=${APPIMAGE_UPDATE_INFORMATION}
 
     COPY +build/Soundtable /AppDir/usr/bin/Soundtable
     COPY +build/soundtable-tracker /AppDir/usr/bin/soundtable-tracker
+    COPY +version-info/version.txt /tmp/version.txt
 
     # linuxdeploy analiza los binarios, registra el .desktop y el icono, y copia dependencias compartidas
     RUN /usr/local/bin/linuxdeploy \
@@ -142,8 +156,11 @@ appimage:
         --desktop-file /AppDir/usr/share/applications/Soundtable.desktop \
         --icon-file /AppDir/usr/share/icons/hicolor/256x256/apps/Soundtable.png
 
-    # Empaquetamos el AppDir en un AppImage con nombre fijo
-    RUN /usr/local/bin/appimagetool -u "${UPDATE_INFORMATION}" /AppDir Soundtable-x86_64.AppImage
+    RUN set -eux; \
+        DEFAULT_VERSION="$(cat /tmp/version.txt 2>/dev/null || echo dev)"; \
+        VERSION="${APP_VERSION:-${DEFAULT_VERSION}}"; \
+        UPDATE_INFORMATION="${APPIMAGE_UPDATE_INFORMATION}"; \
+        VERSION="${VERSION}" /usr/local/bin/appimagetool -u "${UPDATE_INFORMATION}" /AppDir Soundtable-x86_64.AppImage
 
     # Exportamos el AppImage como artefacto local
     SAVE ARTIFACT Soundtable-x86_64.AppImage AS LOCAL build/Soundtable-x86_64.AppImage
